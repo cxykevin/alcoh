@@ -1,0 +1,121 @@
+package config
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
+)
+
+const currentVersion = 1
+
+// Values 是项目本地 TUI 配置。ACP agent 配置不写入此文件。
+type Values struct {
+	Version             int    `json:"version"`
+	ColorMode           string `json:"colorMode,omitempty"`
+	ThinkingExpanded    bool   `json:"thinkingExpanded,omitempty"`
+	ToolsExpanded       bool   `json:"toolsExpanded,omitempty"`
+	TerminalOutputLimit int    `json:"terminalOutputLimit,omitempty"`
+	// OnboardingEffort 是新手引导里选择的"用户第一个会话"的推理强度
+	// （thought_level 值，如 high/xhigh）。首个会话激活时经 session/set_config_option
+	// 应用后清空；空表示未设置。仅由引导流程写入。
+	OnboardingEffort string `json:"onboardingEffort,omitempty"`
+}
+
+func Defaults() Values {
+	return Values{Version: currentVersion, ColorMode: "auto", TerminalOutputLimit: 32768}
+}
+
+// Path 返回跨平台用户配置路径。WASM/WASI 返回空路径，调用方应使用内存 store。
+func Path() (string, error) {
+	if runtime.GOOS == "js" || runtime.GOOS == "wasip1" {
+		return "", errors.New("config file is unavailable on wasm targets")
+	}
+	if runtime.GOOS == "windows" {
+		base := os.Getenv("AppData")
+		if base == "" {
+			return "", errors.New("AppData is not set")
+		}
+		return filepath.Join(base, "alcoh", "config.json"), nil
+	}
+	base := os.Getenv("XDG_CONFIG_HOME")
+	if base == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		base = filepath.Join(home, ".config")
+	}
+	return filepath.Join(base, "alcoh", "config.json"), nil
+}
+
+// Load 读取本地配置；不存在、损坏或版本不兼容时安全回退默认值。
+func Load() (Values, error) {
+	defaults := Defaults()
+	path, err := Path()
+	if err != nil {
+		return defaults, nil
+	}
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return defaults, nil
+	}
+	if err != nil {
+		return defaults, err
+	}
+	var got Values
+	if err := json.Unmarshal(data, &got); err != nil {
+		return defaults, fmt.Errorf("decode config: %w", err)
+	}
+	if got.Version != currentVersion {
+		return defaults, nil
+	}
+	if got.ColorMode == "" {
+		got.ColorMode = defaults.ColorMode
+	}
+	if got.TerminalOutputLimit <= 0 {
+		got.TerminalOutputLimit = defaults.TerminalOutputLimit
+	}
+	return got, nil
+}
+
+// Save 原子写入配置，避免程序中断留下半个 JSON 文件。
+func Save(values Values) error {
+	path, err := Path()
+	if err != nil {
+		return err
+	}
+	values.Version = currentVersion
+	data, err := json.MarshalIndent(values, "", "  ")
+	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".config-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(append(data, '\n')); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
+}

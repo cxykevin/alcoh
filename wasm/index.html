@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>alcoh — ACP v2 Client (WASM)</title>
+  <link rel="stylesheet" href="xterm.css">
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; background: #0d1117; }
+    #terminal { height: 100vh; padding: 8px; box-sizing: border-box; }
+  </style>
+</head>
+<body>
+  <div id="terminal"></div>
+
+  <!-- 需与 go 工具链版本匹配：wasm_exec.js 已从 $(go env GOROOT)/lib/wasm 复制 -->
+  <script src="wasm_exec.js"></script>
+  <!-- xterm.js：本地资产，也可改用 CDN -->
+  <script src="xterm.min.js"></script>
+
+  <script>
+    const term = new Terminal({
+      fontSize: 14,
+      fontFamily: 'Menlo, Consolas, "DejaVu Sans Mono", monospace',
+      theme: {
+        background: '#0d1117',
+        foreground: '#e4e4e4',
+        cursor: '#4f9cf9',
+        selectionBackground: '#264f78',
+      },
+    });
+    term.open(document.getElementById('terminal'));
+    term.focus();
+
+    // 暴露给 Go：输出目标（term.write）与输入/尺寸回调
+    window.term = term;
+    term.onData((data) => {
+      if (window.alcohOnInput) window.alcohOnInput(data);
+    });
+    term.onResize(({ cols, rows }) => {
+      if (window.alcohOnResize) window.alcohOnResize(cols, rows);
+    });
+
+    // 首次触发一次尺寸同步
+    window.addEventListener('load', () => {
+      setTimeout(() => window.alcohOnResize(term.cols, term.rows), 0);
+    });
+
+    if (!WebAssembly.instantiateStreaming) {
+      // 旧浏览器回退：fetch ArrayBuffer
+      WebAssembly.instantiateStreaming = (resp, imports) =>
+        resp.arrayBuffer().then(buf => WebAssembly.instantiate(buf, imports));
+    }
+    const go = new Go();
+    WebAssembly.instantiateStreaming(fetch('main.wasm'), go.importObject)
+      .then(({ instance }) => go.run(instance))
+      .catch(err => {
+        term.write('\x1b[31m加载 main.wasm 失败：' + err.message + '\x1b[0m\r\n');
+      });
+  </script>
+</body>
+</html>

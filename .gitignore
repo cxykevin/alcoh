@@ -1,0 +1,30 @@
+# ---- 构建产物 ----
+# 编译后的主程序二进制
+/alcoh
+# wasm 编译产物
+/wasm/main.wasm
+
+# ---- go generate 生成的文件 ----
+product/build.go
+# 根目录的生成文件副本（历史遗留，与 product/build.go 重复）
+/build.go
+
+# ---- 本地工具/运行数据 ----
+# alkaid0 扩展的本地数据库与缓存（任意层级）
+.alkaid0/
+
+# ---- Claude Code 本地设置 ----
+.claude/
+CLAUDE.md
+
+# ---- 项目文档 ----
+ELICITATION.md
+
+# ---- Go 测试/临时产物 ----
+*.test
+*.out
+*.prof
+
+# ---- 临时/调试文件 ----
+*.tmp.*
+ztmp_*_test.go
