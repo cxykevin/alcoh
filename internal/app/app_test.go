@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,6 +21,19 @@ import (
 	"github.com/cxykevin/alcoh/internal/term"
 	"github.com/cxykevin/alcoh/internal/view"
 )
+
+// setConfigDir 将本地配置目录指向一个临时目录并返回该目录。
+// Windows 上 config.Path() 读取 AppData 而非 XDG_CONFIG_HOME，两者需一并设置，
+// 否则 Save 会落到真实用户目录，测试也读不到文件。
+func setConfigDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	if runtime.GOOS == "windows" {
+		t.Setenv("AppData", dir)
+	}
+	return dir
+}
 
 // trackBackend 包装 demo backend，记录会话 Cancel 调用次数，用于验证
 // /clear 默认会取消运行中的会话、/clear on 不取消。
@@ -193,7 +207,7 @@ func TestHomeFlow(t *testing.T) {
 }
 
 func TestSettingsAndSlashFlow(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	setConfigDir(t)
 	ft := newFakeTerm()
 	a := New(ft, demo.New(true))
 	done := runApp(t, a)
@@ -226,8 +240,7 @@ func TestSettingsAndSlashFlow(t *testing.T) {
 // TestSettingsPersistToDisk 验证 /settings 修改会落盘到 $XDG_CONFIG_HOME/alcoh/config.json，
 // 而非仅停留在内存。修改 ThinkingExpanded 后应能读到 thinkingExpanded=true。
 func TestSettingsPersistToDisk(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	dir := setConfigDir(t)
 	ft := newFakeTerm()
 	a := New(ft, demo.New(true))
 	done := runApp(t, a)
@@ -272,7 +285,7 @@ func TestSettingsPersistToDisk(t *testing.T) {
 // TestHomeSlashSettingsFlow 验证主页输入框的命令面板能正确处理 /settings 客户端命令：
 // 输入 /settings 回车应打开本地设置弹窗，而不是创建会话或进入会话视图。
 func TestHomeSlashSettingsFlow(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	setConfigDir(t)
 	ft := newFakeTerm()
 	a := New(ft, demo.New(true))
 	done := runApp(t, a)
@@ -305,7 +318,7 @@ func TestHomeSlashSettingsFlow(t *testing.T) {
 // TestClearDefaultCancelsRunningSession 验证 /clear 默认会取消运行中的会话：
 // 会话运行中输入 /clear 应发送 Cancel 并返回会话列表。
 func TestClearDefaultCancelsRunningSession(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	setConfigDir(t)
 	ft := newFakeTerm()
 	tb := &trackBackend{Backend: demo.New(true)}
 	a := New(ft, tb)
@@ -342,7 +355,7 @@ func TestClearDefaultCancelsRunningSession(t *testing.T) {
 
 // TestClearOnKeepsRunningSession 验证 /clear on 不取消会话直接返回会话列表。
 func TestClearOnKeepsRunningSession(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	setConfigDir(t)
 	ft := newFakeTerm()
 	tb := &trackBackend{Backend: demo.New(true)}
 	a := New(ft, tb)
@@ -380,7 +393,7 @@ func TestClearOnKeepsRunningSession(t *testing.T) {
 // TestQuestionMarkHelpOnEmptyInput 验证 "?" 仅在输入框为空时触发帮助：
 // 主页空输入按 ? 打开帮助弹窗；帮助打开期间普通字符被拦截，不进入输入框。
 func TestQuestionMarkHelpOnEmptyInput(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	setConfigDir(t)
 	ft := newFakeTerm()
 	a := New(ft, demo.New(true))
 	done := runApp(t, a)
@@ -408,7 +421,7 @@ func TestQuestionMarkHelpOnEmptyInput(t *testing.T) {
 // TestQuestionMarkTypedWhenInputNonEmpty 验证输入框非空时 "?" 作为普通字符输入：
 // 不触发帮助弹窗，字符进入输入框。
 func TestQuestionMarkTypedWhenInputNonEmpty(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	setConfigDir(t)
 	ft := newFakeTerm()
 	a := New(ft, demo.New(true))
 	done := runApp(t, a)
@@ -569,7 +582,7 @@ func TestApplySelectionLine(t *testing.T) {
 // 与其它集成测试一致，模型断言全部放在 Run 退出后执行，避免测试 goroutine
 // 与 UI 主循环并发读写 model。
 func TestEffortCommandFlow(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	setConfigDir(t)
 	ft := newFakeTerm()
 	a := New(ft, demo.New(true))
 	done := runApp(t, a)
@@ -619,7 +632,7 @@ func TestEffortCommandFlow(t *testing.T) {
 //
 // 与其它集成测试一致，模型断言全部放在 Run 退出后执行。
 func TestModelCommandFlow(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	setConfigDir(t)
 	ft := newFakeTerm()
 	a := New(ft, demo.New(true))
 	done := runApp(t, a)
