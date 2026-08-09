@@ -1,0 +1,34 @@
+name: alcoh
+
+arch: ${GOARCH}
+version: ${VERSION}
+
+# 元数据
+maintainer: "cxykevin <cxykevin@yeah.net>"
+platform: "linux"
+section: "admin"
+license: "GPL-3.0"
+description: "alcoh acp v2 client"
+homepage: "https://github.com/cxykevin/alcoh"
+
+contents:
+  - src: ./alcoh-linux-${BINARY_ARCH}
+    dst: /usr/bin/alcoh
+    file_info:
+      owner: root
+      group: root
+      mode: 0755
+
+overrides:
+  deb:
+    depends:
+      - libc6          # Debian/Ubuntu 的 libc 包
+  rpm:
+    depends:
+      - glibc          # RHEL/Fedora 的 libc 包
+  archlinux:
+    depends:
+      - glibc          # Arch Linux 的 libc 包
+  apk:
+    depends:
+      - musl           # Alpine 的 musl libc 包

@@ -1,0 +1,12 @@
+.winapp
+dist
+Assets
+
+Package.appxmanifest
+
+# Development certificate
+devcert.pfx
+.cert.tmp
+*.pfx
+
+*.msix

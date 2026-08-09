@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source srcset="https://raw.githubusercontent.com/cxykevin/alcoh/refs/heads/main/logo/wide160x40d.svg" media="(prefers-color-scheme: dark)">
-    <img src="https://raw.githubusercontent.com/cxykevin/alcoh/refs/heads/main/logo/wide160x40l.svg" alt="alkaid0-logo">
+    <source srcset="https://raw.githubusercontent.com/cxykevin/alcoh/refs/heads/main/logo/wide140x50d.svg" media="(prefers-color-scheme: dark)">
+    <img src="https://raw.githubusercontent.com/cxykevin/alcoh/refs/heads/main/logo/wide140x50l.svg" alt="alkaid0-logo">
   </picture>
 </p>
 
