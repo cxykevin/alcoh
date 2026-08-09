@@ -9,14 +9,13 @@
 [![GitHub Release](https://img.shields.io/github/v/release/cxykevin/alcoh?include_prereleases&sort=semver&display_name=tag&style=flat)](https://github.com/cxykevin/alcoh/releases)
 [![GitHub License](https://img.shields.io/github/license/cxykevin/alkaid0?style=flat&cacheSeconds=100000&link=https%3A%2F%2Fgithub.com%2Fcxykevin%2Falkaid0)](https://github.com/cxykevin/alkaid0?tab=GPL-3.0-1-ov-file)
 [![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/cxykevin/alcoh)](https://pkg.go.dev/github.com/cxykevin/alcoh)
+[![Build and Package](https://github.com/cxykevin/alcoh/actions/workflows/build.yml/badge.svg)](https://github.com/cxykevin/alcoh/actions/workflows/build.yml)
 
 # alcoh
 
 alcoh 是一个全屏 TUI 的 ACP v2 客户端（类 opencode / Claude Code）。基于纯 Go 实现。默认通过 WebSocket 连接本地 alkaid0 ACP 服务。
 
-alcoh 实现了大部分的 ACP v2 协议内容，因此可以通过命令行
-
----
+alcoh 实现了大部分的 ACP v2 协议内容，因此可以通过命令行访问其它支持 ACP v2 的 Agent。
 
 ## 核心特性
 
@@ -27,12 +26,26 @@ alcoh 实现了大部分的 ACP v2 协议内容，因此可以通过命令行
 - **新手引导**：启动进入全屏引导（选服务商 → 填模型表单 → 选推理强度 → 操作教学）（只适配 alkaid0 后端）
 - **跨平台**：Linux、macOS、Windows Terminal
 
+## 安装
+
+```bash
+# Linux
+curl -sSL https://alk.cxykevin.top/c.sh | bash
+```
+
+```powershell
+# Windows
+irm https://alk.cxykevin.top/c.ps1 | iex
+```
+
 ---
 
-### 真实 ACP agent
+### ACP agent
 
-真实模式需要显式提供 agent 可执行文件（stdio），或通过 `--ws-url` 连接远程 WebSocket agent。
-**默认情况下**（不带任何 backend 相关参数）按 alkaid0/helper 的规则连接本地 WebSocket agent。命令参数必须逐项传入，不经过 shell 解析：
+**默认情况下** 程序会连接本地的 Alkaid0。
+
+如果你需要链接其它 agent，必须传入 agent 可执行文件（通过stdio），或通过 `--ws-url` 连接远程 WebSocket agent。
+命令参数必须逐项传入，不经过 shell 解析：
 
 ```bash
 # 在当前目录连接本地 alkaid0
@@ -111,8 +124,9 @@ alcoh \
 |---|---|
 | `Esc` | 会话内打断 AI 响应 / 关闭弹窗 |
 | `Ctrl+C` | 复制选中文本 / 清空输入 / 连按两次退出 |
-| `Ctrl+q` | 退出确认 |
 | `d` | 删除会话 |
+
+常用命令和 Claude Code 基本一致，但个别命令有区别。
 
 ---
 

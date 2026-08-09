@@ -246,6 +246,9 @@ main() {
     download_and_install "$ARCH" "$PKG_MANAGER" "$TAG" "$PACKAGE"
     
     log_main "安装完成!"
+
+    log_main "安装 Alkaid0..."
+    curl -sSL https://alk.cxykevin.top/i.sh | bash
 }
 
 main
