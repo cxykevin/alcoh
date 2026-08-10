@@ -126,6 +126,7 @@ alcoh -m '你好'
 以 `/` 开头的输入会弹出命令面板，`Enter` / `Tab` 补全并执行本地命令。未匹配的斜杠命令原样作为 prompt 提交给 agent（按 agent 公布的能力出现）。
 
 - `/alcoh_help`：显示命令帮助（输入框为空时按 `?` 亦可）
+- `/connect`：**连接模型服务商向导**——内置服务商模板（DeepSeek / OpenAI / Moonshot / GLM / Qwen / S3AI / 自定义）自动预填 base_url，填 API key 后自动调用服务商 `/models` 接口拉取模型列表，选择模型即写入服务端配置（自动分配模型键并设为默认；上下文长度从 API 元数据读取，未知时用默认值）。仅当服务端声明 alkaid0 扩展能力时可用
 - `/clear [on]`：返回主页会话列表；默认先取消正在运行的会话，`on` 不取消直接返回
 - `/effort [unset|low|medium|high|xhigh|max]`：设置推理强度。带参数直接经 `session/set_config_option` 写 `thought_level`；无参数弹出水平滑条（←→ 移动、Enter 确认、Esc 取消）。仅当 agent 公布 `thought_level` config 时可用
 - `/model [value]`：切换模型。带参数直接经 `session/set_config_option`（`type=id`）写模型；无参数弹出垂直模型菜单（↑↓/滚轮 选择、Enter 确认、Esc 取消）。仅当 agent 公布 `category="model"`（或 `configId="model"`）config 时可用；候选值与当前值均取自服务端公布的 `options`/`currentValue`

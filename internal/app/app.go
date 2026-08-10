@@ -4,6 +4,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/cxykevin/alcoh/internal/config"
 	"github.com/cxykevin/alcoh/internal/i18n"
 	"github.com/cxykevin/alcoh/internal/model"
+	"github.com/cxykevin/alcoh/internal/provider"
 	"github.com/cxykevin/alcoh/internal/renderer"
 	"github.com/cxykevin/alcoh/internal/term"
 	"github.com/cxykevin/alcoh/internal/view"
@@ -95,6 +97,8 @@ const (
 	commandConfigGet
 	commandConfigSet
 	commandOnboardingSubmit
+	commandConnectFetch
+	commandConnectSubmit
 )
 
 type commandResult struct {
@@ -104,6 +108,7 @@ type commandResult struct {
 	opID      uint64
 	config    json.RawMessage
 	cfgSeq    uint64 // config/get 请求序号，用于丢弃乱序晚回的旧结果
+	models    []provider.Model
 	err       error
 }
 
@@ -566,6 +571,32 @@ func (a *App) applyCommandResult(result commandResult) {
 				ob.Step = model.OnboardStepResult
 				ob.ResultSel = 0
 				a.model.ShowInfo(i18n.T("模型已添加并设为默认模型"))
+			}
+		}
+		return
+	}
+	if result.kind == commandConnectFetch {
+		// /connect 拉取模型列表结果：成功进入模型选择步骤；失败回到表单页
+		// 显示错误（保留已填内容，可修改后重试）。
+		if cs := a.model.Connect; cs != nil && cs.Fetching {
+			if result.err != nil {
+				cs.ConnectFetchError(result.err)
+			} else if len(result.models) > 0 {
+				cs.ConnectApplyModels(result.models)
+			} else {
+				cs.ConnectFetchError(errors.New(i18n.T("服务商未返回任何模型")))
+			}
+		}
+		return
+	}
+	if result.kind == commandConnectSubmit {
+		// /connect 写入服务端配置结果：成功进入完成步骤；失败回到模型选择
+		// 步骤显示错误。
+		if cs := a.model.Connect; cs != nil && cs.Step == model.ConnectStepSelect {
+			if result.err != nil {
+				cs.FormError = i18n.T("保存模型配置失败: %s", result.err.Error())
+			} else {
+				cs.ConnectMarkResult(i18n.T("模型已添加并设为默认模型"))
 			}
 		}
 		return

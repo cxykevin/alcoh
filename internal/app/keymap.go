@@ -53,6 +53,9 @@ func (a *App) dispatchKey(ke input.KeyEvent) {
 	case model.ModalOnboarding:
 		a.onboardingKey(ke)
 		return
+	case model.ModalConnect:
+		a.connectKey(ke)
+		return
 	}
 
 	if ke.IsCtrl() && ke.Rune == 'q' {
@@ -379,6 +382,14 @@ func (a *App) tryLocalSlashCommand() bool {
 			return true
 		}
 		a.openServerEditor()
+	case "/connect":
+		m.Input.Clear()
+		m.CloseSlash()
+		if !m.SupportsAlkaid0() {
+			m.ShowError(i18n.T("服务端未声明 alkaid0 扩展能力，/connect 不可用"))
+			return true
+		}
+		a.openConnect()
 	default:
 		return false
 	}

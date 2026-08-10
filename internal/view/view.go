@@ -95,8 +95,8 @@ func (v *AppView) modalHeight(m *model.AppModel) int {
 		h = 5
 	case model.ModalServer:
 		h = 9
-	case model.ModalOnboarding:
-		// 新手引导占满整屏：底层内容无需缩小。
+	case model.ModalOnboarding, model.ModalConnect:
+		// 新手引导 / 连接向导占满整屏：底层内容无需缩小。
 		h = 0
 	}
 	return h
@@ -159,6 +159,11 @@ func (v *AppView) drawModalAtInput(c *renderer.Canvas, r renderer.Rect, m *model
 		h = r.H
 		title = i18n.T("首次设置")
 		content = &OnboardingContent{Theme: v.Theme, Ob: m.Onboarding}
+	case model.ModalConnect:
+		// /connect 向导占满整屏（DrawSheet 全宽面板）。
+		h = r.H
+		title = i18n.T("连接模型服务商")
+		content = &ConnectContent{Theme: v.Theme, Cs: m.Connect}
 	default:
 		return
 	}
@@ -308,6 +313,7 @@ func helpContent(t renderer.Theme) *TextLines {
 		i18n.T("alcoh 快捷键"), "",
 		i18n.T("Enter          提交输入        Shift+Enter / 行尾 \\ + Enter 换行"),
 		i18n.T("/              命令面板        Ctrl+,         打开设置"),
+		i18n.T("/connect       连接模型服务商（模板/填 key/拉取模型）"),
 		i18n.T("/effort        推理强度滑条    /clear         清除会话(on 不取消)"),
 		i18n.T("↑↓             移动 / 历史     ←→            移动光标"),
 		i18n.T("Ctrl+A/E       行首 / 行尾     Ctrl+K/U      删至行尾/行首"),
