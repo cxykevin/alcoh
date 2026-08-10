@@ -214,6 +214,15 @@ func (cc *ConnectContent) drawDone(d *connDrawer) {
 	if !d.draw("", d.sts.text) {
 		return
 	}
+	if cc.Cs.FromOnboarding {
+		// 新手引导触发：完成模型配置后继续引导剩余步骤。
+		d.draw(i18n.T("已连接。接下来设置第一个会话的推理强度。"), d.sts.text)
+		if !d.draw("", d.sts.text) {
+			return
+		}
+		d.draw(i18n.T("Enter 继续    Esc 跳过引导"), d.sts.text)
+		return
+	}
 	d.draw(i18n.T("已连接。可用 /model 切换、/server 修改详细配置。"), d.sts.text)
 	if !d.draw("", d.sts.text) {
 		return

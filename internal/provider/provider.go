@@ -26,6 +26,7 @@ type Provider struct {
 var Templates = []Provider{
 	{Name: "DeepSeek", BaseURL: "https://api.deepseek.com/v1"},
 	{Name: "OpenAI", BaseURL: "https://api.openai.com/v1"},
+	{Name: "OpenCode Go", BaseURL: "https://opencode.ai/zen/go/v1"},
 	{Name: "Moonshot Kimi", BaseURL: "https://api.moonshot.cn/v1"},
 	{Name: "智谱 GLM", BaseURL: "https://open.bigmodel.cn/api/paas/v4"},
 	{Name: "通义千问 Qwen", BaseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1"},

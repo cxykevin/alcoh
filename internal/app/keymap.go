@@ -629,8 +629,8 @@ func (a *App) serverConfigKey(ke input.KeyEvent) {
 	}
 }
 
-// onboardingKey 处理全屏新手引导按键。按当前步骤分发；Esc 在任何步骤都视为
-// "跳过"（欢迎页返回 / 其它步骤回退一级，见各分支）。
+// onboardingKey 处理新手引导剩余步骤按键（模型配置由 /connect 向导完成）。
+// Esc 在任何步骤都视为"跳过"（直接结束引导）。
 func (a *App) onboardingKey(ke input.KeyEvent) {
 	m := a.model
 	ob := m.Onboarding
@@ -643,45 +643,6 @@ func (a *App) onboardingKey(ke input.KeyEvent) {
 		return
 	}
 	switch ob.Step {
-	case model.OnboardStepWelcome:
-		switch {
-		case ke.Type == input.KeyEnter:
-			ob.Step = model.OnboardStepProvider
-		case ke.Type == input.KeyEsc:
-			a.finishOnboarding()
-		}
-	case model.OnboardStepProvider:
-		providers := model.OnboardProviders()
-		switch {
-		case ke.Type == input.KeyUp && ob.ProviderSel > 0:
-			ob.ProviderSel--
-		case ke.Type == input.KeyDown && ob.ProviderSel < len(providers)-1:
-			ob.ProviderSel++
-		case ke.Type == input.KeyEnter:
-			if p, ok := ob.SelectedProvider(); ok {
-				ob.SetFormProvider(p.URL)
-				ob.Step = model.OnboardStepForm
-			}
-		case ke.Type == input.KeyEsc:
-			ob.Step = model.OnboardStepWelcome
-		}
-	case model.OnboardStepForm:
-		a.onboardingFormKey(ke, ob)
-	case model.OnboardStepResult:
-		switch {
-		case ke.Type == input.KeyUp && ob.ResultSel > 0:
-			ob.ResultSel--
-		case ke.Type == input.KeyDown && ob.ResultSel < 1:
-			ob.ResultSel++
-		case ke.Type == input.KeyEnter:
-			if ob.ResultSel == 0 {
-				a.openOnboardServerEditor()
-			} else {
-				ob.Step = model.OnboardStepEffort
-			}
-		case ke.Type == input.KeyEsc:
-			a.finishOnboarding()
-		}
 	case model.OnboardStepEffort:
 		n := len(model.OnboardEffortCandidates)
 		switch {
@@ -693,7 +654,7 @@ func (a *App) onboardingKey(ke input.KeyEvent) {
 			a.applyOnboardingEffort(model.OnboardEffortCandidates[ob.EffortSel])
 			ob.Step = model.OnboardStepTeaching
 		case ke.Type == input.KeyEsc:
-			ob.Step = model.OnboardStepResult
+			a.finishOnboarding()
 		}
 	case model.OnboardStepTeaching:
 		switch ke.Type {
@@ -703,75 +664,10 @@ func (a *App) onboardingKey(ke input.KeyEvent) {
 	}
 }
 
-// onboardingFormKey 处理模型表单步骤：↑↓/Tab 切换字段、输入字符、退格删除、
-// Enter 提交（提交中忽略编辑）。Esc 返回服务商选择。
-func (a *App) onboardingFormKey(ke input.KeyEvent, ob *model.OnboardingState) {
-	fields := model.OnboardFields()
-	switch {
-	case ke.Type == input.KeyEsc:
-		ob.Step = model.OnboardStepProvider
-		ob.FormError = ""
-	case ke.Type == input.KeyUp:
-		if ob.FormFocus > 0 {
-			ob.FormFocus--
-		}
-	case ke.Type == input.KeyDown:
-		if ob.FormFocus < len(fields)-1 {
-			ob.FormFocus++
-		}
-	case ke.Type == input.KeyTab:
-		if ob.FormFocus < len(fields)-1 {
-			ob.FormFocus++
-		} else {
-			ob.FormFocus = 0
-		}
-	case ke.Type == input.KeyEnter:
-		if !ob.FormSubmitting {
-			a.submitOnboardingForm(ob)
-		}
-	case ke.Type == input.KeyBackspace:
-		v := ob.FormValues[ob.FormFocus]
-		if len(v) > 0 {
-			ob.FormValues[ob.FormFocus] = v[:len(v)-1]
-		}
-		ob.FormError = ""
-	case ke.Type == input.KeyRune:
-		if !ob.FormSubmitting {
-			ob.FormValues[ob.FormFocus] += string(ke.Rune)
-			ob.FormError = ""
-		}
-	}
-}
-
-// submitOnboardingForm 校验并提交模型表单：经 alk.cxykevin.top/config/set 把新
-// 模型写入 Model.Models.<0> 并设为默认模型（DefaultModelID=0，数值类型）。
-// 提交期间置 FormSubmitting 阻塞编辑；结果经 applyCommandResult 处理。
-func (a *App) submitOnboardingForm(ob *model.OnboardingState) {
-	if err := ob.ValidateForm(); err != nil {
-		ob.FormError = err.Error()
-		return
-	}
-	ob.FormSubmitting = true
-	ob.FormError = ""
-	patch := ob.ModelPatch()
-	a.startCommand(commandResult{kind: commandOnboardingSubmit}, func(ctx context.Context) (acp.Session, error) {
-		return nil, a.backend.SetConfig(ctx, patch)
-	})
-}
-
-// openOnboardServerEditor 从引导结果页打开 /server 配置编辑器，定位到
-// Config/Model/Models 页面供用户详细配置模型。关闭编辑器后回到引导结果页
-//（见 closeServerEditor）。
-func (a *App) openOnboardServerEditor() {
-	a.onboardFromServer = true
-	a.openServerEditor() // 内部会重置 serverCfgFocus，故先打开再设置重定向目标。
-	a.serverCfgFocus = []string{"Model", "Models"}
-}
-
-// finishOnboarding 结束新手引导进入主页：清除引导状态并返回主页（goHome 会
-// 创建主页预创建会话，使 /effort 与 /model 在命令面板可用）。
+// finishOnboarding 结束新手引导进入主页：清除引导与 /connect 向导状态并返回
+// 主页（goHome 会创建主页预创建会话，使 /effort 与 /model 在命令面板可用）。
 func (a *App) finishOnboarding() {
-	a.onboardFromServer = false
+	a.model.CloseConnect()
 	a.model.CloseOnboarding()
 	a.goHome()
 }

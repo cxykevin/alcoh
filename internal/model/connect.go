@@ -37,6 +37,9 @@ type ConnectState struct {
 	ModelSel  int
 	// Result 是 Done 步骤展示的写入结果（如 "模型已添加并设为默认模型"）。
 	Result string
+	// FromOnboarding 表示向导由新手引导触发（服务端无模型首次启动）：
+	// 完成后继续引导剩余步骤（选推理强度 → 操作教学）而非直接关闭。
+	FromOnboarding bool
 }
 
 // OpenConnect 打开 /connect 向导并重置状态。

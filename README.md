@@ -23,7 +23,7 @@ alcoh 实现了大部分的 ACP v2 协议内容，因此可以通过命令行访
 - **终端体验**：CJK 宽字符、Markdown / 代码高亮、鼠标框选复制
 - **命令面板**：`/` 打开本地与 agent 命令面板；`/settings` 打开本地设置；`/effort`、`/model` 调整推理强度与切换模型
 - **服务端配置编辑器**：`/server` 经 alkaid0 扩展 RPC 浏览/编辑服务端配置，编辑即自动保存（只适配 alkaid0 后端）
-- **新手引导**：启动进入全屏引导（选服务商 → 填模型表单 → 选推理强度 → 操作教学）（只适配 alkaid0 后端）
+- **新手引导**：启动进入引导（与 `/connect` 向导同义：选服务商 → 填 key → 拉取模型列表 → 选模型 → 推理强度 → 操作教学）（只适配 alkaid0 后端）
 - **跨平台**：Linux、macOS、Windows Terminal
 
 ## 安装
@@ -126,7 +126,7 @@ alcoh -m '你好'
 以 `/` 开头的输入会弹出命令面板，`Enter` / `Tab` 补全并执行本地命令。未匹配的斜杠命令原样作为 prompt 提交给 agent（按 agent 公布的能力出现）。
 
 - `/alcoh_help`：显示命令帮助（输入框为空时按 `?` 亦可）
-- `/connect`：**连接模型服务商向导**——内置服务商模板（DeepSeek / OpenAI / Moonshot / GLM / Qwen / S3AI / 自定义）自动预填 base_url，填 API key 后自动调用服务商 `/models` 接口拉取模型列表，选择模型即写入服务端配置（自动分配模型键并设为默认；上下文长度从 API 元数据读取，未知时用默认值）。仅当服务端声明 alkaid0 扩展能力时可用
+- `/connect`：**连接模型服务商向导**——内置服务商模板（DeepSeek / OpenAI / OpenCode Go / Moonshot / GLM / Qwen / S3AI / 自定义）自动预填 base_url，填 API key 后自动调用服务商 `/models` 接口拉取模型列表，选择模型即写入服务端配置（自动分配模型键并设为默认；上下文长度从 API 元数据读取，未知时用默认值）。仅当服务端声明 alkaid0 扩展能力时可用
 - `/clear [on]`：返回主页会话列表；默认先取消正在运行的会话，`on` 不取消直接返回
 - `/effort [unset|low|medium|high|xhigh|max]`：设置推理强度。带参数直接经 `session/set_config_option` 写 `thought_level`；无参数弹出水平滑条（←→ 移动、Enter 确认、Esc 取消）。仅当 agent 公布 `thought_level` config 时可用
 - `/model [value]`：切换模型。带参数直接经 `session/set_config_option`（`type=id`）写模型；无参数弹出垂直模型菜单（↑↓/滚轮 选择、Enter 确认、Esc 取消）。仅当 agent 公布 `category="model"`（或 `configId="model"`）config 时可用；候选值与当前值均取自服务端公布的 `options`/`currentValue`
@@ -147,9 +147,9 @@ alcoh -m '你好'
 
 ## 新手引导
 
-启动时未指定 backend 参数（走默认 alkaid0 WebSocket 连接）、服务端声明 alkaid0 能力、且 `alk.cxykevin.top/config/get` 返回的配置里没有任何模型（`Model.Models` 为空）时，启动即进入**全屏新手引导**：
+启动时未指定 backend 参数（走默认 alkaid0 WebSocket 连接）、服务端声明 alkaid0 能力、且 `alk.cxykevin.top/config/get` 返回的配置里没有任何模型（`Model.Models` 为空）时，启动即进入**新手引导**。
 
-欢迎 → 选服务商（Deepseek / OpenAI / ...，自动预填提供方 URL）→ 填模型表单（提供方 URL、密钥、模型名、模型 ID、Token 上限、压缩阈值，六项全部必填；密钥掩码显示，提交即写入 `Model.Models.<0>` 并设默认模型 `DefaultModelID=0`）→ 结果页可选中按钮「打开 /server 详细配置」（定位到 `Config/Model/Models`，关闭后回到引导）→ 选**第一个会话的推理强度**（写入本地配置，首个会话激活时自动应用，之后由 `/effort` 管理）→ 基本操作教学 → 完成进主页。
+引导与 `/connect` 向导**同义**：直接进入连接向导（选服务商模板 → 自动预填 base_url → 填 API key → 自动拉取模型列表 → 选择模型写入 `Model.Models.<n>` 并设为默认 `DefaultModelID`）→ 完成后选**第一个会话的推理强度**（写入本地配置，首个会话激活时自动应用，之后由 `/effort` 管理）→ 基本操作教学 → 完成进主页。向导中按 Esc 可随时跳过剩余步骤。
 
 ---
 

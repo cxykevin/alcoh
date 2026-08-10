@@ -23,6 +23,11 @@ func (a *App) connectKey(ke input.KeyEvent) {
 	if cs == nil {
 		return
 	}
+	// 向导中也允许 Ctrl+q 退出（走退出确认弹窗）。
+	if ke.IsCtrl() && ke.Rune == 'q' {
+		m.SetModal(model.ModalExitConfirm)
+		return
+	}
 	switch cs.Step {
 	case model.ConnectStepProvider:
 		a.connectProviderKey(ke, cs)
@@ -31,14 +36,30 @@ func (a *App) connectKey(ke input.KeyEvent) {
 	case model.ConnectStepSelect:
 		a.connectSelectKey(ke, cs)
 	case model.ConnectStepDone:
-		if ke.Type == input.KeyEnter || ke.Type == input.KeyEsc {
-			m.CloseConnect()
-		}
+		a.connectDoneKey(ke, cs)
 	}
 }
 
+// connectDoneKey 完成步骤：Enter 关闭；向导由新手引导触发时，Enter 进入引导
+// 剩余步骤（选推理强度），Esc 跳过引导直接完成。
+func (a *App) connectDoneKey(ke input.KeyEvent, cs *model.ConnectState) {
+	if ke.Type != input.KeyEnter && ke.Type != input.KeyEsc {
+		return
+	}
+	if !cs.FromOnboarding {
+		a.model.CloseConnect()
+		return
+	}
+	if ke.Type == input.KeyEnter {
+		a.model.CloseConnect()
+		a.model.OpenOnboardingEffort()
+		return
+	}
+	a.finishOnboarding()
+}
+
 // connectProviderKey 服务商模板步骤：↑↓ 选择、Enter 预填 base_url 进入表单、
-// Esc 取消。
+// Esc 取消（引导触发时 Esc 跳过整个引导）。
 func (a *App) connectProviderKey(ke input.KeyEvent, cs *model.ConnectState) {
 	templates := model.ConnectTemplates()
 	switch ke.Type {
@@ -56,6 +77,10 @@ func (a *App) connectProviderKey(ke input.KeyEvent, cs *model.ConnectState) {
 			cs.Step = model.ConnectStepForm
 		}
 	case input.KeyEsc:
+		if cs.FromOnboarding {
+			a.finishOnboarding()
+			return
+		}
 		a.model.CloseConnect()
 	}
 }

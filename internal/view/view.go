@@ -255,7 +255,7 @@ func elicitationContent(t renderer.Theme, m *model.AppModel) widget.Widget {
 	if e.Request.Mode == acp.ElicitationModeURL {
 		lines := []string{
 			"",
-			"URL: " + e.Request.URL,
+			i18n.T("URL: %s", e.Request.URL),
 			"",
 			i18n.T("Enter 接受 | d 拒绝 | Esc 取消"),
 		}

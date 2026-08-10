@@ -73,14 +73,11 @@ type App struct {
 
 	// onboardingEnabled 为 true 表示本次启动未指定 backend 参数（走默认 alkaid0
 	// WebSocket 连接）：若服务端声明 alkaid0 能力且配置里没有任何模型，启动即
-	// 进入全屏新手引导（见 maybeStartOnboarding）。
+	// 进入新手引导（与 /connect 向导同义，见 maybeStartOnboarding）。
 	onboardingEnabled bool
 	// initialPrompt 是 One Shot 模式的启动消息：启动流程完成后自动复用预创建
 	// 会话或新建会话并发送该消息，无需手动输入（见 sendInitialPrompt）。
 	initialPrompt string
-	// onboardFromServer 标记当前 /server 配置编辑器是从新手引导的结果页打开的：
-	// 关闭编辑器后应回到引导结果页，而非主页。
-	onboardFromServer bool
 	// firstSessionOpID 是"用户第一个会话"的 create 请求序号：创建成功后把新手
 	// 引导里选的 effort 应用到该会话（恢复旧会话不应用）。
 	firstSessionOpID uint64
@@ -96,7 +93,6 @@ const (
 	commandSessionDelete
 	commandConfigGet
 	commandConfigSet
-	commandOnboardingSubmit
 	commandConnectFetch
 	commandConnectSubmit
 )
@@ -267,11 +263,15 @@ func (a *App) goHome() {
 	a.ensurePreSessionLocked()
 }
 
-// maybeStartOnboarding 在满足触发条件时进入全屏新手引导，否则按正常主页流程
+// maybeStartOnboarding 在满足触发条件时进入新手引导，否则按正常主页流程
 // 创建主页预创建会话。触发条件：启动未指定 backend 参数（默认连接 alkaid0）、
 // 服务端声明 alkaid0 能力、且 config/get 返回的配置里没有任何模型。config/get
-// 失败或服务端已有模型时回退正常主页（拉取失败仅提示，不阻塞启动）。引导期间
-// 不创建主页预创建会话；引导结束（完成/跳过）后经 goHome 创建。
+// 失败或服务端已有模型时回退正常主页（拉取失败仅提示，不阻塞启动）。
+//
+// 引导与 /connect 向导同义：直接打开 ConnectState（FromOnboarding=true）走
+// 服务商模板 → 填 key → 拉取模型 → 写入配置；完成后继续引导剩余步骤（选推理
+// 强度 → 操作教学）。引导期间不创建主页预创建会话；引导结束（完成/跳过）后
+// 经 goHome 创建。
 func (a *App) maybeStartOnboarding() {
 	a.modelMu.RLock()
 	onboarding := a.onboardingEnabled && a.model.SupportsAlkaid0()
@@ -294,8 +294,11 @@ func (a *App) maybeStartOnboarding() {
 		a.ensurePreSessionLocked()
 		return
 	}
-	// 服务端尚无模型：进入全屏新手引导。
-	a.model.OpenOnboarding()
+	// 服务端尚无模型：进入 /connect 向导（新手引导与其同义）。
+	a.model.OpenConnect()
+	if a.model.Connect != nil {
+		a.model.Connect.FromOnboarding = true
+	}
 }
 
 // sendInitialPrompt 在启动流程完成后发送 One Shot 模式的启动消息：优先复用主页
@@ -308,7 +311,7 @@ func (a *App) sendInitialPrompt() {
 	}
 	a.modelMu.Lock()
 	defer a.modelMu.Unlock()
-	if a.model.Onboarding != nil {
+	if a.model.Onboarding != nil || a.model.Connect != nil {
 		return
 	}
 	if a.usePreSession(a.initialPrompt) {
@@ -318,17 +321,9 @@ func (a *App) sendInitialPrompt() {
 	a.createSession()
 }
 
-// closeServerEditor 关闭 /server 配置编辑器。若编辑器是从新手引导的结果页打开的
-//（onboardFromServer），关闭后回到引导结果页而非主页。
+// closeServerEditor 关闭 /server 配置编辑器。
 func (a *App) closeServerEditor() {
 	a.model.CloseServer()
-	if a.onboardFromServer {
-		a.onboardFromServer = false
-		if a.model.Onboarding != nil {
-			a.model.Onboarding.Step = model.OnboardStepResult
-			a.model.SetModal(model.ModalOnboarding)
-		}
-	}
 }
 
 // modelSnapshot 是测试在应用运行期间轮询模型状态所需的字段快照。事件循环在
@@ -556,22 +551,6 @@ func (a *App) applyCommandResult(result commandResult) {
 			// 发送队列中下一个写回；全部完成后才触发新增后的整配置重载，
 			// 保证 get 读到最终值（含新增对象与随后的字段编辑）。
 			a.nextConfigSet()
-		}
-		return
-	}
-	if result.kind == commandOnboardingSubmit {
-		// 新手引导模型表单的 config/set 结果：成功后进入结果页（可打开 /server
-		// 详细配置或下一步）；失败留在表单页显示错误，可修改后重提。
-		ob := a.model.Onboarding
-		if ob != nil && ob.Step == model.OnboardStepForm {
-			ob.FormSubmitting = false
-			if result.err != nil {
-				ob.FormError = i18n.T("保存模型配置失败: %s", result.err.Error())
-			} else {
-				ob.Step = model.OnboardStepResult
-				ob.ResultSel = 0
-				a.model.ShowInfo(i18n.T("模型已添加并设为默认模型"))
-			}
 		}
 		return
 	}
