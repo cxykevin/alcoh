@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"sync"
 	"time"
 
@@ -95,6 +96,8 @@ const (
 	commandConfigSet
 	commandConnectFetch
 	commandConnectSubmit
+	commandThresholdGet
+	commandThresholdSet
 )
 
 type commandResult struct {
@@ -105,6 +108,7 @@ type commandResult struct {
 	config    json.RawMessage
 	cfgSeq    uint64 // config/get 请求序号，用于丢弃乱序晚回的旧结果
 	models    []provider.Model
+	threshold *model.ThresholdInfo
 	err       error
 }
 
@@ -569,13 +573,50 @@ func (a *App) applyCommandResult(result commandResult) {
 		return
 	}
 	if result.kind == commandConnectSubmit {
-		// /connect 写入服务端配置结果：成功进入完成步骤；失败回到模型选择
-		// 步骤显示错误。
-		if cs := a.model.Connect; cs != nil && cs.Step == model.ConnectStepSelect {
+		// /connect 写入服务端配置结果：成功进入完成步骤；失败按当前步骤
+		// 回填错误（自动路径回模型选择、手动路径留在输入页）。
+		if cs := a.model.Connect; cs != nil {
 			if result.err != nil {
-				cs.FormError = i18n.T("保存模型配置失败: %s", result.err.Error())
+				if cs.Step == model.ConnectStepManual {
+					cs.ManualError = i18n.T("保存模型配置失败: %s", result.err.Error())
+				} else {
+					cs.FormError = i18n.T("保存模型配置失败: %s", result.err.Error())
+				}
 			} else {
 				cs.ConnectMarkResult(i18n.T("模型已添加并设为默认模型"))
+			}
+		}
+		return
+	}
+	if result.kind == commandThresholdGet {
+		// /threshold 拉取当前值：预填输入框；失败留在弹窗显示错误。
+		ts := a.model.Threshold
+		if ts != nil && ts.Loading {
+			ts.Loading = false
+			if result.err != nil || result.threshold == nil {
+				msg := ""
+				if result.err != nil {
+					msg = result.err.Error()
+				}
+				ts.Error = i18n.T("获取当前压缩阈值失败: %s", msg)
+				ts.ModelKey = ""
+			} else {
+				ts.ModelKey = result.threshold.Key
+				ts.ModelName = result.threshold.ModelName
+				ts.Input = strconv.Itoa(result.threshold.CompressSize)
+			}
+		}
+		return
+	}
+	if result.kind == commandThresholdSet {
+		// /threshold 写回结果：成功关闭弹窗；失败留在弹窗显示错误。
+		ts := a.model.Threshold
+		if ts != nil {
+			if result.err != nil {
+				ts.Error = i18n.T("修改压缩阈值失败: %s", result.err.Error())
+			} else {
+				a.model.CloseThreshold()
+				a.model.ShowInfo(i18n.T("压缩阈值已更新"))
 			}
 		}
 		return

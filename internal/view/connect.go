@@ -74,6 +74,8 @@ func (cc *ConnectContent) Draw(c *renderer.Canvas, r renderer.Rect) {
 		cc.drawForm(d)
 	case model.ConnectStepSelect:
 		cc.drawSelect(d)
+	case model.ConnectStepManual:
+		cc.drawManual(d)
 	case model.ConnectStepDone:
 		cc.drawDone(d)
 	}
@@ -203,6 +205,36 @@ func (cc *ConnectContent) drawSelect(d *connDrawer) {
 		return
 	}
 	d.draw(i18n.T("↑↓ 选择    Enter 确认    Esc 返回修改"), d.sts.muted)
+}
+
+func (cc *ConnectContent) drawManual(d *connDrawer) {
+	modelID := ""
+	if cc.Cs.ModelSel >= 0 && cc.Cs.ModelSel < len(cc.Cs.Models) {
+		modelID = cc.Cs.Models[cc.Cs.ModelSel].ID
+	}
+	if !d.draw(i18n.T("未获取到「%s」的上下文长度，请手动设置压缩阈值（Token 上限用默认 128000）：", modelID), d.sts.text) {
+		return
+	}
+	if !d.draw("", d.sts.text) {
+		return
+	}
+	input := cc.Cs.ManualCompress
+	if input == "" {
+		input = i18n.T("（必填）")
+	}
+	if !d.draw("> "+i18n.T("压缩阈值（Token 数）: ")+input, d.sts.sel) {
+		return
+	}
+	if !d.draw("", d.sts.text) {
+		return
+	}
+	if cc.Cs.ManualError != "" {
+		if !d.draw(i18n.T("错误: %s", cc.Cs.ManualError), d.sts.err) {
+			return
+		}
+		d.draw("", d.sts.text)
+	}
+	d.draw(i18n.T("输入字符    退格删除    Enter 保存    Esc 返回"), d.sts.muted)
 }
 
 func (cc *ConnectContent) drawDone(d *connDrawer) {

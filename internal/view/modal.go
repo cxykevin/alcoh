@@ -116,6 +116,7 @@ func (v *AppView) drawHelp(c *renderer.Canvas, r renderer.Rect) {
 		i18n.T("Enter          提交输入        Shift+Enter / 行尾 \\ + Enter 换行"),
 		i18n.T("/              命令面板        Ctrl+,         打开设置"),
 		i18n.T("/connect       连接模型服务商（模板/填 key/拉取模型）"),
+		i18n.T("/threshold     修改压缩阈值（默认模型的 Token 压缩点）"),
 		i18n.T("/effort        推理强度滑条    /clear         清除会话(on 不取消)"),
 		i18n.T("↑↓             移动 / 历史     ←→            移动光标"),
 		i18n.T("Ctrl+A/E       行首 / 行尾     Ctrl+K/U      删至行尾/行首"),

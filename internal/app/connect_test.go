@@ -130,3 +130,88 @@ func mapKeys[M ~map[string]T, T any](m M) []string {
 	}
 	return out
 }
+
+// TestConnectManualCompressFlow 验证 /connect 手动设置压缩阈值路径：服务商
+// 未公布模型上下文长度 → 选择模型后进入手动输入步骤 → 输入压缩阈值 → 写回
+// patch（TokenLimit 默认 128000，CompressSize 为用户输入）。
+func TestConnectManualCompressFlow(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"model-no-ctx"}]}`))
+	}))
+	defer srv.Close()
+
+	ft := newFakeTerm()
+	b := &onboardingBackend{Backend: demo.New(true), caps: alkaid0Caps, cfg: json.RawMessage(`{"Model":{"Models":{"0":{"ModelName":"old","ModelID":"old"}}}}`)}
+	a := New(ft, b)
+	done := runApp(t, a)
+
+	time.Sleep(100 * time.Millisecond)
+	for _, r := range "/connect" {
+		ft.sendKey(input.RuneKey(r, input.ModNone))
+	}
+	ft.sendKey(input.SimpleKey(input.KeyEnter))
+	time.Sleep(150 * time.Millisecond)
+	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.Modal == model.ModalConnect })
+
+	connectInWizard(t, ft, srv.URL)
+	waitCondition(t, "models fetched without ctx", func() bool {
+		a.modelMu.RLock()
+		cs := a.model.Connect
+		a.modelMu.RUnlock()
+		return cs != nil && cs.Step == model.ConnectStepSelect && len(cs.Models) == 1 && cs.Models[0].TokenLimit == 0
+	})
+
+	// 选择模型 → 进入手动设置压缩阈值步骤。
+	ft.sendKey(input.SimpleKey(input.KeyEnter))
+	waitCondition(t, "manual step", func() bool {
+		a.modelMu.RLock()
+		cs := a.model.Connect
+		a.modelMu.RUnlock()
+		return cs != nil && cs.Step == model.ConnectStepManual
+	})
+
+	// 输入压缩阈值并提交。
+	for _, r := range "20000" {
+		ft.sendKey(input.RuneKey(r, input.ModNone))
+	}
+	ft.sendKey(input.SimpleKey(input.KeyEnter))
+	waitCondition(t, "config set received", func() bool { return b.lastPatch() != nil })
+
+	// 校验 patch：新键 1（已有键 0），TokenLimit 默认 128000，CompressSize 手动输入。
+	var got struct {
+		Model struct {
+			Models map[string]struct {
+				TokenLimit   int `json:"TokenLimit"`
+				CompressSize int `json:"CompressSize"`
+			} `json:"Models"`
+		} `json:"Model"`
+	}
+	if err := json.Unmarshal(b.lastPatch(), &got); err != nil {
+		t.Fatalf("bad patch: %v", err)
+	}
+	m1, ok := got.Model.Models["1"]
+	if !ok {
+		t.Fatalf("patch Models keys = %v, want 1", mapKeys(got.Model.Models))
+	}
+	if m1.TokenLimit != 128000 || m1.CompressSize != 20000 {
+		t.Errorf("TokenLimit/CompressSize = %d/%d, want 128000/20000", m1.TokenLimit, m1.CompressSize)
+	}
+
+	// 完成步骤 → 关闭向导。
+	waitCondition(t, "done step", func() bool {
+		a.modelMu.RLock()
+		cs := a.model.Connect
+		a.modelMu.RUnlock()
+		return cs != nil && cs.Step == model.ConnectStepDone
+	})
+	ft.sendKey(input.SimpleKey(input.KeyEnter))
+	waitCondition(t, "wizard closed", func() bool {
+		a.modelMu.RLock()
+		defer a.modelMu.RUnlock()
+		return a.model.Modal == model.NoModal && a.model.Connect == nil
+	})
+
+	quitApp(ft)
+	waitRun(t, done)
+}

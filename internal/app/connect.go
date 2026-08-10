@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"strconv"
 	"strings"
 
 	"github.com/cxykevin/alcoh/internal/acp"
@@ -35,6 +36,8 @@ func (a *App) connectKey(ke input.KeyEvent) {
 		a.connectFormKey(ke, cs)
 	case model.ConnectStepSelect:
 		a.connectSelectKey(ke, cs)
+	case model.ConnectStepManual:
+		a.connectManualKey(ke, cs)
 	case model.ConnectStepDone:
 		a.connectDoneKey(ke, cs)
 	}
@@ -159,7 +162,8 @@ func (a *App) submitConnectForm() {
 	}()
 }
 
-// connectSelectKey 模型选择步骤：↑↓ 选择、Enter 确认写入、Esc 返回表单。
+// connectSelectKey 模型选择步骤：↑↓ 选择、Enter 确认写入（所选模型公布上下文
+// 长度时自动设压缩阈值=50%，否则进入手动输入步骤）、Esc 返回表单。
 func (a *App) connectSelectKey(ke input.KeyEvent, cs *model.ConnectState) {
 	switch ke.Type {
 	case input.KeyUp:
@@ -171,21 +175,65 @@ func (a *App) connectSelectKey(ke input.KeyEvent, cs *model.ConnectState) {
 			cs.ModelSel++
 		}
 	case input.KeyEnter:
-		a.submitConnectModel()
+		if cs.ModelSel >= 0 && cs.ModelSel < len(cs.Models) {
+			if picked := cs.Models[cs.ModelSel]; picked.TokenLimit > 0 {
+				// 拉取到上下文长度：压缩阈值自动取其 50%。
+				a.submitConnectModel(picked, picked.TokenLimit, picked.TokenLimit/2)
+			} else {
+				// 未拉取到：手动设置压缩阈值。
+				cs.Step = model.ConnectStepManual
+				cs.ManualCompress = ""
+				cs.ManualError = ""
+			}
+		}
 	case input.KeyEsc:
 		cs.Step = model.ConnectStepForm
 	}
 }
 
-// submitConnectModel 把选中的模型写入服务端配置：先 config/get 计算下一个
-// 模型键，再 config/set 写入并设为默认（后台 goroutine，结果经
-// applyCommandResult 的 commandConnectSubmit 回填）。
-func (a *App) submitConnectModel() {
+// connectManualKey 手动设置压缩阈值步骤：输入数字、退格删除、Enter 提交、
+// Esc 返回模型选择。
+func (a *App) connectManualKey(ke input.KeyEvent, cs *model.ConnectState) {
+	switch {
+	case ke.Type == input.KeyEsc:
+		cs.Step = model.ConnectStepSelect
+		cs.ManualError = ""
+	case ke.Type == input.KeyEnter:
+		a.submitConnectManualCompress()
+	case ke.Type == input.KeyBackspace:
+		if len(cs.ManualCompress) > 0 {
+			cs.ManualCompress = cs.ManualCompress[:len(cs.ManualCompress)-1]
+		}
+		cs.ManualError = ""
+	case ke.Type == input.KeyRune:
+		cs.ManualCompress += string(ke.Rune)
+		cs.ManualError = ""
+	}
+}
+
+// submitConnectManualCompress 校验手动输入的压缩阈值（正整数）并提交写入；
+// TokenLimit 未拉取到，使用默认 128000。
+func (a *App) submitConnectManualCompress() {
 	cs := a.model.Connect
 	if cs == nil || cs.ModelSel < 0 || cs.ModelSel >= len(cs.Models) {
 		return
 	}
-	picked := cs.Models[cs.ModelSel]
+	n, err := strconv.Atoi(strings.TrimSpace(cs.ManualCompress))
+	if err != nil || n <= 0 {
+		cs.ManualError = i18n.T("压缩阈值需为正整数")
+		return
+	}
+	a.submitConnectModel(cs.Models[cs.ModelSel], 128000, n)
+}
+
+// submitConnectModel 把选中的模型写入服务端配置：先 config/get 计算下一个
+// 模型键，再 config/set 写入并设为默认（后台 goroutine，结果经
+// applyCommandResult 的 commandConnectSubmit 回填）。
+func (a *App) submitConnectModel(picked provider.Model, tokenLimit, compressSize int) {
+	cs := a.model.Connect
+	if cs == nil {
+		return
+	}
 	baseURL := strings.TrimSpace(cs.BaseURL)
 	key := strings.TrimSpace(cs.Key)
 	a.startCommand(commandResult{kind: commandConnectSubmit}, func(ctx context.Context) (acp.Session, error) {
@@ -193,7 +241,7 @@ func (a *App) submitConnectModel() {
 		if err != nil {
 			return nil, err
 		}
-		patch, err := model.ConnectModelPatch(cfg, picked, baseURL, key)
+		patch, err := model.ConnectModelPatch(cfg, picked, baseURL, key, tokenLimit, compressSize)
 		if err != nil {
 			return nil, err
 		}

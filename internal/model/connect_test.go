@@ -71,7 +71,7 @@ func TestConnectModelPatch(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			patch, err := ConnectModelPatch(json.RawMessage(c.cfg), provider.Model{ID: "deepseek-chat", TokenLimit: 65536}, "https://api.deepseek.com/v1", "sk-123")
+			patch, err := ConnectModelPatch(json.RawMessage(c.cfg), provider.Model{ID: "deepseek-chat", TokenLimit: 65536}, "https://api.deepseek.com/v1", "sk-123", 65536, 32768)
 			if err != nil {
 				t.Fatalf("patch: %v", err)
 			}
@@ -124,15 +124,42 @@ func keysOf[M ~map[string]T, T any](m M) []string {
 	return out
 }
 
-func TestConnectModelPatchUnknownContext(t *testing.T) {
-	patch, err := ConnectModelPatch(nil, provider.Model{ID: "m"}, "u", "k")
+// TestConnectModelPatchManualCompress 验证手动路径：上下文长度未知时调用方
+// 传入默认 TokenLimit 与用户输入的压缩阈值，patch 原样写入。
+func TestConnectModelPatchManualCompress(t *testing.T) {
+	patch, err := ConnectModelPatch(nil, provider.Model{ID: "m"}, "u", "k", 128000, 20000)
 	if err != nil {
 		t.Fatalf("patch: %v", err)
 	}
 	var got struct {
 		Model struct {
 			Models map[string]struct {
-				TokenLimit  int `json:"TokenLimit"`
+				TokenLimit   int `json:"TokenLimit"`
+				CompressSize int `json:"CompressSize"`
+			} `json:"Models"`
+		} `json:"Model"`
+	}
+	if err := json.Unmarshal(patch, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	for _, m := range got.Model.Models {
+		if m.TokenLimit != 128000 || m.CompressSize != 20000 {
+			t.Errorf("values = %d/%d, want 128000/20000", m.TokenLimit, m.CompressSize)
+		}
+	}
+}
+
+// TestConnectModelPatchDefaults 验证传入非法值时回退默认（TokenLimit 128000、
+// 压缩阈值取其半）。
+func TestConnectModelPatchDefaults(t *testing.T) {
+	patch, err := ConnectModelPatch(nil, provider.Model{ID: "m"}, "u", "k", 0, 0)
+	if err != nil {
+		t.Fatalf("patch: %v", err)
+	}
+	var got struct {
+		Model struct {
+			Models map[string]struct {
+				TokenLimit   int `json:"TokenLimit"`
 				CompressSize int `json:"CompressSize"`
 			} `json:"Models"`
 		} `json:"Model"`

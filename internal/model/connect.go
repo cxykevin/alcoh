@@ -18,6 +18,8 @@ const (
 	ConnectStepForm
 	// ConnectStepSelect 从服务商拉取的模型列表中选择一个写入配置。
 	ConnectStepSelect
+	// ConnectStepManual 所选模型未公布上下文长度：手动设置压缩阈值。
+	ConnectStepManual
 	// ConnectStepDone 写入完成（Enter/Esc 关闭）。
 	ConnectStepDone
 )
@@ -35,6 +37,9 @@ type ConnectState struct {
 	Fetching  bool   // 正在拉取模型列表（阻塞编辑）
 	Models    []provider.Model
 	ModelSel  int
+	// ManualCompress/ManualError 是手动步骤（未获取到上下文长度）的输入与校验错误。
+	ManualCompress string
+	ManualError    string
 	// Result 是 Done 步骤展示的写入结果（如 "模型已添加并设为默认模型"）。
 	Result string
 	// FromOnboarding 表示向导由新手引导触发（服务端无模型首次启动）：
@@ -93,8 +98,9 @@ func (cs *ConnectState) ConnectMarkResult(msg string) {
 // ConnectModelPatch 从 config/get 的完整配置中计算 Model.Models 的下一个数字键
 //（现有最大数字键 + 1，首个为 "0"），并构造把选中模型写入服务端配置的
 // config/set patch（含设为默认模型 DefaultModelID，该字段为数值类型）。
-// 上下文长度未知时使用默认值 128000，压缩阈值取其一半。
-func ConnectModelPatch(cfg json.RawMessage, p provider.Model, baseURL, key string) (json.RawMessage, error) {
+// tokenLimit/compressSize 由调用方决定：拉取到上下文长度时压缩阈值取 50%，
+// 未拉取到由用户手动输入压缩阈值（tokenLimit 用默认 128000）。
+func ConnectModelPatch(cfg json.RawMessage, p provider.Model, baseURL, key string, tokenLimit, compressSize int) (json.RawMessage, error) {
 	var parsed struct {
 		Model *struct {
 			Models map[string]json.RawMessage `json:"Models"`
@@ -113,13 +119,14 @@ func ConnectModelPatch(cfg json.RawMessage, p provider.Model, baseURL, key strin
 			}
 		}
 	}
-	tokenLimit := p.TokenLimit
 	if tokenLimit <= 0 {
 		tokenLimit = 128000
 	}
-	compress := tokenLimit / 2
-	if compress < 1 {
-		compress = 1
+	if compressSize <= 0 {
+		compressSize = tokenLimit / 2
+	}
+	if compressSize < 1 {
+		compressSize = 1
 	}
 	keyStr := strconv.Itoa(next)
 	name := p.Name
@@ -135,7 +142,7 @@ func ConnectModelPatch(cfg json.RawMessage, p provider.Model, baseURL, key strin
 					"ModelName":   name,
 					"ModelID":     p.ID,
 					"TokenLimit":  tokenLimit,
-					"CompressSize": compress,
+					"CompressSize": compressSize,
 				},
 			},
 			"DefaultModelID": next,

@@ -59,3 +59,20 @@ func TestConnectContentDraw(t *testing.T) {
 		})
 	}
 }
+
+// TestConnectManualDraw 验证手动设置压缩阈值步骤的渲染。
+func TestConnectManualDraw(t *testing.T) {
+	const w, h = 80, 20
+	cs := &model.ConnectState{
+		Step:           model.ConnectStepManual,
+		Models:         []provider.Model{{ID: "model-no-ctx"}},
+		ManualCompress: "20000",
+	}
+	rows := drawConnect(cs, w, h)
+	joined := strings.Join(rows, "\n")
+	for _, want := range []string{"model-no-ctx", "压缩阈值", "20000", "Enter 保存"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("missing %q in render:\n%s", want, joined)
+		}
+	}
+}

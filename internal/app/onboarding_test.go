@@ -353,3 +353,131 @@ func TestOnboardingSkipAtProvider(t *testing.T) {
 		t.Error("onboarding state should be cleared after skip")
 	}
 }
+
+// thresholdCfg 是含默认模型（键 1）与 CompressSize 的服务端配置。
+var thresholdCfg = json.RawMessage(`{"Model":{"DefaultModelID":1,"Models":{
+	"0":{"ModelName":"old","ModelID":"old"},
+	"1":{"ModelName":"deepseek-chat","ModelID":"deepseek-chat","CompressSize":32768}
+}}}`)
+
+// TestThresholdCommandModal 验证 /threshold 无参数打开弹窗并预填当前压缩阈值，
+// 修改后 Enter 写回 config/set 并关闭。
+func TestThresholdCommandModal(t *testing.T) {
+	ft := newFakeTerm()
+	b := &onboardingBackend{Backend: demo.New(true), caps: alkaid0Caps, cfg: thresholdCfg}
+	a := New(ft, b)
+	done := runApp(t, a)
+
+	time.Sleep(100 * time.Millisecond)
+	for _, r := range "/threshold" {
+		ft.sendKey(input.RuneKey(r, input.ModNone))
+	}
+	ft.sendKey(input.SimpleKey(input.KeyEnter))
+	// 弹窗打开并预填当前值。
+	waitCondition(t, "threshold prefilled", func() bool {
+		a.modelMu.RLock()
+		defer a.modelMu.RUnlock()
+		ts := a.model.Threshold
+		return a.model.Modal == model.ModalThreshold && ts != nil && !ts.Loading && ts.Input == "32768"
+	})
+
+	// 清空输入并改为 20000。
+	for i := 0; i < 5; i++ {
+		ft.sendKey(input.SimpleKey(input.KeyBackspace))
+	}
+	for _, r := range "20000" {
+		ft.sendKey(input.RuneKey(r, input.ModNone))
+	}
+	ft.sendKey(input.SimpleKey(input.KeyEnter))
+	waitCondition(t, "threshold saved", func() bool { return b.lastPatch() != nil })
+
+	// 校验 patch：默认模型键 1 的 CompressSize 更新。
+	var got struct {
+		Model struct {
+			Models map[string]struct {
+				CompressSize int `json:"CompressSize"`
+			} `json:"Models"`
+		} `json:"Model"`
+	}
+	if err := json.Unmarshal(b.lastPatch(), &got); err != nil {
+		t.Fatalf("bad patch: %v", err)
+	}
+	m1, ok := got.Model.Models["1"]
+	if !ok {
+		t.Fatalf("patch Models keys = %v, want 1", mapKeys(got.Model.Models))
+	}
+	if m1.CompressSize != 20000 {
+		t.Errorf("CompressSize = %d, want 20000", m1.CompressSize)
+	}
+
+	// 写回成功自动关闭弹窗。
+	waitCondition(t, "threshold closed", func() bool {
+		a.modelMu.RLock()
+		defer a.modelMu.RUnlock()
+		return a.model.Modal == model.NoModal && a.model.Threshold == nil
+	})
+
+	quitApp(ft)
+	waitRun(t, done)
+}
+
+// TestThresholdCommandWithArg 验证 /threshold 带参数直接设置：不打开弹窗，
+// 立即写回 config/set。
+func TestThresholdCommandWithArg(t *testing.T) {
+	ft := newFakeTerm()
+	b := &onboardingBackend{Backend: demo.New(true), caps: alkaid0Caps, cfg: thresholdCfg}
+	a := New(ft, b)
+	done := runApp(t, a)
+
+	time.Sleep(100 * time.Millisecond)
+	for _, r := range "/threshold 64000" {
+		ft.sendKey(input.RuneKey(r, input.ModNone))
+	}
+	ft.sendKey(input.SimpleKey(input.KeyEnter))
+	waitCondition(t, "threshold saved", func() bool { return b.lastPatch() != nil })
+
+	var got struct {
+		Model struct {
+			Models map[string]struct {
+				CompressSize int `json:"CompressSize"`
+			} `json:"Models"`
+		} `json:"Model"`
+	}
+	if err := json.Unmarshal(b.lastPatch(), &got); err != nil {
+		t.Fatalf("bad patch: %v", err)
+	}
+	m1, ok := got.Model.Models["1"]
+	if !ok {
+		t.Fatalf("patch Models keys = %v, want 1", mapKeys(got.Model.Models))
+	}
+	if m1.CompressSize != 64000 {
+		t.Errorf("CompressSize = %d, want 64000", m1.CompressSize)
+	}
+	if a.model.Modal == model.ModalThreshold {
+		t.Error("with-arg path must not open the modal")
+	}
+
+	quitApp(ft)
+	waitRun(t, done)
+}
+
+// TestThresholdCommandInvalidArg 验证非法参数提示错误且不写回。
+func TestThresholdCommandInvalidArg(t *testing.T) {
+	ft := newFakeTerm()
+	b := &onboardingBackend{Backend: demo.New(true), caps: alkaid0Caps, cfg: thresholdCfg}
+	a := New(ft, b)
+	done := runApp(t, a)
+
+	time.Sleep(100 * time.Millisecond)
+	for _, r := range "/threshold abc" {
+		ft.sendKey(input.RuneKey(r, input.ModNone))
+	}
+	ft.sendKey(input.SimpleKey(input.KeyEnter))
+	time.Sleep(200 * time.Millisecond)
+	if b.lastPatch() != nil {
+		t.Error("invalid arg must not write config")
+	}
+
+	quitApp(ft)
+	waitRun(t, done)
+}
