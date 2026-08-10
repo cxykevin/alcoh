@@ -8,6 +8,7 @@ import (
 
 	"github.com/cxykevin/alcoh/internal/acp"
 	"github.com/cxykevin/alcoh/internal/config"
+	"github.com/cxykevin/alcoh/internal/i18n"
 	"github.com/cxykevin/alcoh/internal/widget"
 )
 
@@ -192,6 +193,8 @@ func (m *AppModel) slashCommandInfos() []SlashCommandInfo {
 	infos := make([]SlashCommandInfo, 0, len(commands))
 	for _, name := range commands {
 		if info, ok := localSlashCommandInfo[name]; ok {
+			// 本地命令说明按当前语言翻译（渲染时调用，切换语言即时生效）。
+			info.Description = i18n.T(info.Description)
 			infos = append(infos, info)
 			continue
 		}
@@ -485,6 +488,23 @@ func (m *AppModel) CycleColorMode(delta int) bool {
 		}
 	}
 	m.Settings.ColorMode = modes[(idx+delta+len(modes))%len(modes)]
+	return true
+}
+
+// CycleLanguage 在支持的界面语言之间切换（写入本地配置，保存时应用）。
+func (m *AppModel) CycleLanguage(delta int) bool {
+	if m.SettingsSelected != 3 {
+		return false
+	}
+	langs := []string{"zh", "en"}
+	idx := 0
+	for i, l := range langs {
+		if m.Settings.Language == l {
+			idx = i
+			break
+		}
+	}
+	m.Settings.Language = langs[(idx+delta+len(langs))%len(langs)]
 	return true
 }
 
@@ -798,7 +818,7 @@ func (m *AppModel) ApplyEvent(ev acp.Event) {
 				label = "unknown"
 			}
 			noticeKey := "unknown:" + label
-			notice := "▸ 已收到未知 session update: " + label + "（保留在协议诊断中）"
+			notice := i18n.T("▸ 已收到未知 session update: %s（保留在协议诊断中）", label)
 			m.Active.AppendSystemNotice(noticeKey, notice)
 		}
 	case *acp.SessionListEvent:

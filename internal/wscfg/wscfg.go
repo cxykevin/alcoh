@@ -18,6 +18,8 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+
+	"github.com/cxykevin/alcoh/internal/i18n"
 )
 
 const (
@@ -68,11 +70,11 @@ type Options struct {
 // RegisterFlags 把默认 WebSocket 连接的覆盖 flag 注册到 fs。
 func RegisterFlags(fs *flag.FlagSet) *Options {
 	o := &Options{}
-	fs.StringVar(&o.configPath, "config", "", "WebSocket 配置文件路径（默认 ~/.config/alkaid0/config.json）")
-	fs.StringVar(&o.host, "host", "", "WebSocket 主机（默认 127.0.0.1）")
-	fs.UintVar(&o.port, "port", 0, "WebSocket 端口（默认 7433）")
-	fs.StringVar(&o.path, "path", "", "WebSocket 路径（默认 /acp）")
-	fs.StringVar(&o.key, "key", "", "WebSocket 认证 key（默认读配置文件）")
+	fs.StringVar(&o.configPath, "config", "", i18n.T("WebSocket 配置文件路径（默认 ~/.config/alkaid0/config.json）"))
+	fs.StringVar(&o.host, "host", "", i18n.T("WebSocket 主机（默认 127.0.0.1）"))
+	fs.UintVar(&o.port, "port", 0, i18n.T("WebSocket 端口（默认 7433）"))
+	fs.StringVar(&o.path, "path", "", i18n.T("WebSocket 路径（默认 /acp）"))
+	fs.StringVar(&o.key, "key", "", i18n.T("WebSocket 认证 key（默认读配置文件）"))
 	return o
 }
 

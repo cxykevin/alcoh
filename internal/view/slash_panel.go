@@ -1,6 +1,7 @@
 package view
 
 import (
+	"github.com/cxykevin/alcoh/internal/i18n"
 	"github.com/cxykevin/alcoh/internal/model"
 	"github.com/cxykevin/alcoh/internal/renderer"
 )
@@ -20,7 +21,7 @@ func (p *SlashPanel) Draw(c *renderer.Canvas, r renderer.Rect, m *model.AppModel
 	c.Fill(r, renderer.CellRune(' ', renderer.Style{Bg: renderer.ColorDefault}))
 	commands, indices := m.FilteredSlashCommands()
 	if len(commands) == 0 {
-		c.PutText(r.X, r.Y, "  无匹配命令", p.Theme.Style(p.Theme.TextMuted))
+		c.PutText(r.X, r.Y, "  "+i18n.T("无匹配命令"), p.Theme.Style(p.Theme.TextMuted))
 		return
 	}
 	descriptions := m.SlashCommandDescriptions()

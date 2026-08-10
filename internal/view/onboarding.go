@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/cxykevin/alcoh/internal/model"
+	"github.com/cxykevin/alcoh/internal/i18n"
 	"github.com/cxykevin/alcoh/internal/renderer"
 	"github.com/cxykevin/alcoh/internal/widget"
 )
@@ -41,7 +42,7 @@ func (oc *OnboardingContent) Draw(c *renderer.Canvas, r renderer.Rect) {
 		y++
 		return true
 	}
-	if !draw("alcoh 首次设置", stTitle) {
+	if !draw(i18n.T("alcoh 首次设置"), stTitle) {
 		return
 	}
 	if !draw("", stText) {
@@ -66,11 +67,11 @@ func (oc *OnboardingContent) Draw(c *renderer.Canvas, r renderer.Rect) {
 
 func (oc *OnboardingContent) drawWelcome(draw func(string, renderer.Style) bool, stText, stMuted renderer.Style) {
 	lines := []string{
-		"服务端还没有配置任何模型。接下来几步将帮你完成首次配置：",
+		i18n.T("服务端还没有配置任何模型。接下来几步将帮你完成首次配置："),
 		"",
-		"  1. 选择模型服务商，填写模型信息（密钥、模型名、Token 上限等）",
-		"  2. 可选打开 /server 配置编辑器做更详细的设置",
-		"  3. 选择你第一个会话的推理强度",
+		i18n.T("  1. 选择模型服务商，填写模型信息（密钥、模型名、Token 上限等）"),
+		i18n.T("  2. 可选打开 /server 配置编辑器做更详细的设置"),
+		i18n.T("  3. 选择你第一个会话的推理强度"),
 		"",
 	}
 	for _, ln := range lines {
@@ -78,11 +79,11 @@ func (oc *OnboardingContent) drawWelcome(draw func(string, renderer.Style) bool,
 			return
 		}
 	}
-	draw("Enter 开始    Esc 跳过（直接进入主页）", stMuted)
+	draw(i18n.T("Enter 开始    Esc 跳过（直接进入主页）"), stMuted)
 }
 
 func (oc *OnboardingContent) drawProvider(draw func(string, renderer.Style) bool, stText, stMuted, stSel renderer.Style) {
-	if !draw("选择模型服务商（自动预填提供方 URL，之后仍可修改）：", stText) {
+	if !draw(i18n.T("选择模型服务商（自动预填提供方 URL，之后仍可修改）："), stText) {
 		return
 	}
 	if !draw("", stText) {
@@ -95,7 +96,7 @@ func (oc *OnboardingContent) drawProvider(draw func(string, renderer.Style) bool
 			marker = "> "
 			st = stSel
 		}
-		label := p.Name
+		label := i18n.T(p.Name)
 		if p.URL != "" {
 			label += "   " + p.URL
 		}
@@ -106,11 +107,11 @@ func (oc *OnboardingContent) drawProvider(draw func(string, renderer.Style) bool
 	if !draw("", stText) {
 		return
 	}
-	draw("↑↓ 选择    Enter 确认    Esc 返回欢迎页", stMuted)
+	draw(i18n.T("↑↓ 选择    Enter 确认    Esc 返回欢迎页"), stMuted)
 }
 
 func (oc *OnboardingContent) drawForm(draw func(string, renderer.Style) bool, stText, stMuted, stSel, stErr renderer.Style) {
-	if !draw("填写模型信息（全部必填；提供方 URL 已预填，可修改）：", stText) {
+	if !draw(i18n.T("填写模型信息（全部必填；提供方 URL 已预填，可修改）："), stText) {
 		return
 	}
 	if !draw("", stText) {
@@ -127,7 +128,7 @@ func (oc *OnboardingContent) drawForm(draw func(string, renderer.Style) bool, st
 		}
 		display := val
 		if display == "" {
-			display = "（必填）"
+			display = i18n.T("（必填）")
 		}
 		marker := "  "
 		st := stText
@@ -135,7 +136,7 @@ func (oc *OnboardingContent) drawForm(draw func(string, renderer.Style) bool, st
 			marker = "> "
 			st = stSel
 		}
-		if !draw(fmt.Sprintf("%s%s：%s", marker, f.Label, display), st) {
+		if !draw(fmt.Sprintf("%s%s：%s", marker, i18n.T(f.Label), display), st) {
 			return
 		}
 	}
@@ -143,28 +144,28 @@ func (oc *OnboardingContent) drawForm(draw func(string, renderer.Style) bool, st
 		return
 	}
 	if oc.Ob.FormError != "" {
-		if !draw("错误: "+oc.Ob.FormError, stErr) {
+		if !draw(i18n.T("错误: %s", oc.Ob.FormError), stErr) {
 			return
 		}
 		draw("", stText)
 	}
 	if oc.Ob.FormSubmitting {
-		draw("正在保存模型配置…", stMuted)
+		draw(i18n.T("正在保存模型配置…"), stMuted)
 		return
 	}
-	draw("↑↓ / Tab 切换字段    输入字符    退格删除    Enter 提交    Esc 返回", stMuted)
+	draw(i18n.T("↑↓ / Tab 切换字段    输入字符    退格删除    Enter 提交    Esc 返回"), stMuted)
 }
 
 func (oc *OnboardingContent) drawResult(draw func(string, renderer.Style) bool, stText, stMuted, stSel, stOK renderer.Style) {
-	if !draw("模型已添加并设为默认模型（Model.Models 0）。", stOK) {
+	if !draw(i18n.T("模型已添加并设为默认模型（Model.Models 0）。"), stOK) {
 		return
 	}
 	if !draw("", stText) {
 		return
 	}
 	buttons := []string{
-		"打开 /server 详细配置（定位到 Config/Model/Models）",
-		"下一步",
+		i18n.T("打开 /server 详细配置（定位到 Config/Model/Models）"),
+		i18n.T("下一步"),
 	}
 	for i, b := range buttons {
 		marker := "  "
@@ -180,11 +181,11 @@ func (oc *OnboardingContent) drawResult(draw func(string, renderer.Style) bool, 
 	if !draw("", stText) {
 		return
 	}
-	draw("↑↓ 选择按钮    Enter 触发    Esc 跳过（进入主页）", stMuted)
+	draw(i18n.T("↑↓ 选择按钮    Enter 触发    Esc 跳过（进入主页）"), stMuted)
 }
 
 func (oc *OnboardingContent) drawEffort(draw func(string, renderer.Style) bool, stText, stMuted, stSel renderer.Style) {
-	if !draw("选择你第一个会话的推理强度（之后可用 /effort 随时调整）：", stText) {
+	if !draw(i18n.T("选择你第一个会话的推理强度（之后可用 /effort 随时调整）："), stText) {
 		return
 	}
 	if !draw("", stText) {
@@ -204,24 +205,24 @@ func (oc *OnboardingContent) drawEffort(draw func(string, renderer.Style) bool, 
 	if !draw("", stText) {
 		return
 	}
-	draw("↑↓ 选择    Enter 确认    Esc 返回上一步", stMuted)
+	draw(i18n.T("↑↓ 选择    Enter 确认    Esc 返回上一步"), stMuted)
 }
 
 func (oc *OnboardingContent) drawTeaching(draw func(string, renderer.Style) bool, stText, stMuted, stSel renderer.Style) {
-	if !draw("基本操作", stSel) {
+	if !draw(i18n.T("基本操作"), stSel) {
 		return
 	}
 	if !draw("", stText) {
 		return
 	}
 	lines := []string{
-		"Enter          主页空输入恢复会话 / 会话内提交输入",
-		"/              命令面板（/effort /model /server /settings）",
-		"↑↓ ←→          移动与历史",
-		"Shift+Enter    输入框内换行",
-		"d              主页删除选中会话",
-		"Ctrl+q         退出",
-		"?              帮助",
+		i18n.T("Enter          主页空输入恢复会话 / 会话内提交输入"),
+		i18n.T("/              命令面板（/effort /model /server /settings）"),
+		i18n.T("↑↓ ←→          移动与历史"),
+		i18n.T("Shift+Enter    输入框内换行"),
+		i18n.T("d              主页删除选中会话"),
+		i18n.T("Ctrl+q         退出"),
+		i18n.T("?              帮助"),
 	}
 	for _, ln := range lines {
 		if !draw(ln, stText) {
@@ -231,5 +232,5 @@ func (oc *OnboardingContent) drawTeaching(draw func(string, renderer.Style) bool
 	if !draw("", stText) {
 		return
 	}
-	draw("Enter / Esc 完成，进入主页", stMuted)
+	draw(i18n.T("Enter / Esc 完成，进入主页"), stMuted)
 }

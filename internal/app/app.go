@@ -9,6 +9,7 @@ import (
 
 	"github.com/cxykevin/alcoh/internal/acp"
 	"github.com/cxykevin/alcoh/internal/config"
+	"github.com/cxykevin/alcoh/internal/i18n"
 	"github.com/cxykevin/alcoh/internal/model"
 	"github.com/cxykevin/alcoh/internal/renderer"
 	"github.com/cxykevin/alcoh/internal/term"
@@ -72,6 +73,9 @@ type App struct {
 	// WebSocket 连接）：若服务端声明 alkaid0 能力且配置里没有任何模型，启动即
 	// 进入全屏新手引导（见 maybeStartOnboarding）。
 	onboardingEnabled bool
+	// initialPrompt 是 One Shot 模式的启动消息：启动流程完成后自动复用预创建
+	// 会话或新建会话并发送该消息，无需手动输入（见 sendInitialPrompt）。
+	initialPrompt string
 	// onboardFromServer 标记当前 /server 配置编辑器是从新手引导的结果页打开的：
 	// 关闭编辑器后应回到引导结果页，而非主页。
 	onboardFromServer bool
@@ -131,6 +135,10 @@ func (a *App) SetWorkdir(dir string) {
 // SetOnboardingEnabled 启停新手引导触发判断。main 在未指定 backend 参数
 // （走默认 alkaid0 连接）时置 true。
 func (a *App) SetOnboardingEnabled(v bool) { a.onboardingEnabled = v }
+
+// SetInitialPrompt 设置 One Shot 模式的启动消息：启动完成后自动进入会话视图
+// 并发送该消息。空串表示普通交互启动。
+func (a *App) SetInitialPrompt(text string) { a.initialPrompt = text }
 
 // applyFirstSessionEffort 把新手引导里选择的 effort 应用到"用户第一个会话"：
 // 经 session/set_config_option 写 thought_level，随后清空本地字段——只对首个
@@ -273,7 +281,7 @@ func (a *App) maybeStartOnboarding() {
 	a.modelMu.Lock()
 	defer a.modelMu.Unlock()
 	if err != nil {
-		a.model.ShowError("获取服务端配置失败: " + err.Error())
+		a.model.ShowError(i18n.T("获取服务端配置失败: %s", err.Error()))
 		a.ensurePreSessionLocked()
 		return
 	}
@@ -283,6 +291,26 @@ func (a *App) maybeStartOnboarding() {
 	}
 	// 服务端尚无模型：进入全屏新手引导。
 	a.model.OpenOnboarding()
+}
+
+// sendInitialPrompt 在启动流程完成后发送 One Shot 模式的启动消息：优先复用主页
+// 预创建会话（不删除、不新建，与主页输入 prompt 回车同一条路径），否则新建会话
+// 并把消息记为 PendingInitialPrompt——会话建立后由 applyCommandResult 自动发送
+//（见 applyCommandResult 中 PendingInitialPrompt 分支）。新手引导进行中时不发送。
+func (a *App) sendInitialPrompt() {
+	if a.initialPrompt == "" {
+		return
+	}
+	a.modelMu.Lock()
+	defer a.modelMu.Unlock()
+	if a.model.Onboarding != nil {
+		return
+	}
+	if a.usePreSession(a.initialPrompt) {
+		return
+	}
+	a.model.PendingInitialPrompt = a.initialPrompt
+	a.createSession()
 }
 
 // closeServerEditor 关闭 /server 配置编辑器。若编辑器是从新手引导的结果页打开的
@@ -387,6 +415,8 @@ func (a *App) Run() error {
 	// session.delete）。预创建会话承载 agent 广播的 config，使 /effort 与 /model
 	// 在主页命令面板可用；用户新建/恢复会话或程序退出时该空会话被删除。
 	a.maybeStartOnboarding()
+	// One Shot 模式：自动进入会话视图并发送启动消息。
+	a.sendInitialPrompt()
 
 	w, h := a.term.Size()
 	a.resetBuffers(w, h)
@@ -416,7 +446,7 @@ func (a *App) Run() error {
 				eventsCh = nil
 				a.modelMu.Lock()
 				if a.model.Error == "" {
-					a.model.ShowError("ACP backend 已关闭")
+					a.model.ShowError(i18n.T("ACP backend 已关闭"))
 				}
 				a.modelMu.Unlock()
 				needsRender = true
@@ -483,7 +513,7 @@ func (a *App) applyCommandResult(result commandResult) {
 			return
 		}
 		if result.err != nil {
-			a.model.ShowError("获取服务端配置失败: " + result.err.Error())
+			a.model.ShowError(i18n.T("获取服务端配置失败: %s", result.err.Error()))
 			a.closeServerEditor()
 		} else if a.model.Modal != model.ModalServer {
 			// 用户在拉取/重载期间已按 Esc 关闭编辑器：丢弃结果，避免复活编辑器。
@@ -506,7 +536,7 @@ func (a *App) applyCommandResult(result commandResult) {
 	}
 	if result.kind == commandConfigSet {
 		if result.err != nil {
-			a.model.ShowError("保存配置失败: " + result.err.Error())
+			a.model.ShowError(i18n.T("保存配置失败: %s", result.err.Error()))
 			// 写回失败：放弃重定向与队列中的后续写回（它们基于同一失败基态，
 			// 继续应用只会加剧不一致）。队列清空、busy 复位，并解除 Saving
 			// 阻塞（后续不会有重载 get 来解除它，避免界面永久卡在"保存中"）。
@@ -517,7 +547,7 @@ func (a *App) applyCommandResult(result commandResult) {
 				ed.Saving = false
 			}
 		} else {
-			a.model.ShowInfo("配置已保存")
+			a.model.ShowInfo(i18n.T("配置已保存"))
 			// 发送队列中下一个写回；全部完成后才触发新增后的整配置重载，
 			// 保证 get 读到最终值（含新增对象与随后的字段编辑）。
 			a.nextConfigSet()
@@ -531,24 +561,24 @@ func (a *App) applyCommandResult(result commandResult) {
 		if ob != nil && ob.Step == model.OnboardStepForm {
 			ob.FormSubmitting = false
 			if result.err != nil {
-				ob.FormError = "保存模型配置失败: " + result.err.Error()
+				ob.FormError = i18n.T("保存模型配置失败: %s", result.err.Error())
 			} else {
 				ob.Step = model.OnboardStepResult
 				ob.ResultSel = 0
-				a.model.ShowInfo("模型已添加并设为默认模型")
+				a.model.ShowInfo(i18n.T("模型已添加并设为默认模型"))
 			}
 		}
 		return
 	}
 	if result.kind == commandSessionDelete {
 		if result.err != nil {
-			a.model.ShowError("删除会话失败: " + result.err.Error())
+			a.model.ShowError(i18n.T("删除会话失败: %s", result.err.Error()))
 			a.discardPre = false
 			return
 		}
 		a.model.DropPendingEvents(result.sessionID)
 		a.model.RemoveSession(result.sessionID)
-		a.model.ShowInfo("会话已删除")
+		a.model.ShowInfo(i18n.T("会话已删除"))
 		// 删除的是当前活动会话时 RemoveSession 已回主页；回到主页需重建预创建
 		// 会话，使 /effort 与 /model 在命令面板继续可用。但 discardPreSession 清理
 		// 的删除（用户正在进入真实会话）不重建，等 goHome 时再创建。

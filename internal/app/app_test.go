@@ -15,6 +15,7 @@ import (
 	"github.com/cxykevin/alcoh/internal/acp"
 	"github.com/cxykevin/alcoh/internal/config"
 	"github.com/cxykevin/alcoh/internal/demo"
+	"github.com/cxykevin/alcoh/internal/i18n"
 	"github.com/cxykevin/alcoh/internal/input"
 	"github.com/cxykevin/alcoh/internal/model"
 	"github.com/cxykevin/alcoh/internal/renderer"
@@ -1167,5 +1168,55 @@ func TestHomeDeleteInputNotEmpty(t *testing.T) {
 	}
 	if len(a.model.Sessions) != 1 {
 		t.Errorf("sessions = %d, want 1 (delete must not trigger)", len(a.model.Sessions))
+	}
+}
+
+// TestSettingsLanguageSwitchApplies 验证 /settings 中把语言切到 en 后，
+// 全局 i18n 语言立即切换并写入本地配置；重启加载配置后仍为 en。
+func TestSettingsLanguageSwitchApplies(t *testing.T) {
+	i18n.SetLang(i18n.Zh)
+	defer i18n.SetLang(i18n.Zh)
+	dir := setConfigDir(t)
+	ft := newFakeTerm()
+	a := New(ft, demo.New(true))
+	done := runApp(t, a)
+
+	time.Sleep(100 * time.Millisecond)
+	for _, r := range "/settings" {
+		ft.sendKey(input.RuneKey(r, input.ModNone))
+	}
+	ft.sendKey(input.SimpleKey(input.KeyEnter))
+	time.Sleep(100 * time.Millisecond)
+	// 第 3 行 = 语言：三次下移后按右切到 en。
+	ft.sendKey(input.SimpleKey(input.KeyDown))
+	ft.sendKey(input.SimpleKey(input.KeyDown))
+	ft.sendKey(input.SimpleKey(input.KeyDown))
+	ft.sendKey(input.SimpleKey(input.KeyRight))
+	time.Sleep(100 * time.Millisecond)
+	ft.sendKey(input.SimpleKey(input.KeyEsc))
+	time.Sleep(50 * time.Millisecond)
+	ft.sendKey(input.RuneKey('q', input.ModCtrl))
+	time.Sleep(50 * time.Millisecond)
+	ft.sendKey(input.RuneKey('y', input.ModNone))
+	waitRun(t, done)
+
+	if i18n.Current() != i18n.En {
+		t.Errorf("current language = %q, want en", i18n.Current())
+	}
+	// 落盘配置应包含 language: en。
+	data, err := os.ReadFile(filepath.Join(dir, "alcoh", "config.json"))
+	if err != nil {
+		t.Fatalf("config not persisted: %v", err)
+	}
+	if !strings.Contains(string(data), `"language": "en"`) {
+		t.Errorf("config.json missing language=en, got:\n%s", data)
+	}
+	// 重新加载后配置保持 en。
+	loaded, err := config.Load()
+	if err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+	if loaded.Language != "en" {
+		t.Errorf("reloaded language = %q, want en", loaded.Language)
 	}
 }

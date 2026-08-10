@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/cxykevin/alcoh/internal/i18n"
 )
 
 // OnboardingStep 是新手指南的步骤。
@@ -125,12 +127,12 @@ func (ob *OnboardingState) ValidateForm() error {
 	for i, f := range onboardFormFields {
 		v := strings.TrimSpace(ob.FormValues[i])
 		if v == "" {
-			return fmt.Errorf("字段「%s」是必需的", f.Label)
+			return fmt.Errorf(i18n.T("字段「%s」是必需的"), f.Label)
 		}
 		if f.Number {
 			n, err := strconv.Atoi(v)
 			if err != nil || n <= 0 {
-				return fmt.Errorf("字段「%s」必须是正整数", f.Label)
+				return fmt.Errorf(i18n.T("字段「%s」必须是正整数"), f.Label)
 			}
 		}
 	}

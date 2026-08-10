@@ -9,6 +9,7 @@ import (
 
 	"github.com/cxykevin/alcoh/internal/acp"
 	"github.com/cxykevin/alcoh/internal/config"
+	"github.com/cxykevin/alcoh/internal/i18n"
 	"github.com/cxykevin/alcoh/internal/input"
 	"github.com/cxykevin/alcoh/internal/model"
 	"github.com/cxykevin/alcoh/internal/renderer"
@@ -321,7 +322,7 @@ func (a *App) tryLocalSlashCommand() bool {
 		m.Input.Clear()
 		m.CloseSlash()
 		if !m.SupportsEffort() {
-			m.ShowError("服务端未公布 thought_level 配置，/effort 不可用")
+			m.ShowError(i18n.T("服务端未公布 thought_level 配置，/effort 不可用"))
 			return true
 		}
 		if rest == "" {
@@ -331,7 +332,7 @@ func (a *App) tryLocalSlashCommand() bool {
 		}
 		// 带参数：校验后直接设置。
 		if !m.ValidEffortValue(rest) {
-			m.ShowError("无效的 effort 值: " + rest + "（可选: unset/low/medium/high/xhigh/max）")
+			m.ShowError(i18n.T("无效的 effort 值: %s（可选: unset/low/medium/high/xhigh/max）", rest))
 			return true
 		}
 		a.setEffort(rest)
@@ -339,7 +340,7 @@ func (a *App) tryLocalSlashCommand() bool {
 		m.Input.Clear()
 		m.CloseSlash()
 		if !m.SupportsModel() {
-			m.ShowError("服务端未公布 model 配置，/model 不可用")
+			m.ShowError(i18n.T("服务端未公布 model 配置，/model 不可用"))
 			return true
 		}
 		if rest == "" {
@@ -349,7 +350,7 @@ func (a *App) tryLocalSlashCommand() bool {
 		}
 		// 带参数：校验后直接设置。
 		if !m.ValidModelValue(rest) {
-			m.ShowError("无效的 model 值: " + rest)
+			m.ShowError(i18n.T("无效的 model 值: %s", rest))
 			return true
 		}
 		a.setModel(rest)
@@ -374,7 +375,7 @@ func (a *App) tryLocalSlashCommand() bool {
 		m.Input.Clear()
 		m.CloseSlash()
 		if !m.SupportsAlkaid0() {
-			m.ShowError("服务端未声明 alkaid0 扩展能力，/server 不可用")
+			m.ShowError(i18n.T("服务端未声明 alkaid0 扩展能力，/server 不可用"))
 			return true
 		}
 		a.openServerEditor()
@@ -403,15 +404,15 @@ func (a *App) settingsKey(ke input.KeyEvent) {
 	m := a.model
 	switch ke.Type {
 	case input.KeyUp:
-		m.MoveSettings(-1, 3)
+		m.MoveSettings(-1, 4)
 	case input.KeyDown:
-		m.MoveSettings(1, 3)
+		m.MoveSettings(1, 4)
 	case input.KeyLeft:
-		if m.CycleColorMode(-1) {
+		if m.CycleColorMode(-1) || m.CycleLanguage(-1) {
 			a.saveSettings()
 		}
 	case input.KeyRight:
-		if m.CycleColorMode(1) {
+		if m.CycleColorMode(1) || m.CycleLanguage(1) {
 			a.saveSettings()
 		}
 	case input.KeyEnter:
@@ -485,7 +486,7 @@ func (a *App) setModel(value string) {
 func (a *App) openServerEditor() {
 	m := a.model
 	if !m.SupportsAlkaid0() {
-		m.ShowError("服务端未声明 alkaid0 扩展能力")
+		m.ShowError(i18n.T("服务端未声明 alkaid0 扩展能力"))
 		return
 	}
 	m.OpenServer()
@@ -772,7 +773,7 @@ func (a *App) applyOnboardingEffort(value string) {
 	}
 	a.model.Settings.OnboardingEffort = value
 	if err := config.Save(a.model.Settings); err != nil {
-		a.model.ShowError("保存本地配置失败: " + err.Error())
+		a.model.ShowError(i18n.T("保存本地配置失败: %s", err.Error()))
 	}
 }
 
@@ -830,7 +831,7 @@ func (a *App) activateAddRow(ed *model.ConfigEditor) {
 func (a *App) commitConfigEdit(ed *model.ConfigEditor) {
 	patch, ok, errMsg := ed.CommitEdit()
 	if !ok {
-		a.model.ShowError("编辑失败: " + errMsg)
+		a.model.ShowError(i18n.T("编辑失败: %s", errMsg))
 		return
 	}
 	a.applyConfigSet(patch)
@@ -840,7 +841,7 @@ func (a *App) commitConfigEdit(ed *model.ConfigEditor) {
 func (a *App) confirmConfigAddKey(ed *model.ConfigEditor) {
 	patch, ok, errMsg := ed.ConfirmAddKey()
 	if !ok {
-		a.model.ShowError("添加失败: " + errMsg)
+		a.model.ShowError(i18n.T("添加失败: %s", errMsg))
 		return
 	}
 	// 记录新项路径：写回成功后整配置重载并重定向到新项子页。
@@ -860,9 +861,11 @@ func (a *App) deleteConfigItem(ed *model.ConfigEditor) {
 
 func (a *App) saveSettings() {
 	if err := config.Save(a.model.Settings); err != nil {
-		a.model.ShowError("保存本地配置失败: " + err.Error())
+		a.model.ShowError(i18n.T("保存本地配置失败: %s", err.Error()))
 		return
 	}
+	// 语言变更立即生效：之后所有渲染文本按新语言输出。
+	i18n.SetLang(i18n.Detect(a.model.Settings.Language))
 	a.mode = colorMode(a.model.Settings.ColorMode)
 	a.model.ClearError()
 }
@@ -1053,10 +1056,10 @@ func (a *App) copySelection() string {
 		return ""
 	}
 	if err := a.term.CopyToClipboard(text); err != nil {
-		m.ShowError("复制失败: " + err.Error())
+		m.ShowError(i18n.T("复制失败: %s", err.Error()))
 		return text
 	}
-	m.ShowInfo(fmt.Sprintf("已复制 %d 个字符", len([]rune(text))))
+	m.ShowInfo(i18n.T("已复制 %d 个字符", len([]rune(text))))
 	return text
 }
 
@@ -1192,7 +1195,7 @@ func (a *App) handleCtrlC() {
 		return
 	}
 	a.lastCtrlCAt = now
-	m.ShowInfo("再次按 Ctrl+C 退出")
+	m.ShowInfo(i18n.T("再次按 Ctrl+C 退出"))
 }
 
 func (a *App) permissionKey(ke input.KeyEvent) {
@@ -1321,7 +1324,7 @@ func (a *App) deleteSession(id string) {
 		return
 	}
 	if !a.model.SupportsSessionDelete() {
-		a.model.ShowError("服务端未声明 session.delete 能力，无法删除会话")
+		a.model.ShowError(i18n.T("服务端未声明 session.delete 能力，无法删除会话"))
 		return
 	}
 	a.startCommand(commandResult{kind: commandSessionDelete, sessionID: id}, func(ctx context.Context) (acp.Session, error) {
@@ -1405,7 +1408,7 @@ func (a *App) validateAndSubmitElicitation() error {
 		for _, r := range required {
 			if fieldName, ok := r.(string); ok {
 				if val, exists := m.ElicitationFormData[fieldName]; !exists || val == "" {
-					return fmt.Errorf("字段 %s 是必需的", fieldName)
+					return fmt.Errorf(i18n.T("字段 %s 是必需的"), fieldName)
 				}
 			}
 		}
@@ -1424,7 +1427,7 @@ func (a *App) validateAndSubmitElicitation() error {
 						}
 					}
 					if !valid {
-						return fmt.Errorf("字段 %s 的值必须是枚举值之一", field)
+						return fmt.Errorf(i18n.T("字段 %s 的值必须是枚举值之一"), field)
 					}
 				}
 			}
@@ -1434,7 +1437,7 @@ func (a *App) validateAndSubmitElicitation() error {
 	// 序列化表单数据
 	content, err := json.Marshal(m.ElicitationFormData)
 	if err != nil {
-		return fmt.Errorf("序列化表单数据失败: %w", err)
+		return fmt.Errorf("%s: %w", i18n.T("序列化表单数据失败"), err)
 	}
 
 	a.respondElicitation(acp.ElicitationActionAccept, content)

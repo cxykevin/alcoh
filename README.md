@@ -62,6 +62,10 @@ alcoh \
 alcoh \
   --ws-url 'ws://127.0.0.1:7433/acp?token={token}' \
   --cwd "$PWD"
+
+# One Shot 模式：启动后自动进入会话并发送消息
+alcoh --message '帮我实现一个 TCP 服务器'
+alcoh -m '你好'
 ```
 
 可用参数：
@@ -73,7 +77,17 @@ alcoh \
 - `--host <host>` / `--port <port>` / `--path <path>` / `--key <key>`：覆盖默认 WebSocket 连接的 host/端口/路径/认证 key；
 - `--cwd <dir>`：新建 ACP 会话的工作目录，默认取 alcoh 进程当前目录（`--workdir` 为别名）；
 - `--env KEY=VALUE`：追加环境变量，可重复；
+- `--message <text>` / `-m <text>`：**One Shot 模式**——启动后自动进入会话视图并发送该消息，无需手动输入；复用主页预创建会话（无预创建会话时新建）；
 - `--shutdown-timeout <duration>`：退出时等待 agent 的时长，默认 `2s`；
+
+---
+
+## 国际化（i18n）
+
+界面语言按以下优先级确定：**本地配置**（`/settings` 中的「语言」项，持久化到 `~/.config/alcoh/config.json` 的 `language` 字段）→ **环境变量 `ALCOH_LANG`** → **系统 locale**（`LANG`/`LC_ALL`/`LC_MESSAGES`）→ 默认中文。
+
+- 当前支持 `zh`（默认）与 `en` 两种语言；`/settings` 里可随时切换，保存后立即生效
+- 翻译表位于 `internal/i18n/en.go`（键为中文原文，缺失条目回退中文）；新增文案只需把用户可见字符串包上 `i18n.T("…")` 并补充英文翻译
 
 ---
 
