@@ -341,6 +341,8 @@ type modelSnapshot struct {
 	ServerSaving  bool   // 服务端配置写回/全量重载进行中（编辑被阻塞）
 	ServerCurKey  string // 服务端配置编辑器当前页 Key（根为空串）
 	ServerSelKey  string // 当前页选中行节点 Key（无选中行或非对象键时为空串）
+	BodyScroll    int    // 最近一帧正文滚动偏移
+	ThoughtRow    int    // 最近一帧首个思考标题行（contentY），无则 -1
 }
 
 // snapshot 返回当前模型状态快照，供测试在应用运行期间安全轮询。
@@ -348,8 +350,10 @@ func (a *App) snapshot() modelSnapshot {
 	a.modelMu.RLock()
 	defer a.modelMu.RUnlock()
 	s := modelSnapshot{
-		Quitting: a.model.Quitting,
-		Modal:    a.model.Modal,
+		Quitting:      a.model.Quitting,
+		Modal:         a.model.Modal,
+		BodyScroll:    a.view.BodyScroll,
+		ThoughtRow:    firstThoughtRow(a.view.BodyToggles),
 	}
 	if a.model.ServerCfg != nil {
 		s.ServerCfg = true
@@ -369,6 +373,17 @@ func (a *App) snapshot() modelSnapshot {
 		s.FollowBottom = a.model.Active.FollowBottom
 	}
 	return s
+}
+
+// firstThoughtRow 返回 Toggles 中第一个思考标题行的 contentY；无则 -1。
+func firstThoughtRow(toggles map[int]view.ToggleRef) int {
+	row := -1
+	for r, ref := range toggles {
+		if ref.Kind == view.ToggleThought && (row < 0 || r < row) {
+			row = r
+		}
+	}
+	return row
 }
 
 func colorMode(value string) renderer.ColorMode {
