@@ -13,6 +13,7 @@ import (
 	"github.com/cxykevin/alcoh/internal/input"
 	"github.com/cxykevin/alcoh/internal/model"
 	"github.com/cxykevin/alcoh/internal/renderer"
+	"github.com/cxykevin/alcoh/internal/view"
 	"github.com/cxykevin/alcoh/internal/widget"
 )
 
@@ -72,6 +73,10 @@ func (a *App) dispatchKey(ke input.KeyEvent) {
 	}
 	if ke.IsCtrl() && ke.Rune == 'c' {
 		a.handleCtrlC()
+		return
+	}
+	if ke.IsCtrl() && ke.Rune == 'o' {
+		a.expandAll()
 		return
 	}
 	// ? 帮助：仅当输入框为空时触发；输入框有内容时 "?" 按普通字符输入。
@@ -927,6 +932,10 @@ func (a *App) handleSelect(me input.MouseEvent) {
 			m.Selection = nil
 			return
 		}
+		// 左键点击思考/工具标题行：切换该单项展开/折叠，不进入框选。
+		if a.clickBodyToggle(x, y, rect) {
+			return
+		}
 		m.Selection = &model.Selection{AnchorX: x, AnchorY: y, CurX: x, CurY: y}
 	case input.MouseMove:
 		if m.Selection != nil {
@@ -947,6 +956,31 @@ func (a *App) handleSelect(me input.MouseEvent) {
 			}
 		}
 	}
+}
+
+// clickBodyToggle 处理鼠标左键点击正文中思考/工具标题行：命中时切换该单项的
+// 展开/折叠状态并返回 true（不进入框选）。坐标 x/y 为 0-based buffer 坐标。
+func (a *App) clickBodyToggle(x, y int, rect renderer.Rect) bool {
+	m := a.model
+	if !m.HasActive() {
+		return false
+	}
+	row := y - rect.Y + a.view.BodyScroll
+	ref, ok := a.view.BodyToggles[row]
+	if !ok {
+		return false
+	}
+	s := m.Active
+	switch ref.Kind {
+	case view.ToggleThought:
+		s.ToggleMessage(ref.ID)
+	case view.ToggleTool:
+		s.ToggleToolCall(ref.ID)
+	default:
+		return false
+	}
+	a.render()
+	return true
 }
 
 // copySelection 提取当前选择区域的正文原始文本并复制到剪贴板。复制成功后清除选择。
@@ -1075,6 +1109,24 @@ func (a *App) bodyText(sel *model.Selection) string {
 		sb.WriteString(blk.Raw)
 	}
 	return sb.String()
+}
+
+// expandAll 切换当前会话全部思维链与工具调用的展开状态（Ctrl+O）：
+// 全部已展开时再按一次收回（折叠全部），否则展开全部。
+func (a *App) expandAll() {
+	m := a.model
+	if !m.HasActive() {
+		return
+	}
+	s := m.Active
+	if s.AllExpanded() && s.HasCollapsible() {
+		s.CollapseAll()
+		m.ShowInfo(i18n.T("已折叠全部思考与工具调用"))
+	} else {
+		s.ExpandAll()
+		m.ShowInfo(i18n.T("已展开全部思考与工具调用"))
+	}
+	a.render()
 }
 
 // handleCtrlC 处理 Ctrl+C：

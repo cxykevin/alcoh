@@ -76,6 +76,68 @@ func TestThoughtAutoCollapse(t *testing.T) {
 	}
 }
 
+func TestExpandAll(t *testing.T) {
+	s := NewSession("s1", "test")
+	// 两条思考：完整块后标记完成，再自动折叠。
+	s.AppendChunk(&acp.MessageChunkEvent{SessionID: "s1", MessageID: "t1", IsThought: true, Text: "想 1"})
+	s.AppendChunk(&acp.MessageChunkEvent{SessionID: "s1", MessageID: "t2", IsThought: true, Text: "想 2"})
+	for _, id := range []string{"t1", "t2"} {
+		s.ApplyMessage(&acp.MessageUpdateEvent{
+			SessionID: "s1", IsThought: true,
+			Message: acp.Message{MessageID: id, ContentSet: true,
+				Content: []acp.ContentBlock{{Type: "text", Text: strPtr("想")}}},
+		})
+	}
+	s.CollapseThoughts()
+	// 一条展开、一条折叠的工具调用。
+	s.ApplyToolCall(&acp.ToolCallUpdateEvent{SessionID: "s1", ToolCallID: "tc1", Title: strPtr("tool 1")})
+	s.ApplyToolCall(&acp.ToolCallUpdateEvent{SessionID: "s1", ToolCallID: "tc2", Title: strPtr("tool 2")})
+	s.ToggleToolCall("tc2")
+	for _, m := range s.Messages {
+		if m.Kind != MsgThought || !m.Collapsed() {
+			t.Fatalf("thought should be collapsed before ExpandAll")
+		}
+	}
+	if !s.ToolCalls["tc1"].Expanded || s.ToolCalls["tc2"].Expanded {
+		t.Fatalf("tool call expansion state wrong before ExpandAll")
+	}
+
+	s.ExpandAll()
+
+	for _, m := range s.Messages {
+		if m.Kind == MsgThought && !m.Expanded {
+			t.Errorf("thought %s should be expanded after ExpandAll", m.MessageID)
+		}
+	}
+	for id, tc := range s.ToolCalls {
+		if !tc.Expanded {
+			t.Errorf("tool call %s should be expanded after ExpandAll", id)
+		}
+	}
+	if !s.AllExpanded() {
+		t.Error("AllExpanded should be true after ExpandAll")
+	}
+
+	// 再次按 Ctrl+O：收回（全部折叠）。
+	s.CollapseAll()
+	for _, m := range s.Messages {
+		if m.Kind == MsgThought && m.Expanded {
+			t.Errorf("thought %s should be collapsed after CollapseAll", m.MessageID)
+		}
+	}
+	for id, tc := range s.ToolCalls {
+		if tc.Expanded {
+			t.Errorf("tool call %s should be collapsed after CollapseAll", id)
+		}
+	}
+	if s.AllExpanded() {
+		t.Error("AllExpanded should be false after CollapseAll")
+	}
+	if !s.HasCollapsible() {
+		t.Error("HasCollapsible should be true with thoughts and tool calls")
+	}
+}
+
 func TestThoughtCollapsesWhenBodyStarts(t *testing.T) {
 	// 思考结束后立即折叠，而不是等整个 turn 的 idle。
 	s := NewSession("s1", "test")

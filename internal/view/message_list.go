@@ -14,10 +14,29 @@ var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "�
 
 func SpinFrame(n int) string { return spinnerFrames[n%len(spinnerFrames)] }
 
+// ToggleKind 是正文块顶行可点击目标的类型。
+type ToggleKind int
+
+const (
+	// ToggleNone 表示该行不可点击。
+	ToggleNone ToggleKind = iota
+	// ToggleThought 表示思考消息：点击标题行展开/折叠。
+	ToggleThought
+	// ToggleTool 表示工具调用：点击标题行展开/折叠。
+	ToggleTool
+)
+
+// ToggleRef 描述正文某行被鼠标点击时应切换展开/折叠的目标。
+type ToggleRef struct {
+	Kind ToggleKind
+	ID   string
+}
+
 type block struct {
 	lines    [][]Span
 	raw      string    // 块级原始内容（工具/终端/思考等，复制用，无渲染前缀）
 	srcLines []SrcLine // 行级插针：每渲染行对应的原始逻辑行文本（消息块）
+	toggle   *ToggleRef // 非 nil 时顶行可点击切换展开/折叠（思考/工具）
 }
 
 // SrcLine 是行级插针的一行：Text 为该渲染行对应的原始 markdown 逻辑行，
@@ -41,6 +60,9 @@ type MessageList struct {
 	SpinFrame int
 	Scroll    int         // 最近一次 Draw 实际使用的滚动偏移
 	Body      []BodyBlock // 最近一次 Draw 构建的正文块目录
+	// Toggles 记录可点击切换展开/折叠的正文行（contentY → 目标，仅标题行），
+	// 由 Draw 每次重建，供鼠标点击命中测试使用。
+	Toggles map[int]ToggleRef
 }
 
 func (ml *MessageList) Draw(c *renderer.Canvas, r renderer.Rect, s *model.SessionState) {
@@ -73,6 +95,7 @@ func (ml *MessageList) Draw(c *renderer.Canvas, r renderer.Rect, s *model.Sessio
 	// 当前最大滚动偏移，这样 ScrollUp 解除贴底时能直接从底部继续滚动。
 	s.Scroll = scroll
 	ml.Scroll = scroll
+	ml.Toggles = map[int]ToggleRef{}
 	ml.Body = ml.bodyBlocks(blocks)
 	contentY := 0
 	for _, blk := range blocks {
@@ -138,6 +161,7 @@ func (ml *MessageList) buildBlocks(s *model.SessionState, width int) []*block {
 
 // bodyBlocks 把 blocks 展平为按渲染行（contentY）索引的正文块目录。
 // 消息块带行级插针 Src；其余块保留块级 Raw。空内容跳过，但行号仍累计。
+// 同时为思考/工具块记录顶行（标题行）的 ToggleRef，供鼠标点击切换。
 func (ml *MessageList) bodyBlocks(blocks []*block) []BodyBlock {
 	var out []BodyBlock
 	row := 0
@@ -148,6 +172,9 @@ func (ml *MessageList) bodyBlocks(blocks []*block) []BodyBlock {
 			out = append(out, BodyBlock{Src: blk.srcLines, Start: row, End: row + n - 1})
 		case blk.raw != "":
 			out = append(out, BodyBlock{Raw: blk.raw, Start: row, End: row + n - 1})
+		}
+		if blk.toggle != nil {
+			ml.Toggles[row] = *blk.toggle
 		}
 		row += n
 	}
@@ -193,7 +220,7 @@ func (ml *MessageList) messageBlock(msg *model.Message, width int) *block {
 func (ml *MessageList) thoughtBlock(msg *model.Message, width int) *block {
 	t := ml.Theme
 	// 思考内容复制原文（折叠时仅显示标题，复制仍取全部原始行）。
-	blk := &block{raw: strings.Join(msg.Lines(), "\n")}
+	blk := &block{raw: strings.Join(msg.Lines(), "\n"), toggle: &ToggleRef{Kind: ToggleThought, ID: msg.MessageID}}
 	if msg.Collapsed() {
 		n := len(msg.Lines())
 		blk.lines = [][]Span{{{Text: "▸ thinking  ✓ " + itoa(n) + " lines", Style: t.Style(t.TextMuted).WithDim(true)}}}
@@ -221,7 +248,7 @@ func (ml *MessageList) thoughtBlock(msg *model.Message, width int) *block {
 func (ml *MessageList) toolBlock(tc *model.ToolCall, width int) *block {
 	t := ml.Theme
 	// 工具内容不是 markdown，复制其原始文本（标题/输入输出/内容块/位置）。
-	blk := &block{raw: ml.toolRaw(tc)}
+	blk := &block{raw: ml.toolRaw(tc), toggle: &ToggleRef{Kind: ToggleTool, ID: tc.ID}}
 	title := tc.Title
 	if title == "" {
 		title = string(tc.Kind)
