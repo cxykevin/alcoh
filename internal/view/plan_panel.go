@@ -1,6 +1,7 @@
 package view
 
 import (
+	"github.com/cxykevin/alcoh/internal/i18n"
 	"github.com/cxykevin/alcoh/internal/acp"
 	"github.com/cxykevin/alcoh/internal/model"
 	"github.com/cxykevin/alcoh/internal/renderer"
@@ -50,9 +51,9 @@ func (p *PlanPanel) Draw(c *renderer.Canvas, r renderer.Rect, s *model.SessionSt
 			inProg++
 		}
 	}
-	summary := "计划  " + itoa(done) + "/" + itoa(len(plan.Entries)) + " 完成"
+	summary := i18n.T("计划  %s/%s 完成", itoa(done), itoa(len(plan.Entries)))
 	if inProg > 0 {
-		summary += "   ·  " + itoa(inProg) + " 进行中"
+		summary += i18n.T("   ·  %s 进行中", itoa(inProg))
 	}
 	c.PutText(r.X, r.Y, renderer.Truncate(summary, r.W), t.Style(t.Secondary).WithBold(true))
 

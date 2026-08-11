@@ -1,11 +1,11 @@
 package view
 
 import (
-	"strconv"
 	"strings"
 
 	"github.com/cxykevin/alcoh/internal/acp"
 	"github.com/cxykevin/alcoh/internal/config"
+	"github.com/cxykevin/alcoh/internal/i18n"
 	"github.com/cxykevin/alcoh/internal/model"
 	"github.com/cxykevin/alcoh/internal/renderer"
 	"github.com/cxykevin/alcoh/internal/widget"
@@ -60,7 +60,7 @@ func (pc *PermissionContent) Draw(c *renderer.Canvas, r renderer.Rect) {
 	t := pc.Theme
 	y := r.Y
 	if pc.Subject != "" && y < r.Y+r.H {
-		c.PutText(r.X, y, renderer.Truncate("对象: "+pc.Subject, r.W), t.Style(t.Primary).WithBold(true))
+		c.PutText(r.X, y, renderer.Truncate(i18n.T("对象: %s", pc.Subject), r.W), t.Style(t.Primary).WithBold(true))
 		y++
 	}
 	if pc.Description != "" && y < r.Y+r.H {
@@ -96,7 +96,7 @@ func (pc *PermissionContent) Draw(c *renderer.Canvas, r renderer.Rect) {
 		y++
 	}
 	if y < r.Y+r.H {
-		c.PutText(r.X, y, "↑↓ 选择    Enter 确认    a/r 快捷    Esc 取消", t.Style(t.TextMuted))
+		c.PutText(r.X, y, i18n.T("↑↓ 选择    Enter 确认    a/r 快捷    Esc 取消"), t.Style(t.TextMuted))
 	}
 }
 
@@ -111,35 +111,36 @@ func maxInt(a, b int) int {
 func (v *AppView) drawHelp(c *renderer.Canvas, r renderer.Rect) {
 	t := v.Theme
 	lines := []string{
-		"alcoh 快捷键",
+		i18n.T("alcoh 快捷键"),
 		"",
-		"Enter          提交输入        Shift+Enter / 行尾 \\ + Enter 换行",
-		"/              命令面板        Ctrl+,         打开设置",
-		"/effort        推理强度滑条    /clear         清除会话(on 不取消)",
-		"↑↓             移动 / 历史     ←→            移动光标",
-		"Ctrl+A/E       行首 / 行尾     Ctrl+K/U      删至行尾/行首",
-		"Ctrl+W         删前一词        Ctrl+Y        粘贴",
-		"Ctrl+/         撤销            Ctrl+Q        退出确认",
-		"Ctrl+C         清空输入 / 取消任务 / 连按两次退出",
-		"PageUp/Down    滚动消息        Home/End      顶部/底部",
-		"鼠标滚轮       滚动消息        Shift+滚轮    半页滚动",
-		"鼠标拖拽       框选文本        选中后 Ctrl+C 复制",
-		"Tab            切换焦点        Enter         展开/折叠",
-		"?              帮助            Esc           关闭",
-		"Enter          恢复会话(空输入) d            删除选中会话（首页）",
+		i18n.T("Enter          提交输入        Shift+Enter / 行尾 \\ + Enter 换行"),
+		i18n.T("/              命令面板        Ctrl+,         打开设置"),
+		i18n.T("/connect       连接模型服务商（模板/填 key/拉取模型）"),
+		i18n.T("/effort        推理强度滑条    /clear         清除会话(on 不取消)"),
+		i18n.T("↑↓             移动 / 历史     ←→            移动光标"),
+		i18n.T("Ctrl+A/E       行首 / 行尾     Ctrl+K/U      删至行尾/行首"),
+		i18n.T("Ctrl+W         删前一词        Ctrl+Y        粘贴"),
+		i18n.T("Ctrl+/         撤销            Ctrl+Q        退出确认"),
+		i18n.T("Ctrl+C         清空输入 / 取消任务 / 连按两次退出"),
+		i18n.T("PageUp/Down    滚动消息        Home/End      顶部/底部"),
+		i18n.T("鼠标滚轮       滚动消息        Shift+滚轮    半页滚动"),
+		i18n.T("鼠标拖拽       框选文本        选中后 Ctrl+C 复制"),
+		i18n.T("Tab            切换焦点        Enter         展开/折叠"),
+		i18n.T("?              帮助            Esc           关闭"),
+		i18n.T("Enter          恢复会话(空输入) d            删除选中会话（首页）"),
 		"",
-		"权限弹窗: ↑↓ 选择选项, a=allow, r=reject, Enter 确认, Esc 取消",
-		"       多个权限按到达顺序排队，逐条弹出；Esc 视为取消并处理下一条。",
+		i18n.T("权限弹窗: ↑↓ 选择选项, a=allow, r=reject, Enter 确认, Esc 取消"),
+		i18n.T("       多个权限按到达顺序排队，逐条弹出；Esc 视为取消并处理下一条。"),
 		"",
-		"ACP 状态: 状态栏展示当前 model/agent 元信息与 stop reason；",
-		"       未知 session update 会作为一行系统提示写入正文（原始 JSON 保留在协议诊断中）。",
+		i18n.T("ACP 状态: 状态栏展示当前 model/agent 元信息与 stop reason；"),
+		i18n.T("       未知 session update 会作为一行系统提示写入正文（原始 JSON 保留在协议诊断中）。"),
 	}
 	// 计算高度
 	contentH := len(lines)
 	modal := &widget.Modal{
 		Width:  72,
 		Height: contentH + 2,
-		Title:  "帮助",
+		Title:  i18n.T("帮助"),
 		Style:  t.Style(t.Border),
 		Content: &TextLines{
 			Theme: t,
@@ -156,11 +157,11 @@ func (v *AppView) drawConfirm(c *renderer.Canvas, r renderer.Rect) {
 	modal := &widget.Modal{
 		Width:  40,
 		Height: 5,
-		Title:  "退出",
+		Title:  i18n.T("退出"),
 		Style:  t.Style(t.Error),
 		Content: &TextLines{
 			Theme: t,
-			Lines: []string{"确定退出 alcoh 吗？", "", "  y 退出    n / Esc 取消"},
+			Lines: []string{i18n.T("确定退出 alcoh 吗？"), "", i18n.T("  y 退出    n / Esc 取消")},
 		},
 	}
 	modal.Draw(c, r)
@@ -172,7 +173,7 @@ func (v *AppView) drawSettings(c *renderer.Canvas, r renderer.Rect, m *model.App
 	modal := &widget.Modal{
 		Width:  68,
 		Height: 10,
-		Title:  "设置（本地）",
+		Title:  i18n.T("设置（本地）"),
 		Style:  t.Style(t.BorderActive),
 		Content: &SettingsContent{
 			Theme:    t,
@@ -194,9 +195,10 @@ type SettingsContent struct {
 
 func (sc *SettingsContent) Draw(c *renderer.Canvas, r renderer.Rect) {
 	rows := []struct{ label, value string }{
-		{"色彩模式", sc.Values.ColorMode},
-		{"展开思考内容", onOff(sc.Values.ThinkingExpanded)},
-		{"默认展开工具", onOff(sc.Values.ToolsExpanded)},
+		{i18n.T("色彩模式"), sc.Values.ColorMode},
+		{i18n.T("展开思考内容"), onOff(sc.Values.ThinkingExpanded)},
+		{i18n.T("默认展开工具"), onOff(sc.Values.ToolsExpanded)},
+		{i18n.T("语言"), sc.Values.Language},
 	}
 	for i, row := range rows {
 		if r.Y+i >= r.Y+r.H {
@@ -213,19 +215,19 @@ func (sc *SettingsContent) Draw(c *renderer.Canvas, r renderer.Rect) {
 	}
 	y := r.Y + len(rows) + 1
 	if y < r.Y+r.H {
-		c.PutText(r.X, y, "←→ 切换色彩模式    Enter 切换开关    Esc 关闭", sc.Theme.Style(sc.Theme.TextMuted))
+		c.PutText(r.X, y, i18n.T("←→ 切换色彩模式 / 语言    Enter 切换开关    Esc 关闭"), sc.Theme.Style(sc.Theme.TextMuted))
 	}
 	y++
 	if y < r.Y+r.H {
-		c.PutText(r.X, y, "ACP 配置更新: "+strconv.Itoa(sc.ACPCount)+" 条（只读；未声明写回 RPC）", sc.Theme.Style(sc.Theme.TextMuted))
+		c.PutText(r.X, y, i18n.T("ACP 配置更新: %d 条（只读；未声明写回 RPC）", sc.ACPCount), sc.Theme.Style(sc.Theme.TextMuted))
 	}
 }
 
 func onOff(enabled bool) string {
 	if enabled {
-		return "开启"
+		return i18n.T("开启")
 	}
-	return "关闭"
+	return i18n.T("关闭")
 }
 
 // EffortContent 是推理强度水平滑条内容区。
@@ -261,7 +263,7 @@ func (ec *EffortContent) Draw(c *renderer.Canvas, r renderer.Rect) {
 	t := ec.Theme
 	y := r.Y
 	if y < r.Y+r.H {
-		c.PutText(r.X, y, "当前: "+renderer.Truncate(ec.Current, r.W), t.Style(t.TextMuted))
+		c.PutText(r.X, y, i18n.T("当前: %s", renderer.Truncate(ec.Current, r.W)), t.Style(t.TextMuted))
 		y++
 	}
 	y++
@@ -304,7 +306,7 @@ func (ec *EffortContent) Draw(c *renderer.Canvas, r renderer.Rect) {
 	}
 	y++
 	if y < r.Y+r.H {
-		c.PutText(r.X, y, "←→ 移动    Enter 确认    Esc 取消", t.Style(t.TextMuted))
+		c.PutText(r.X, y, i18n.T("←→ 移动    Enter 确认    Esc 取消"), t.Style(t.TextMuted))
 	}
 }
 
@@ -333,7 +335,7 @@ func (mc *ModelContent) Draw(c *renderer.Canvas, r renderer.Rect) {
 	t := mc.Theme
 	y := r.Y
 	if y < r.Y+r.H {
-		c.PutText(r.X, y, "当前: "+renderer.Truncate(mc.Current, r.W), t.Style(t.TextMuted))
+		c.PutText(r.X, y, i18n.T("当前: %s", renderer.Truncate(mc.Current, r.W)), t.Style(t.TextMuted))
 		y++
 	}
 	y++
@@ -383,7 +385,7 @@ func (mc *ModelContent) Draw(c *renderer.Canvas, r renderer.Rect) {
 
 	y = r.Y + r.H - 1
 	if y >= r.Y {
-		c.PutText(r.X, y, "↑↓ 选择    Enter 确认    Esc 取消", t.Style(t.TextMuted))
+		c.PutText(r.X, y, i18n.T("↑↓ 选择    Enter 确认    Esc 取消"), t.Style(t.TextMuted))
 	}
 }
 

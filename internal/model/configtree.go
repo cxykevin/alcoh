@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 
+	"github.com/cxykevin/alcoh/internal/i18n"
 	"github.com/cxykevin/alcoh/internal/widget"
 )
 
@@ -208,13 +209,14 @@ type ConfigNode struct {
 }
 
 // DisplayKey 返回该键在界面上的显示名：数组元素显示位置 "[i]"；其余键优先
-// 取翻译表（configKeyLabels），未收录的显示原始字段名。
+// 取翻译表（configKeyLabels），未收录的显示原始字段名。中文标签按当前语言
+// 翻译（渲染时调用，切换语言即时生效）。
 func (n *ConfigNode) DisplayKey() string {
 	if n.Parent != nil && n.Parent.Kind == ConfigArray {
 		return "[" + n.Key + "]"
 	}
 	if label, ok := configKeyLabels[n.Key]; ok {
-		return label
+		return i18n.T(label)
 	}
 	return n.Key
 }
@@ -630,7 +632,7 @@ func (ed *ConfigEditor) CommitEdit() (patch json.RawMessage, ok bool, errMsg str
 	case ConfigNumber:
 		f, err := strconv.ParseFloat(text, 64)
 		if err != nil {
-			return nil, false, "无效数字: " + text
+			return nil, false, i18n.T("无效数字: %s", text)
 		}
 		n.Num = f
 	case ConfigNull:
@@ -770,7 +772,7 @@ func (ed *ConfigEditor) ConfirmAddKey() (json.RawMessage, bool, string) {
 	}
 	key := ed.AddInput.Text()
 	if key == "" {
-		return nil, false, "键名不能为空"
+		return nil, false, i18n.T("键名不能为空")
 	}
 	var val map[string]any
 	switch n.Key {
@@ -792,7 +794,7 @@ func (ed *ConfigEditor) ConfirmAddKey() (json.RawMessage, bool, string) {
 			"Args":    []any{},
 		}
 	default:
-		return nil, false, "该集合不支持新增"
+		return nil, false, i18n.T("该集合不支持新增")
 	}
 	child := buildConfigNode(key, append(n.Path, key), n, val)
 	n.Children = append(n.Children, child)

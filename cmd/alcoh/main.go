@@ -15,6 +15,7 @@ import (
 	"github.com/cxykevin/alcoh/internal/app"
 	"github.com/cxykevin/alcoh/internal/config"
 	"github.com/cxykevin/alcoh/internal/demo"
+	"github.com/cxykevin/alcoh/internal/i18n"
 	"github.com/cxykevin/alcoh/internal/term"
 	"github.com/cxykevin/alcoh/internal/wscfg"
 	"github.com/cxykevin/alcoh/product"
@@ -59,31 +60,35 @@ func newWSBackend(urlStr, cwd string) acp.Backend {
 
 func main() {
 	settings, settingsErr := config.Load()
+	// 先确定界面语言：配置 → ALCOH_LANG → 系统 locale，之后所有输出按此语言。
+	i18n.SetLang(i18n.Detect(settings.Language))
 	if settingsErr != nil {
-		fmt.Fprintln(os.Stderr, "读取本地配置失败，已使用默认值:", settingsErr)
+		fmt.Fprintln(os.Stderr, i18n.T("读取本地配置失败，已使用默认值: %s", settingsErr))
 	}
-	demoFlag := flag.Bool("demo", false, "使用内置演示 backend")
-	fast := flag.Bool("fast", false, "加速演示脚本")
-	dump := flag.Int("dump", 0, "无 TTY 渲染 N 帧 ANSI 输出（仅 demo）")
-	width := flag.Int("width", 80, "dump 模式终端宽度")
-	height := flag.Int("height", 24, "dump 模式终端高度")
-	agent := flag.String("agent", "", "ACP agent 可执行文件（与 --ws-url 二选一）")
-	wsURL := flag.String("ws-url", "", "远程 ACP agent 的 WebSocket 地址，如 ws://127.0.0.1:7433/acp?key=xxx")
+	demoFlag := flag.Bool("demo", false, i18n.T("使用内置演示 backend"))
+	fast := flag.Bool("fast", false, i18n.T("加速演示脚本"))
+	dump := flag.Int("dump", 0, i18n.T("无 TTY 渲染 N 帧 ANSI 输出（仅 demo）"))
+	width := flag.Int("width", 80, i18n.T("dump 模式终端宽度"))
+	height := flag.Int("height", 24, i18n.T("dump 模式终端高度"))
+	agent := flag.String("agent", "", i18n.T("ACP agent 可执行文件（与 --ws-url 二选一）"))
+	wsURL := flag.String("ws-url", "", i18n.T("远程 ACP agent 的 WebSocket 地址，如 ws://127.0.0.1:7433/acp?key=xxx"))
 	ws := wscfg.RegisterFlags(flag.CommandLine)
-	cwd := flag.String("cwd", "", "新建 ACP 会话的工作目录（默认 alcoh 当前目录）")
-	flag.StringVar(cwd, "workdir", "", "同 --cwd")
-	shutdownTimeout := flag.Duration("shutdown-timeout", 2*time.Second, "关闭 agent 的最长等待时间")
+	cwd := flag.String("cwd", "", i18n.T("新建 ACP 会话的工作目录（默认 alcoh 当前目录）"))
+	flag.StringVar(cwd, "workdir", "", i18n.T("同 --cwd"))
+	message := flag.String("message", "", i18n.T("One Shot 模式：启动后自动进入会话并发送该消息（可缩写 -m）"))
+	flag.StringVar(message, "m", "", i18n.T("同 --message"))
+	shutdownTimeout := flag.Duration("shutdown-timeout", 2*time.Second, i18n.T("关闭 agent 的最长等待时间"))
 	var agentArgs valuesFlag
 	var env valuesFlag
-	flag.Var(&agentArgs, "agent-arg", "传给 ACP agent 的单个 argv；可重复")
-	flag.Var(&env, "env", "追加给 ACP agent 的 KEY=VALUE 环境变量；可重复")
+	flag.Var(&agentArgs, "agent-arg", i18n.T("传给 ACP agent 的单个 argv；可重复"))
+	flag.Var(&env, "env", i18n.T("追加给 ACP agent 的 KEY=VALUE 环境变量；可重复"))
 	flag.Parse()
 	ws.ApplyExplicit(flag.CommandLine)
 
 	if !workdirExplicit() && *cwd == "" {
 		wd, err := os.Getwd()
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "获取当前工作目录失败:", err)
+			fmt.Fprintln(os.Stderr, i18n.T("获取当前工作目录失败: %s", err))
 			os.Exit(1)
 		}
 		*cwd = wd
@@ -91,7 +96,7 @@ func main() {
 	if *cwd != "" {
 		abs, err := filepath.Abs(*cwd)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "解析工作目录失败:", err)
+			fmt.Fprintln(os.Stderr, i18n.T("解析工作目录失败: %s", err))
 			os.Exit(1)
 		}
 		*cwd = abs
@@ -103,7 +108,7 @@ func main() {
 		a := app.NewWithConfig(t, backend, settings)
 		a.SetWorkdir(*cwd)
 		if err := a.RunDump("帮我实现一个 TCP 服务器", *dump); err != nil {
-			fmt.Fprintln(os.Stderr, "dump error:", err)
+			fmt.Fprintln(os.Stderr, i18n.T("dump error: %s", err))
 			os.Exit(1)
 		}
 		return
@@ -118,7 +123,7 @@ func main() {
 		backend = demo.New(*fast)
 	case *wsURL != "":
 		if *agent != "" {
-			fmt.Fprintln(os.Stderr, "--agent 与 --ws-url 互斥，请只选其一")
+			fmt.Fprintln(os.Stderr, i18n.T("--agent 与 --ws-url 互斥，请只选其一"))
 			os.Exit(2)
 		}
 		backend = newWSBackend(*wsURL, *cwd)
@@ -140,7 +145,7 @@ func main() {
 			},
 		})
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "无法配置真实 ACP client:", err)
+			fmt.Fprintln(os.Stderr, i18n.T("无法配置真实 ACP client: %s", err))
 			os.Exit(1)
 		}
 		backend = client
@@ -149,28 +154,30 @@ func main() {
 		useDefaultWS = true
 		cfg, err := ws.Resolve()
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "解析默认 WebSocket 配置失败:", err)
+			fmt.Fprintln(os.Stderr, i18n.T("解析默认 WebSocket 配置失败: %s", err))
 			os.Exit(2)
 		}
 		urlStr, err := wscfg.URL(cfg)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "构建 WebSocket 地址失败:", err)
+			fmt.Fprintln(os.Stderr, i18n.T("构建 WebSocket 地址失败: %s", err))
 			os.Exit(2)
 		}
-		fmt.Fprintf(os.Stderr, "连接 WebSocket agent: %s\n", wscfg.DisplayURL(cfg))
+		fmt.Fprintf(os.Stderr, i18n.T("连接 WebSocket agent: %s")+"\n", wscfg.DisplayURL(cfg))
 		backend = newWSBackend(urlStr, *cwd)
 	}
 
 	t, err := term.Open()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "无法打开终端:", err)
+		fmt.Fprintln(os.Stderr, i18n.T("无法打开终端: %s", err))
 		os.Exit(1)
 	}
 	a := app.NewWithConfig(t, backend, settings)
 	a.SetWorkdir(*cwd)
-	a.SetOnboardingEnabled(useDefaultWS)
+	// One Shot 模式下用户直接发消息，不再需要新手引导。
+	a.SetOnboardingEnabled(useDefaultWS && *message == "")
+	a.SetInitialPrompt(*message)
 	if err := a.Run(); err != nil {
-		fmt.Fprintln(os.Stderr, "运行错误:", err)
+		fmt.Fprintln(os.Stderr, i18n.T("运行错误: %s", err))
 		os.Exit(1)
 	}
 }

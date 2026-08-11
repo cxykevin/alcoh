@@ -9,6 +9,7 @@ import (
 
 	"github.com/cxykevin/alcoh/internal/acp"
 	"github.com/cxykevin/alcoh/internal/config"
+	"github.com/cxykevin/alcoh/internal/i18n"
 	"github.com/cxykevin/alcoh/internal/input"
 	"github.com/cxykevin/alcoh/internal/model"
 	"github.com/cxykevin/alcoh/internal/renderer"
@@ -51,6 +52,9 @@ func (a *App) dispatchKey(ke input.KeyEvent) {
 		return
 	case model.ModalOnboarding:
 		a.onboardingKey(ke)
+		return
+	case model.ModalConnect:
+		a.connectKey(ke)
 		return
 	}
 
@@ -321,7 +325,7 @@ func (a *App) tryLocalSlashCommand() bool {
 		m.Input.Clear()
 		m.CloseSlash()
 		if !m.SupportsEffort() {
-			m.ShowError("服务端未公布 thought_level 配置，/effort 不可用")
+			m.ShowError(i18n.T("服务端未公布 thought_level 配置，/effort 不可用"))
 			return true
 		}
 		if rest == "" {
@@ -331,7 +335,7 @@ func (a *App) tryLocalSlashCommand() bool {
 		}
 		// 带参数：校验后直接设置。
 		if !m.ValidEffortValue(rest) {
-			m.ShowError("无效的 effort 值: " + rest + "（可选: unset/low/medium/high/xhigh/max）")
+			m.ShowError(i18n.T("无效的 effort 值: %s（可选: unset/low/medium/high/xhigh/max）", rest))
 			return true
 		}
 		a.setEffort(rest)
@@ -339,7 +343,7 @@ func (a *App) tryLocalSlashCommand() bool {
 		m.Input.Clear()
 		m.CloseSlash()
 		if !m.SupportsModel() {
-			m.ShowError("服务端未公布 model 配置，/model 不可用")
+			m.ShowError(i18n.T("服务端未公布 model 配置，/model 不可用"))
 			return true
 		}
 		if rest == "" {
@@ -349,7 +353,7 @@ func (a *App) tryLocalSlashCommand() bool {
 		}
 		// 带参数：校验后直接设置。
 		if !m.ValidModelValue(rest) {
-			m.ShowError("无效的 model 值: " + rest)
+			m.ShowError(i18n.T("无效的 model 值: %s", rest))
 			return true
 		}
 		a.setModel(rest)
@@ -374,10 +378,18 @@ func (a *App) tryLocalSlashCommand() bool {
 		m.Input.Clear()
 		m.CloseSlash()
 		if !m.SupportsAlkaid0() {
-			m.ShowError("服务端未声明 alkaid0 扩展能力，/server 不可用")
+			m.ShowError(i18n.T("服务端未声明 alkaid0 扩展能力，/server 不可用"))
 			return true
 		}
 		a.openServerEditor()
+	case "/connect":
+		m.Input.Clear()
+		m.CloseSlash()
+		if !m.SupportsAlkaid0() {
+			m.ShowError(i18n.T("服务端未声明 alkaid0 扩展能力，/connect 不可用"))
+			return true
+		}
+		a.openConnect()
 	default:
 		return false
 	}
@@ -403,15 +415,15 @@ func (a *App) settingsKey(ke input.KeyEvent) {
 	m := a.model
 	switch ke.Type {
 	case input.KeyUp:
-		m.MoveSettings(-1, 3)
+		m.MoveSettings(-1, 4)
 	case input.KeyDown:
-		m.MoveSettings(1, 3)
+		m.MoveSettings(1, 4)
 	case input.KeyLeft:
-		if m.CycleColorMode(-1) {
+		if m.CycleColorMode(-1) || m.CycleLanguage(-1) {
 			a.saveSettings()
 		}
 	case input.KeyRight:
-		if m.CycleColorMode(1) {
+		if m.CycleColorMode(1) || m.CycleLanguage(1) {
 			a.saveSettings()
 		}
 	case input.KeyEnter:
@@ -485,7 +497,7 @@ func (a *App) setModel(value string) {
 func (a *App) openServerEditor() {
 	m := a.model
 	if !m.SupportsAlkaid0() {
-		m.ShowError("服务端未声明 alkaid0 扩展能力")
+		m.ShowError(i18n.T("服务端未声明 alkaid0 扩展能力"))
 		return
 	}
 	m.OpenServer()
@@ -617,8 +629,8 @@ func (a *App) serverConfigKey(ke input.KeyEvent) {
 	}
 }
 
-// onboardingKey 处理全屏新手引导按键。按当前步骤分发；Esc 在任何步骤都视为
-// "跳过"（欢迎页返回 / 其它步骤回退一级，见各分支）。
+// onboardingKey 处理新手引导剩余步骤按键（模型配置由 /connect 向导完成）。
+// Esc 在任何步骤都视为"跳过"（直接结束引导）。
 func (a *App) onboardingKey(ke input.KeyEvent) {
 	m := a.model
 	ob := m.Onboarding
@@ -631,45 +643,6 @@ func (a *App) onboardingKey(ke input.KeyEvent) {
 		return
 	}
 	switch ob.Step {
-	case model.OnboardStepWelcome:
-		switch {
-		case ke.Type == input.KeyEnter:
-			ob.Step = model.OnboardStepProvider
-		case ke.Type == input.KeyEsc:
-			a.finishOnboarding()
-		}
-	case model.OnboardStepProvider:
-		providers := model.OnboardProviders()
-		switch {
-		case ke.Type == input.KeyUp && ob.ProviderSel > 0:
-			ob.ProviderSel--
-		case ke.Type == input.KeyDown && ob.ProviderSel < len(providers)-1:
-			ob.ProviderSel++
-		case ke.Type == input.KeyEnter:
-			if p, ok := ob.SelectedProvider(); ok {
-				ob.SetFormProvider(p.URL)
-				ob.Step = model.OnboardStepForm
-			}
-		case ke.Type == input.KeyEsc:
-			ob.Step = model.OnboardStepWelcome
-		}
-	case model.OnboardStepForm:
-		a.onboardingFormKey(ke, ob)
-	case model.OnboardStepResult:
-		switch {
-		case ke.Type == input.KeyUp && ob.ResultSel > 0:
-			ob.ResultSel--
-		case ke.Type == input.KeyDown && ob.ResultSel < 1:
-			ob.ResultSel++
-		case ke.Type == input.KeyEnter:
-			if ob.ResultSel == 0 {
-				a.openOnboardServerEditor()
-			} else {
-				ob.Step = model.OnboardStepEffort
-			}
-		case ke.Type == input.KeyEsc:
-			a.finishOnboarding()
-		}
 	case model.OnboardStepEffort:
 		n := len(model.OnboardEffortCandidates)
 		switch {
@@ -681,7 +654,7 @@ func (a *App) onboardingKey(ke input.KeyEvent) {
 			a.applyOnboardingEffort(model.OnboardEffortCandidates[ob.EffortSel])
 			ob.Step = model.OnboardStepTeaching
 		case ke.Type == input.KeyEsc:
-			ob.Step = model.OnboardStepResult
+			a.finishOnboarding()
 		}
 	case model.OnboardStepTeaching:
 		switch ke.Type {
@@ -691,75 +664,10 @@ func (a *App) onboardingKey(ke input.KeyEvent) {
 	}
 }
 
-// onboardingFormKey 处理模型表单步骤：↑↓/Tab 切换字段、输入字符、退格删除、
-// Enter 提交（提交中忽略编辑）。Esc 返回服务商选择。
-func (a *App) onboardingFormKey(ke input.KeyEvent, ob *model.OnboardingState) {
-	fields := model.OnboardFields()
-	switch {
-	case ke.Type == input.KeyEsc:
-		ob.Step = model.OnboardStepProvider
-		ob.FormError = ""
-	case ke.Type == input.KeyUp:
-		if ob.FormFocus > 0 {
-			ob.FormFocus--
-		}
-	case ke.Type == input.KeyDown:
-		if ob.FormFocus < len(fields)-1 {
-			ob.FormFocus++
-		}
-	case ke.Type == input.KeyTab:
-		if ob.FormFocus < len(fields)-1 {
-			ob.FormFocus++
-		} else {
-			ob.FormFocus = 0
-		}
-	case ke.Type == input.KeyEnter:
-		if !ob.FormSubmitting {
-			a.submitOnboardingForm(ob)
-		}
-	case ke.Type == input.KeyBackspace:
-		v := ob.FormValues[ob.FormFocus]
-		if len(v) > 0 {
-			ob.FormValues[ob.FormFocus] = v[:len(v)-1]
-		}
-		ob.FormError = ""
-	case ke.Type == input.KeyRune:
-		if !ob.FormSubmitting {
-			ob.FormValues[ob.FormFocus] += string(ke.Rune)
-			ob.FormError = ""
-		}
-	}
-}
-
-// submitOnboardingForm 校验并提交模型表单：经 alk.cxykevin.top/config/set 把新
-// 模型写入 Model.Models.<0> 并设为默认模型（DefaultModelID=0，数值类型）。
-// 提交期间置 FormSubmitting 阻塞编辑；结果经 applyCommandResult 处理。
-func (a *App) submitOnboardingForm(ob *model.OnboardingState) {
-	if err := ob.ValidateForm(); err != nil {
-		ob.FormError = err.Error()
-		return
-	}
-	ob.FormSubmitting = true
-	ob.FormError = ""
-	patch := ob.ModelPatch()
-	a.startCommand(commandResult{kind: commandOnboardingSubmit}, func(ctx context.Context) (acp.Session, error) {
-		return nil, a.backend.SetConfig(ctx, patch)
-	})
-}
-
-// openOnboardServerEditor 从引导结果页打开 /server 配置编辑器，定位到
-// Config/Model/Models 页面供用户详细配置模型。关闭编辑器后回到引导结果页
-//（见 closeServerEditor）。
-func (a *App) openOnboardServerEditor() {
-	a.onboardFromServer = true
-	a.openServerEditor() // 内部会重置 serverCfgFocus，故先打开再设置重定向目标。
-	a.serverCfgFocus = []string{"Model", "Models"}
-}
-
-// finishOnboarding 结束新手引导进入主页：清除引导状态并返回主页（goHome 会
-// 创建主页预创建会话，使 /effort 与 /model 在命令面板可用）。
+// finishOnboarding 结束新手引导进入主页：清除引导与 /connect 向导状态并返回
+// 主页（goHome 会创建主页预创建会话，使 /effort 与 /model 在命令面板可用）。
 func (a *App) finishOnboarding() {
-	a.onboardFromServer = false
+	a.model.CloseConnect()
 	a.model.CloseOnboarding()
 	a.goHome()
 }
@@ -772,7 +680,7 @@ func (a *App) applyOnboardingEffort(value string) {
 	}
 	a.model.Settings.OnboardingEffort = value
 	if err := config.Save(a.model.Settings); err != nil {
-		a.model.ShowError("保存本地配置失败: " + err.Error())
+		a.model.ShowError(i18n.T("保存本地配置失败: %s", err.Error()))
 	}
 }
 
@@ -830,7 +738,7 @@ func (a *App) activateAddRow(ed *model.ConfigEditor) {
 func (a *App) commitConfigEdit(ed *model.ConfigEditor) {
 	patch, ok, errMsg := ed.CommitEdit()
 	if !ok {
-		a.model.ShowError("编辑失败: " + errMsg)
+		a.model.ShowError(i18n.T("编辑失败: %s", errMsg))
 		return
 	}
 	a.applyConfigSet(patch)
@@ -840,7 +748,7 @@ func (a *App) commitConfigEdit(ed *model.ConfigEditor) {
 func (a *App) confirmConfigAddKey(ed *model.ConfigEditor) {
 	patch, ok, errMsg := ed.ConfirmAddKey()
 	if !ok {
-		a.model.ShowError("添加失败: " + errMsg)
+		a.model.ShowError(i18n.T("添加失败: %s", errMsg))
 		return
 	}
 	// 记录新项路径：写回成功后整配置重载并重定向到新项子页。
@@ -860,9 +768,11 @@ func (a *App) deleteConfigItem(ed *model.ConfigEditor) {
 
 func (a *App) saveSettings() {
 	if err := config.Save(a.model.Settings); err != nil {
-		a.model.ShowError("保存本地配置失败: " + err.Error())
+		a.model.ShowError(i18n.T("保存本地配置失败: %s", err.Error()))
 		return
 	}
+	// 语言变更立即生效：之后所有渲染文本按新语言输出。
+	i18n.SetLang(i18n.Detect(a.model.Settings.Language))
 	a.mode = colorMode(a.model.Settings.ColorMode)
 	a.model.ClearError()
 }
@@ -1053,10 +963,10 @@ func (a *App) copySelection() string {
 		return ""
 	}
 	if err := a.term.CopyToClipboard(text); err != nil {
-		m.ShowError("复制失败: " + err.Error())
+		m.ShowError(i18n.T("复制失败: %s", err.Error()))
 		return text
 	}
-	m.ShowInfo(fmt.Sprintf("已复制 %d 个字符", len([]rune(text))))
+	m.ShowInfo(i18n.T("已复制 %d 个字符", len([]rune(text))))
 	return text
 }
 
@@ -1192,7 +1102,7 @@ func (a *App) handleCtrlC() {
 		return
 	}
 	a.lastCtrlCAt = now
-	m.ShowInfo("再次按 Ctrl+C 退出")
+	m.ShowInfo(i18n.T("再次按 Ctrl+C 退出"))
 }
 
 func (a *App) permissionKey(ke input.KeyEvent) {
@@ -1321,7 +1231,7 @@ func (a *App) deleteSession(id string) {
 		return
 	}
 	if !a.model.SupportsSessionDelete() {
-		a.model.ShowError("服务端未声明 session.delete 能力，无法删除会话")
+		a.model.ShowError(i18n.T("服务端未声明 session.delete 能力，无法删除会话"))
 		return
 	}
 	a.startCommand(commandResult{kind: commandSessionDelete, sessionID: id}, func(ctx context.Context) (acp.Session, error) {
@@ -1405,7 +1315,7 @@ func (a *App) validateAndSubmitElicitation() error {
 		for _, r := range required {
 			if fieldName, ok := r.(string); ok {
 				if val, exists := m.ElicitationFormData[fieldName]; !exists || val == "" {
-					return fmt.Errorf("字段 %s 是必需的", fieldName)
+					return fmt.Errorf(i18n.T("字段 %s 是必需的"), fieldName)
 				}
 			}
 		}
@@ -1424,7 +1334,7 @@ func (a *App) validateAndSubmitElicitation() error {
 						}
 					}
 					if !valid {
-						return fmt.Errorf("字段 %s 的值必须是枚举值之一", field)
+						return fmt.Errorf(i18n.T("字段 %s 的值必须是枚举值之一"), field)
 					}
 				}
 			}
@@ -1434,7 +1344,7 @@ func (a *App) validateAndSubmitElicitation() error {
 	// 序列化表单数据
 	content, err := json.Marshal(m.ElicitationFormData)
 	if err != nil {
-		return fmt.Errorf("序列化表单数据失败: %w", err)
+		return fmt.Errorf("%s: %w", i18n.T("序列化表单数据失败"), err)
 	}
 
 	a.respondElicitation(acp.ElicitationActionAccept, content)

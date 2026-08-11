@@ -4,12 +4,15 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"time"
 
 	"github.com/cxykevin/alcoh/internal/acp"
 	"github.com/cxykevin/alcoh/internal/config"
+	"github.com/cxykevin/alcoh/internal/i18n"
 	"github.com/cxykevin/alcoh/internal/model"
+	"github.com/cxykevin/alcoh/internal/provider"
 	"github.com/cxykevin/alcoh/internal/renderer"
 	"github.com/cxykevin/alcoh/internal/term"
 	"github.com/cxykevin/alcoh/internal/view"
@@ -70,11 +73,11 @@ type App struct {
 
 	// onboardingEnabled 为 true 表示本次启动未指定 backend 参数（走默认 alkaid0
 	// WebSocket 连接）：若服务端声明 alkaid0 能力且配置里没有任何模型，启动即
-	// 进入全屏新手引导（见 maybeStartOnboarding）。
+	// 进入新手引导（与 /connect 向导同义，见 maybeStartOnboarding）。
 	onboardingEnabled bool
-	// onboardFromServer 标记当前 /server 配置编辑器是从新手引导的结果页打开的：
-	// 关闭编辑器后应回到引导结果页，而非主页。
-	onboardFromServer bool
+	// initialPrompt 是 One Shot 模式的启动消息：启动流程完成后自动复用预创建
+	// 会话或新建会话并发送该消息，无需手动输入（见 sendInitialPrompt）。
+	initialPrompt string
 	// firstSessionOpID 是"用户第一个会话"的 create 请求序号：创建成功后把新手
 	// 引导里选的 effort 应用到该会话（恢复旧会话不应用）。
 	firstSessionOpID uint64
@@ -90,7 +93,8 @@ const (
 	commandSessionDelete
 	commandConfigGet
 	commandConfigSet
-	commandOnboardingSubmit
+	commandConnectFetch
+	commandConnectSubmit
 )
 
 type commandResult struct {
@@ -100,6 +104,7 @@ type commandResult struct {
 	opID      uint64
 	config    json.RawMessage
 	cfgSeq    uint64 // config/get 请求序号，用于丢弃乱序晚回的旧结果
+	models    []provider.Model
 	err       error
 }
 
@@ -131,6 +136,10 @@ func (a *App) SetWorkdir(dir string) {
 // SetOnboardingEnabled 启停新手引导触发判断。main 在未指定 backend 参数
 // （走默认 alkaid0 连接）时置 true。
 func (a *App) SetOnboardingEnabled(v bool) { a.onboardingEnabled = v }
+
+// SetInitialPrompt 设置 One Shot 模式的启动消息：启动完成后自动进入会话视图
+// 并发送该消息。空串表示普通交互启动。
+func (a *App) SetInitialPrompt(text string) { a.initialPrompt = text }
 
 // applyFirstSessionEffort 把新手引导里选择的 effort 应用到"用户第一个会话"：
 // 经 session/set_config_option 写 thought_level，随后清空本地字段——只对首个
@@ -254,11 +263,15 @@ func (a *App) goHome() {
 	a.ensurePreSessionLocked()
 }
 
-// maybeStartOnboarding 在满足触发条件时进入全屏新手引导，否则按正常主页流程
+// maybeStartOnboarding 在满足触发条件时进入新手引导，否则按正常主页流程
 // 创建主页预创建会话。触发条件：启动未指定 backend 参数（默认连接 alkaid0）、
 // 服务端声明 alkaid0 能力、且 config/get 返回的配置里没有任何模型。config/get
-// 失败或服务端已有模型时回退正常主页（拉取失败仅提示，不阻塞启动）。引导期间
-// 不创建主页预创建会话；引导结束（完成/跳过）后经 goHome 创建。
+// 失败或服务端已有模型时回退正常主页（拉取失败仅提示，不阻塞启动）。
+//
+// 引导与 /connect 向导同义：直接打开 ConnectState（FromOnboarding=true）走
+// 服务商模板 → 填 key → 拉取模型 → 写入配置；完成后继续引导剩余步骤（选推理
+// 强度 → 操作教学）。引导期间不创建主页预创建会话；引导结束（完成/跳过）后
+// 经 goHome 创建。
 func (a *App) maybeStartOnboarding() {
 	a.modelMu.RLock()
 	onboarding := a.onboardingEnabled && a.model.SupportsAlkaid0()
@@ -273,7 +286,7 @@ func (a *App) maybeStartOnboarding() {
 	a.modelMu.Lock()
 	defer a.modelMu.Unlock()
 	if err != nil {
-		a.model.ShowError("获取服务端配置失败: " + err.Error())
+		a.model.ShowError(i18n.T("获取服务端配置失败: %s", err.Error()))
 		a.ensurePreSessionLocked()
 		return
 	}
@@ -281,21 +294,36 @@ func (a *App) maybeStartOnboarding() {
 		a.ensurePreSessionLocked()
 		return
 	}
-	// 服务端尚无模型：进入全屏新手引导。
-	a.model.OpenOnboarding()
+	// 服务端尚无模型：进入 /connect 向导（新手引导与其同义）。
+	a.model.OpenConnect()
+	if a.model.Connect != nil {
+		a.model.Connect.FromOnboarding = true
+	}
 }
 
-// closeServerEditor 关闭 /server 配置编辑器。若编辑器是从新手引导的结果页打开的
-//（onboardFromServer），关闭后回到引导结果页而非主页。
+// sendInitialPrompt 在启动流程完成后发送 One Shot 模式的启动消息：优先复用主页
+// 预创建会话（不删除、不新建，与主页输入 prompt 回车同一条路径），否则新建会话
+// 并把消息记为 PendingInitialPrompt——会话建立后由 applyCommandResult 自动发送
+//（见 applyCommandResult 中 PendingInitialPrompt 分支）。新手引导进行中时不发送。
+func (a *App) sendInitialPrompt() {
+	if a.initialPrompt == "" {
+		return
+	}
+	a.modelMu.Lock()
+	defer a.modelMu.Unlock()
+	if a.model.Onboarding != nil || a.model.Connect != nil {
+		return
+	}
+	if a.usePreSession(a.initialPrompt) {
+		return
+	}
+	a.model.PendingInitialPrompt = a.initialPrompt
+	a.createSession()
+}
+
+// closeServerEditor 关闭 /server 配置编辑器。
 func (a *App) closeServerEditor() {
 	a.model.CloseServer()
-	if a.onboardFromServer {
-		a.onboardFromServer = false
-		if a.model.Onboarding != nil {
-			a.model.Onboarding.Step = model.OnboardStepResult
-			a.model.SetModal(model.ModalOnboarding)
-		}
-	}
 }
 
 // modelSnapshot 是测试在应用运行期间轮询模型状态所需的字段快照。事件循环在
@@ -387,6 +415,8 @@ func (a *App) Run() error {
 	// session.delete）。预创建会话承载 agent 广播的 config，使 /effort 与 /model
 	// 在主页命令面板可用；用户新建/恢复会话或程序退出时该空会话被删除。
 	a.maybeStartOnboarding()
+	// One Shot 模式：自动进入会话视图并发送启动消息。
+	a.sendInitialPrompt()
 
 	w, h := a.term.Size()
 	a.resetBuffers(w, h)
@@ -416,7 +446,7 @@ func (a *App) Run() error {
 				eventsCh = nil
 				a.modelMu.Lock()
 				if a.model.Error == "" {
-					a.model.ShowError("ACP backend 已关闭")
+					a.model.ShowError(i18n.T("ACP backend 已关闭"))
 				}
 				a.modelMu.Unlock()
 				needsRender = true
@@ -483,7 +513,7 @@ func (a *App) applyCommandResult(result commandResult) {
 			return
 		}
 		if result.err != nil {
-			a.model.ShowError("获取服务端配置失败: " + result.err.Error())
+			a.model.ShowError(i18n.T("获取服务端配置失败: %s", result.err.Error()))
 			a.closeServerEditor()
 		} else if a.model.Modal != model.ModalServer {
 			// 用户在拉取/重载期间已按 Esc 关闭编辑器：丢弃结果，避免复活编辑器。
@@ -506,7 +536,7 @@ func (a *App) applyCommandResult(result commandResult) {
 	}
 	if result.kind == commandConfigSet {
 		if result.err != nil {
-			a.model.ShowError("保存配置失败: " + result.err.Error())
+			a.model.ShowError(i18n.T("保存配置失败: %s", result.err.Error()))
 			// 写回失败：放弃重定向与队列中的后续写回（它们基于同一失败基态，
 			// 继续应用只会加剧不一致）。队列清空、busy 复位，并解除 Saving
 			// 阻塞（后续不会有重载 get 来解除它，避免界面永久卡在"保存中"）。
@@ -517,38 +547,52 @@ func (a *App) applyCommandResult(result commandResult) {
 				ed.Saving = false
 			}
 		} else {
-			a.model.ShowInfo("配置已保存")
+			a.model.ShowInfo(i18n.T("配置已保存"))
 			// 发送队列中下一个写回；全部完成后才触发新增后的整配置重载，
 			// 保证 get 读到最终值（含新增对象与随后的字段编辑）。
 			a.nextConfigSet()
 		}
 		return
 	}
-	if result.kind == commandOnboardingSubmit {
-		// 新手引导模型表单的 config/set 结果：成功后进入结果页（可打开 /server
-		// 详细配置或下一步）；失败留在表单页显示错误，可修改后重提。
-		ob := a.model.Onboarding
-		if ob != nil && ob.Step == model.OnboardStepForm {
-			ob.FormSubmitting = false
+	if result.kind == commandConnectFetch {
+		// /connect 拉取模型列表结果：成功进入模型选择步骤；失败回到表单页
+		// 显示错误（保留已填内容，可修改后重试）。
+		if cs := a.model.Connect; cs != nil && cs.Fetching {
 			if result.err != nil {
-				ob.FormError = "保存模型配置失败: " + result.err.Error()
+				cs.ConnectFetchError(result.err)
+			} else if len(result.models) > 0 {
+				cs.ConnectApplyModels(result.models)
 			} else {
-				ob.Step = model.OnboardStepResult
-				ob.ResultSel = 0
-				a.model.ShowInfo("模型已添加并设为默认模型")
+				cs.ConnectFetchError(errors.New(i18n.T("服务商未返回任何模型")))
+			}
+		}
+		return
+	}
+	if result.kind == commandConnectSubmit {
+		// /connect 写入服务端配置结果：成功进入完成步骤；失败按当前步骤
+		// 回填错误（自动路径回模型选择、手动路径留在输入页）。
+		if cs := a.model.Connect; cs != nil {
+			if result.err != nil {
+				if cs.Step == model.ConnectStepManual {
+					cs.ManualError = i18n.T("保存模型配置失败: %s", result.err.Error())
+				} else {
+					cs.FormError = i18n.T("保存模型配置失败: %s", result.err.Error())
+				}
+			} else {
+				cs.ConnectMarkResult(i18n.T("模型已添加并设为默认模型"))
 			}
 		}
 		return
 	}
 	if result.kind == commandSessionDelete {
 		if result.err != nil {
-			a.model.ShowError("删除会话失败: " + result.err.Error())
+			a.model.ShowError(i18n.T("删除会话失败: %s", result.err.Error()))
 			a.discardPre = false
 			return
 		}
 		a.model.DropPendingEvents(result.sessionID)
 		a.model.RemoveSession(result.sessionID)
-		a.model.ShowInfo("会话已删除")
+		a.model.ShowInfo(i18n.T("会话已删除"))
 		// 删除的是当前活动会话时 RemoveSession 已回主页；回到主页需重建预创建
 		// 会话，使 /effort 与 /model 在命令面板继续可用。但 discardPreSession 清理
 		// 的删除（用户正在进入真实会话）不重建，等 goHome 时再创建。

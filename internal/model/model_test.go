@@ -174,6 +174,27 @@ func TestSettingsStateChanges(t *testing.T) {
 	}
 }
 
+func TestSettingsLanguageCycling(t *testing.T) {
+	m := New()
+	m.OpenSettings()
+	m.MoveSettings(1, 4)
+	m.MoveSettings(1, 4)
+	m.MoveSettings(1, 4) // 第 3 行 = 语言
+	if m.SettingsSelected != 3 {
+		t.Fatalf("language row selected = %d, want 3", m.SettingsSelected)
+	}
+	if !m.CycleLanguage(1) || m.Settings.Language != "en" {
+		t.Fatalf("language = %q, want en", m.Settings.Language)
+	}
+	if m.CycleColorMode(1) {
+		t.Fatal("CycleColorMode should be a no-op on the language row")
+	}
+	m.SettingsSelected = 3
+	if !m.CycleLanguage(-1) || m.Settings.Language != "zh" {
+		t.Fatalf("language = %q, want zh after cycling back", m.Settings.Language)
+	}
+}
+
 func TestServerCommandRequiresAlkaid0Capability(t *testing.T) {
 	m := New()
 	if containsString(m.SlashCommands(), "/server") {

@@ -3,6 +3,7 @@ package view
 import (
 	"time"
 
+	"github.com/cxykevin/alcoh/internal/i18n"
 	"github.com/cxykevin/alcoh/internal/acp"
 	"github.com/cxykevin/alcoh/internal/model"
 	"github.com/cxykevin/alcoh/internal/renderer"
@@ -94,8 +95,8 @@ func (v *AppView) modalHeight(m *model.AppModel) int {
 		h = 5
 	case model.ModalServer:
 		h = 9
-	case model.ModalOnboarding:
-		// 新手引导占满整屏：底层内容无需缩小。
+	case model.ModalOnboarding, model.ModalConnect:
+		// 新手引导 / 连接向导占满整屏：底层内容无需缩小。
 		h = 0
 	}
 	return h
@@ -117,7 +118,7 @@ func (v *AppView) drawModalAtInput(c *renderer.Canvas, r renderer.Rect, m *model
 	case model.ModalElicitation:
 		e := m.Elicitation
 		if e != nil {
-			title = "请求信息"
+			title = i18n.T("请求信息")
 			if e.Request.Message != "" {
 				title = e.Request.Message
 			}
@@ -125,39 +126,44 @@ func (v *AppView) drawModalAtInput(c *renderer.Canvas, r renderer.Rect, m *model
 		content = elicitationContent(v.Theme, m)
 	case model.ModalHelp:
 		h = 10
-		title = "帮助"
+		title = i18n.T("帮助")
 		style = v.Theme.Style(v.Theme.Border)
 		content = helpContent(v.Theme)
 	case model.ModalExitConfirm:
 		h = 5
-		title = "退出"
+		title = i18n.T("退出")
 		style = v.Theme.Style(v.Theme.Error)
-		content = &TextLines{Theme: v.Theme, Lines: []string{"确定退出 alcoh 吗？", "", "  y 退出    n / Esc 取消"}}
+		content = &TextLines{Theme: v.Theme, Lines: []string{i18n.T("确定退出 alcoh 吗？"), "", i18n.T("  y 退出    n / Esc 取消")}}
 	case model.ModalSettings:
 		h = 10
-		title = "设置（本地）"
+		title = i18n.T("设置（本地）")
 		content = &SettingsContent{Theme: v.Theme, Values: m.Settings, Selected: m.SettingsSelected, ACPCount: protocolUpdateCount(m)}
 	case model.ModalEffort:
 		h = 8
-		title = "推理强度 (thought_level)"
+		title = i18n.T("推理强度 (thought_level)")
 		content = effortContent(v.Theme, m)
 	case model.ModalModel:
 		h = 3 + len(m.ModelOptions()) + 2
 		if h < 6 {
 			h = 6
 		}
-		title = "模型选择 (model)"
+		title = i18n.T("模型选择 (model)")
 		content = modelContent(v.Theme, m)
 	case model.ModalServer:
 		// 配置编辑器占满整屏（DrawSheet 全宽面板）。
 		h = r.H
-		title = "服务端配置 (alk.cxykevin.top/config)"
+		title = i18n.T("服务端配置 (alk.cxykevin.top/config)")
 		content = &ConfigTree{Theme: v.Theme, Tree: m.ServerCfg}
 	case model.ModalOnboarding:
 		// 新手引导占满整屏（DrawSheet 全宽面板）。
 		h = r.H
-		title = "首次设置"
+		title = i18n.T("首次设置")
 		content = &OnboardingContent{Theme: v.Theme, Ob: m.Onboarding}
+	case model.ModalConnect:
+		// /connect 向导占满整屏（DrawSheet 全宽面板）。
+		h = r.H
+		title = i18n.T("连接模型服务商")
+		content = &ConnectContent{Theme: v.Theme, Cs: m.Connect}
 	default:
 		return
 	}
@@ -200,15 +206,15 @@ func (v *AppView) drawModalAtInputLegacy(c *renderer.Canvas, r renderer.Rect, m 
 		if lines < 0 {
 			lines = 0
 		}
-		(&widget.Modal{Width: minModalWidth(r.W, 72), Height: lines + 2, Title: "帮助", Style: v.Theme.Style(v.Theme.Border), Content: helpContent(v.Theme)}).DrawBottom(c, r, bottomMargin)
+		(&widget.Modal{Width: minModalWidth(r.W, 72), Height: lines + 2, Title: i18n.T("帮助"), Style: v.Theme.Style(v.Theme.Border), Content: helpContent(v.Theme)}).DrawBottom(c, r, bottomMargin)
 	case model.ModalExitConfirm:
-		(&widget.Modal{Width: minModalWidth(r.W, 40), Height: minValue(availableH, 5), Title: "退出", Style: v.Theme.Style(v.Theme.Error), Content: &TextLines{Theme: v.Theme, Lines: []string{"确定退出 alcoh 吗？", "", "  y 退出    n / Esc 取消"}}}).DrawBottom(c, r, bottomMargin)
+		(&widget.Modal{Width: minModalWidth(r.W, 40), Height: minValue(availableH, 5), Title: i18n.T("退出"), Style: v.Theme.Style(v.Theme.Error), Content: &TextLines{Theme: v.Theme, Lines: []string{i18n.T("确定退出 alcoh 吗？"), "", i18n.T("  y 退出    n / Esc 取消")}}}).DrawBottom(c, r, bottomMargin)
 	case model.ModalSettings:
-		(&widget.Modal{Width: minModalWidth(r.W, 68), Height: minValue(availableH, 10), Title: "设置（本地）", Style: v.Theme.Style(v.Theme.BorderActive), Content: &SettingsContent{Theme: v.Theme, Values: m.Settings, Selected: m.SettingsSelected, ACPCount: protocolUpdateCount(m)}}).DrawBottom(c, r, bottomMargin)
+		(&widget.Modal{Width: minModalWidth(r.W, 68), Height: minValue(availableH, 10), Title: i18n.T("设置（本地）"), Style: v.Theme.Style(v.Theme.BorderActive), Content: &SettingsContent{Theme: v.Theme, Values: m.Settings, Selected: m.SettingsSelected, ACPCount: protocolUpdateCount(m)}}).DrawBottom(c, r, bottomMargin)
 	case model.ModalEffort:
-		(&widget.Modal{Width: minModalWidth(r.W, 68), Height: minValue(availableH, 8), Title: "推理强度 (thought_level)", Style: v.Theme.Style(v.Theme.BorderActive), Content: effortContent(v.Theme, m)}).DrawBottom(c, r, bottomMargin)
+		(&widget.Modal{Width: minModalWidth(r.W, 68), Height: minValue(availableH, 8), Title: i18n.T("推理强度 (thought_level)"), Style: v.Theme.Style(v.Theme.BorderActive), Content: effortContent(v.Theme, m)}).DrawBottom(c, r, bottomMargin)
 	case model.ModalServer:
-		(&widget.Modal{Width: minModalWidth(r.W, 70), Height: minValue(availableH, availableH), Title: "服务端配置", Style: v.Theme.Style(v.Theme.BorderActive), Content: &ConfigTree{Theme: v.Theme, Tree: m.ServerCfg}}).DrawBottom(c, r, bottomMargin)
+		(&widget.Modal{Width: minModalWidth(r.W, 70), Height: minValue(availableH, availableH), Title: i18n.T("服务端配置"), Style: v.Theme.Style(v.Theme.BorderActive), Content: &ConfigTree{Theme: v.Theme, Tree: m.ServerCfg}}).DrawBottom(c, r, bottomMargin)
 	}
 }
 
@@ -228,7 +234,7 @@ func minValue(a, b int) int {
 
 func permissionTitle(p *acp.PermissionRequest) string {
 	if p == nil {
-		return "权限请求"
+		return i18n.T("权限请求")
 	}
 	return p.Title
 }
@@ -242,16 +248,16 @@ func permissionContent(t renderer.Theme, m *model.AppModel) *PermissionContent {
 
 func elicitationContent(t renderer.Theme, m *model.AppModel) widget.Widget {
 	if m.Elicitation == nil {
-		return &TextLines{Theme: t, Lines: []string{"无请求"}}
+		return &TextLines{Theme: t, Lines: []string{i18n.T("无请求")}}
 	}
 
 	e := m.Elicitation
 	if e.Request.Mode == acp.ElicitationModeURL {
 		lines := []string{
 			"",
-			"URL: " + e.Request.URL,
+			i18n.T("URL: %s", e.Request.URL),
 			"",
-			"Enter 接受 | d 拒绝 | Esc 取消",
+			i18n.T("Enter 接受 | d 拒绝 | Esc 取消"),
 		}
 		return &TextLines{Theme: t, Lines: lines}
 	}
@@ -288,35 +294,36 @@ func elicitationContent(t renderer.Theme, m *model.AppModel) widget.Widget {
 			value = m.ElicitationFormData[field]
 		}
 		if value == "" {
-			value = "(空)"
+			value = i18n.T("(空)")
 		}
 		lines = append(lines, "    "+value)
 	}
 
 	lines = append(lines, "")
 	if e.ErrorMessage != "" {
-		lines = append(lines, "错误: "+e.ErrorMessage, "")
+		lines = append(lines, i18n.T("错误: %s", e.ErrorMessage), "")
 	}
-	lines = append(lines, "↑↓ 选择字段 | Tab 下一个 | 输入文本 | Ctrl+Enter 提交 | Esc 取消")
+	lines = append(lines, i18n.T("↑↓ 选择字段 | Tab 下一个 | 输入文本 | Ctrl+Enter 提交 | Esc 取消"))
 
 	return &TextLines{Theme: t, Lines: lines}
 }
 
 func helpContent(t renderer.Theme) *TextLines {
 	return &TextLines{Theme: t, Lines: []string{
-		"alcoh 快捷键", "",
-		"Enter          提交输入        Shift+Enter / 行尾 \\ + Enter 换行",
-		"/              命令面板        Ctrl+,         打开设置",
-		"/effort        推理强度滑条    /clear         清除会话(on 不取消)",
-		"↑↓             移动 / 历史     ←→            移动光标",
-		"Ctrl+A/E       行首 / 行尾     Ctrl+K/U      删至行尾/行首",
-		"Ctrl+W         删前一词        Ctrl+Y        粘贴",
-		"Ctrl+/         撤销            Ctrl+Q        退出",
-		"PageUp/Down    滚动            Home/End      顶部/底部",
-		"Tab            切换焦点        Enter         展开/折叠",
-		"?              帮助            Esc           关闭",
-		"Enter          恢复会话(空输入) d            删除选中会话（首页）", "",
-		"权限弹窗: ↑↓ 选择选项, a=allow, r=reject, Enter 确认, Esc 取消",
+		i18n.T("alcoh 快捷键"), "",
+		i18n.T("Enter          提交输入        Shift+Enter / 行尾 \\ + Enter 换行"),
+		i18n.T("/              命令面板        Ctrl+,         打开设置"),
+		i18n.T("/connect       连接模型服务商（模板/填 key/拉取模型）"),
+		i18n.T("/effort        推理强度滑条    /clear         清除会话(on 不取消)"),
+		i18n.T("↑↓             移动 / 历史     ←→            移动光标"),
+		i18n.T("Ctrl+A/E       行首 / 行尾     Ctrl+K/U      删至行尾/行首"),
+		i18n.T("Ctrl+W         删前一词        Ctrl+Y        粘贴"),
+		i18n.T("Ctrl+/         撤销            Ctrl+Q        退出"),
+		i18n.T("PageUp/Down    滚动            Home/End      顶部/底部"),
+		i18n.T("Tab            切换焦点        Enter         展开/折叠"),
+		i18n.T("?              帮助            Esc           关闭"),
+		i18n.T("Enter          恢复会话(空输入) d            删除选中会话（首页）"), "",
+		i18n.T("权限弹窗: ↑↓ 选择选项, a=allow, r=reject, Enter 确认, Esc 取消"),
 	}}
 }
 
@@ -538,7 +545,7 @@ func (v *AppView) drawHome(c *renderer.Canvas, r renderer.Rect, m *model.AppMode
 	}
 	// 输入框上方提示：slash 面板打开时隐藏（该行被命令列表占用）。
 	if !m.SlashOpen && sepY-2 >= right.Y {
-		c.PutText(right.X, sepY-2, renderer.Truncate("← 恢复会话", right.W), v.Theme.Style(v.Theme.TextMuted))
+		c.PutText(right.X, sepY-2, renderer.Truncate(i18n.T("← 恢复会话"), right.W), v.Theme.Style(v.Theme.TextMuted))
 	}
 	ghost, _ := m.SlashCompletion()
 	ib := &widget.InputBox{Buf: m.Input, Prompt: "> ", Style: v.Theme.Style(v.Theme.Text), Cursor: v.Theme.StyleOn(v.Theme.Background, v.Theme.Primary), Focused: m.Modal == model.NoModal, GhostText: ghost, GhostStyle: v.Theme.Style(v.Theme.TextMuted)}
@@ -620,7 +627,7 @@ func (sl *SessionList) Draw(c *renderer.Canvas, r renderer.Rect, m *model.AppMod
 	c.PutText(inner.X, inner.Y, "sessions", t.Style(t.Primary).WithBold(true))
 	y := inner.Y + 2
 	if len(m.Sessions) == 0 {
-		c.PutText(inner.X, y, "( 无会话 )", t.Style(t.TextMuted))
+		c.PutText(inner.X, y, i18n.T("( 无会话 )"), t.Style(t.TextMuted))
 		sl.drawHint(c, inner, t)
 		return
 	}
@@ -628,7 +635,7 @@ func (sl *SessionList) Draw(c *renderer.Canvas, r renderer.Rect, m *model.AppMod
 	// 先尝试居中，越界时收拢到边界，实现选中项超出屏幕时列表自动滚动。
 	const itemRows = 3
 	headerRows := 2 // "sessions" 标题 + 间隔行
-	hintRows := 1   // 底部 "d 删除会话" 提示行
+	hintRows := 1   // 底部 i18n.T("d 删除会话") 提示行
 	visible := (inner.H - headerRows - hintRows - 1) / itemRows
 	if visible < 1 {
 		visible = 1
@@ -681,11 +688,11 @@ func (sl *SessionList) Draw(c *renderer.Canvas, r renderer.Rect, m *model.AppMod
 	sl.drawHint(c, inner, t)
 }
 
-// drawHint 在列表底部绘制 "d 删除会话" 快捷键提示。
+// drawHint 在列表底部绘制 i18n.T("d 删除会话") 快捷键提示。
 func (sl *SessionList) drawHint(c *renderer.Canvas, inner renderer.Rect, t renderer.Theme) {
 	hintY := inner.Y + inner.H - 1
 	if hintY >= inner.Y {
-		c.PutText(inner.X, hintY, "d 删除会话", t.Style(t.TextMuted))
+		c.PutText(inner.X, hintY, i18n.T("d 删除会话"), t.Style(t.TextMuted))
 	}
 }
 

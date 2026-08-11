@@ -3,6 +3,7 @@ package view
 import (
 	"strings"
 
+	"github.com/cxykevin/alcoh/internal/i18n"
 	"github.com/cxykevin/alcoh/internal/acp"
 	"github.com/cxykevin/alcoh/internal/model"
 	"github.com/cxykevin/alcoh/internal/renderer"
@@ -330,7 +331,7 @@ func (ml *MessageList) toolRaw(tc *model.ToolCall) string {
 	}
 	sb.WriteString(title)
 	if tc.RawInput != "" {
-		sb.WriteString("\n输入: " + tc.RawInput)
+		sb.WriteString("\n" + i18n.T("输入: ") + tc.RawInput)
 	}
 	if tc.RawOutput != "" {
 		sb.WriteString("\n" + tc.RawOutput)
@@ -340,7 +341,7 @@ func (ml *MessageList) toolRaw(tc *model.ToolCall) string {
 		if location.Line != nil {
 			place += ":" + itoa(int(*location.Line))
 		}
-		sb.WriteString("\n位置: " + place)
+		sb.WriteString("\n" + i18n.T("位置: ") + place)
 	}
 	for _, ct := range tc.Content {
 		switch ct.Type {

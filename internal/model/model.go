@@ -8,6 +8,7 @@ import (
 
 	"github.com/cxykevin/alcoh/internal/acp"
 	"github.com/cxykevin/alcoh/internal/config"
+	"github.com/cxykevin/alcoh/internal/i18n"
 	"github.com/cxykevin/alcoh/internal/widget"
 )
 
@@ -48,6 +49,8 @@ const (
 	ModalModel
 	// ModalOnboarding 全屏新手引导（首次启动且服务端未配置任何模型时展示）。
 	ModalOnboarding
+	// ModalConnect /connect 向导：选择服务商 → 填 key → 拉取模型列表 → 写入配置。
+	ModalConnect
 )
 
 // Focus 表示会话视图的焦点区域。
@@ -115,6 +118,9 @@ type AppModel struct {
 	// Onboarding 是全屏新手引导状态（见 onboarding.go）。nil 表示不在引导中。
 	Onboarding *OnboardingState
 
+	// Connect 是 /connect 向导状态（见 connect.go）。nil 表示不在向导中。
+	Connect *ConnectState
+
 	Selection *Selection
 
 	// pendingSessionEvents 缓存会话未激活时到达的初始事件。agent（如 alkaid0）在
@@ -173,6 +179,7 @@ type SlashCommandInfo struct {
 
 var localSlashCommandInfo = map[string]SlashCommandInfo{
 	"/alcoh_help": {Name: "/alcoh_help", Description: "打开帮助"},
+	"/connect":    {Name: "/connect", Description: "连接模型服务商（模板自动填 base_url，填 key 拉取模型列表）"},
 	"/effort":     {Name: "/effort", Description: "设置推理强度", ArgsHint: "[unset|low|medium|high|xhigh|max]"},
 	"/model":      {Name: "/model", Description: "切换模型"},
 	"/clear":      {Name: "/clear", Description: "清除会话，返回会话列表", ArgsHint: "[on]"},
@@ -192,6 +199,8 @@ func (m *AppModel) slashCommandInfos() []SlashCommandInfo {
 	infos := make([]SlashCommandInfo, 0, len(commands))
 	for _, name := range commands {
 		if info, ok := localSlashCommandInfo[name]; ok {
+			// 本地命令说明按当前语言翻译（渲染时调用，切换语言即时生效）。
+			info.Description = i18n.T(info.Description)
 			infos = append(infos, info)
 			continue
 		}
@@ -253,7 +262,7 @@ func (m *AppModel) SlashCompletion() (ghost, description string) {
 // 未列入硬编码列表的 agent 命令优先级为 0。
 func slashCommandPriority(command string) int {
 	switch command {
-	case "/alcoh_help", "/effort", "/clear", "/settings", "/server":
+	case "/alcoh_help", "/connect", "/effort", "/clear", "/settings", "/server":
 		return 1
 	default:
 		return 0
@@ -263,6 +272,10 @@ func slashCommandPriority(command string) int {
 // SlashCommands 返回当前会话可用的本地与 agent 命令，按硬编码优先级排序。
 func (m *AppModel) SlashCommands() []string {
 	out := append([]string(nil), m.LocalCommands...)
+	// /connect 仅在服务端声明 alkaid0 扩展能力时可用（模型写入服务端配置）。
+	if m.SupportsAlkaid0() && !containsString(out, "/connect") {
+		out = append(out, "/connect")
+	}
 	// /effort 仅在服务端公布 thought_level 配置时可用。
 	if m.SupportsEffort() && !containsString(out, "/effort") {
 		out = append(out, "/effort")
@@ -485,6 +498,23 @@ func (m *AppModel) CycleColorMode(delta int) bool {
 		}
 	}
 	m.Settings.ColorMode = modes[(idx+delta+len(modes))%len(modes)]
+	return true
+}
+
+// CycleLanguage 在支持的界面语言之间切换（写入本地配置，保存时应用）。
+func (m *AppModel) CycleLanguage(delta int) bool {
+	if m.SettingsSelected != 3 {
+		return false
+	}
+	langs := []string{"zh", "en"}
+	idx := 0
+	for i, l := range langs {
+		if m.Settings.Language == l {
+			idx = i
+			break
+		}
+	}
+	m.Settings.Language = langs[(idx+delta+len(langs))%len(langs)]
 	return true
 }
 
@@ -798,7 +828,7 @@ func (m *AppModel) ApplyEvent(ev acp.Event) {
 				label = "unknown"
 			}
 			noticeKey := "unknown:" + label
-			notice := "▸ 已收到未知 session update: " + label + "（保留在协议诊断中）"
+			notice := i18n.T("▸ 已收到未知 session update: %s（保留在协议诊断中）", label)
 			m.Active.AppendSystemNotice(noticeKey, notice)
 		}
 	case *acp.SessionListEvent:
