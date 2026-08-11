@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -56,9 +55,6 @@ func (a *App) dispatchKey(ke input.KeyEvent) {
 		return
 	case model.ModalConnect:
 		a.connectKey(ke)
-		return
-	case model.ModalThreshold:
-		a.thresholdKey(ke)
 		return
 	}
 
@@ -394,25 +390,6 @@ func (a *App) tryLocalSlashCommand() bool {
 			return true
 		}
 		a.openConnect()
-	case "/threshold":
-		m.Input.Clear()
-		m.CloseSlash()
-		if !m.SupportsAlkaid0() {
-			m.ShowError(i18n.T("服务端未声明 alkaid0 扩展能力，/threshold 不可用"))
-			return true
-		}
-		if rest == "" {
-			// 无参数：弹窗输入（自动预填当前值）。
-			a.openThreshold()
-			return true
-		}
-		// 带参数：校验后直接设置。
-		n, err := strconv.Atoi(rest)
-		if err != nil || n <= 0 {
-			m.ShowError(i18n.T("无效的压缩阈值: %s（需为正整数）", rest))
-			return true
-		}
-		a.setThreshold(n)
 	default:
 		return false
 	}

@@ -51,8 +51,6 @@ const (
 	ModalOnboarding
 	// ModalConnect /connect 向导：选择服务商 → 填 key → 拉取模型列表 → 写入配置。
 	ModalConnect
-	// ModalThreshold /threshold 弹窗：修改默认模型的压缩阈值。
-	ModalThreshold
 )
 
 // Focus 表示会话视图的焦点区域。
@@ -123,9 +121,6 @@ type AppModel struct {
 	// Connect 是 /connect 向导状态（见 connect.go）。nil 表示不在向导中。
 	Connect *ConnectState
 
-	// Threshold 是 /threshold 弹窗状态（见 threshold.go）。nil 表示不在弹窗中。
-	Threshold *ThresholdState
-
 	Selection *Selection
 
 	// pendingSessionEvents 缓存会话未激活时到达的初始事件。agent（如 alkaid0）在
@@ -190,7 +185,6 @@ var localSlashCommandInfo = map[string]SlashCommandInfo{
 	"/clear":      {Name: "/clear", Description: "清除会话，返回会话列表", ArgsHint: "[on]"},
 	"/settings":   {Name: "/settings", Description: "打开本地设置"},
 	"/server":     {Name: "/server", Description: "服务端信息与操作弹窗"},
-	"/threshold":  {Name: "/threshold", Description: "修改压缩阈值", ArgsHint: "[token数]"},
 }
 
 // effortLevels 是客户端硬编码的推理强度（ACP v2 thought_level 目录）候选值。
@@ -268,7 +262,7 @@ func (m *AppModel) SlashCompletion() (ghost, description string) {
 // 未列入硬编码列表的 agent 命令优先级为 0。
 func slashCommandPriority(command string) int {
 	switch command {
-	case "/alcoh_help", "/connect", "/effort", "/clear", "/settings", "/server", "/threshold":
+	case "/alcoh_help", "/connect", "/effort", "/clear", "/settings", "/server":
 		return 1
 	default:
 		return 0
@@ -278,13 +272,9 @@ func slashCommandPriority(command string) int {
 // SlashCommands 返回当前会话可用的本地与 agent 命令，按硬编码优先级排序。
 func (m *AppModel) SlashCommands() []string {
 	out := append([]string(nil), m.LocalCommands...)
-	// /connect 与 /threshold 仅在服务端声明 alkaid0 扩展能力时可用
-	//（模型/压缩阈值写入服务端配置）。
+	// /connect 仅在服务端声明 alkaid0 扩展能力时可用（模型写入服务端配置）。
 	if m.SupportsAlkaid0() && !containsString(out, "/connect") {
 		out = append(out, "/connect")
-	}
-	if m.SupportsAlkaid0() && !containsString(out, "/threshold") {
-		out = append(out, "/threshold")
 	}
 	// /effort 仅在服务端公布 thought_level 配置时可用。
 	if m.SupportsEffort() && !containsString(out, "/effort") {

@@ -125,7 +125,7 @@ func keysOf[M ~map[string]T, T any](m M) []string {
 }
 
 // TestConnectModelPatchManualCompress 验证手动路径：上下文长度未知时调用方
-// 传入默认 TokenLimit 与用户输入的压缩阈值，patch 原样写入。
+// 传入用户输入的 TokenLimit 与压缩阈值，patch 原样写入。
 func TestConnectModelPatchManualCompress(t *testing.T) {
 	patch, err := ConnectModelPatch(nil, provider.Model{ID: "m"}, "u", "k", 128000, 20000)
 	if err != nil {
@@ -149,8 +149,8 @@ func TestConnectModelPatchManualCompress(t *testing.T) {
 	}
 }
 
-// TestConnectModelPatchDefaults 验证传入非法值时回退默认（TokenLimit 128000、
-// 压缩阈值取其半）。
+// TestConnectModelPatchDefaults 验证传入非法值时回退兜底（TokenLimit 128000、
+// 压缩阈值取其半；正常流程调用方总是传入显式值）。
 func TestConnectModelPatchDefaults(t *testing.T) {
 	patch, err := ConnectModelPatch(nil, provider.Model{ID: "m"}, "u", "k", 0, 0)
 	if err != nil {
@@ -168,8 +168,8 @@ func TestConnectModelPatchDefaults(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	for _, m := range got.Model.Models {
-		if m.TokenLimit != 128000 || m.CompressSize != 64000 {
-			t.Errorf("defaults = %d/%d, want 128000/64000", m.TokenLimit, m.CompressSize)
+		if m.TokenLimit != 128000 || m.CompressSize != 102400 {
+			t.Errorf("defaults = %d/%d, want 128000/102400 (80%%)", m.TokenLimit, m.CompressSize)
 		}
 	}
 }

@@ -212,18 +212,32 @@ func (cc *ConnectContent) drawManual(d *connDrawer) {
 	if cc.Cs.ModelSel >= 0 && cc.Cs.ModelSel < len(cc.Cs.Models) {
 		modelID = cc.Cs.Models[cc.Cs.ModelSel].ID
 	}
-	if !d.draw(i18n.T("未获取到「%s」的上下文长度，请手动设置压缩阈值（Token 上限用默认 128000）：", modelID), d.sts.text) {
+	if !d.draw(i18n.T("未获取到「%s」的上下文长度，请手动输入：", modelID), d.sts.text) {
 		return
 	}
 	if !d.draw("", d.sts.text) {
 		return
 	}
-	input := cc.Cs.ManualCompress
-	if input == "" {
-		input = i18n.T("（必填）")
+	fields := []struct {
+		label, value string
+	}{
+		{i18n.T("上下文长度（Token 数）: "), cc.Cs.ManualTokenLimit},
+		{i18n.T("压缩阈值（Token 数）: "), cc.Cs.ManualCompress},
 	}
-	if !d.draw("> "+i18n.T("压缩阈值（Token 数）: ")+input, d.sts.sel) {
-		return
+	for i, f := range fields {
+		marker := "  "
+		st := d.sts.text
+		if i == cc.Cs.ManualFocus {
+			marker = "> "
+			st = d.sts.sel
+		}
+		display := f.value
+		if display == "" {
+			display = i18n.T("（必填）")
+		}
+		if !d.draw(marker+f.label+display, st) {
+			return
+		}
 	}
 	if !d.draw("", d.sts.text) {
 		return
@@ -234,7 +248,7 @@ func (cc *ConnectContent) drawManual(d *connDrawer) {
 		}
 		d.draw("", d.sts.text)
 	}
-	d.draw(i18n.T("输入字符    退格删除    Enter 保存    Esc 返回"), d.sts.muted)
+	d.draw(i18n.T("↑↓ / Tab 切换字段    输入字符    退格删除    Enter 保存    Esc 返回"), d.sts.muted)
 }
 
 func (cc *ConnectContent) drawDone(d *connDrawer) {

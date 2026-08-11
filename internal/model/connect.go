@@ -37,9 +37,14 @@ type ConnectState struct {
 	Fetching  bool   // 正在拉取模型列表（阻塞编辑）
 	Models    []provider.Model
 	ModelSel  int
-	// ManualCompress/ManualError 是手动步骤（未获取到上下文长度）的输入与校验错误。
-	ManualCompress string
-	ManualError    string
+	// ManualTokenLimit/ManualCompress/ManualError 是手动步骤（未获取到上下文
+	// 长度）的输入与校验错误；ManualCompressTouched 标记压缩阈值已被手动修改
+	//（此后不再随 TokenLimit 联动预填）。
+	ManualTokenLimit      string
+	ManualCompress        string
+	ManualCompressTouched bool
+	ManualFocus           int // 手动步骤聚焦字段：0=上下文长度 1=压缩阈值
+	ManualError           string
 	// Result 是 Done 步骤展示的写入结果（如 "模型已添加并设为默认模型"）。
 	Result string
 	// FromOnboarding 表示向导由新手引导触发（服务端无模型首次启动）：
@@ -98,8 +103,8 @@ func (cs *ConnectState) ConnectMarkResult(msg string) {
 // ConnectModelPatch 从 config/get 的完整配置中计算 Model.Models 的下一个数字键
 //（现有最大数字键 + 1，首个为 "0"），并构造把选中模型写入服务端配置的
 // config/set patch（含设为默认模型 DefaultModelID，该字段为数值类型）。
-// tokenLimit/compressSize 由调用方决定：拉取到上下文长度时压缩阈值取 50%，
-// 未拉取到由用户手动输入压缩阈值（tokenLimit 用默认 128000）。
+// tokenLimit/compressSize 由调用方决定（压缩阈值规则见 app.connectCompressForLimit）；
+// tokenLimit<=0 时兜底 128000、compressSize<=0 时兜底取其 80%。
 func ConnectModelPatch(cfg json.RawMessage, p provider.Model, baseURL, key string, tokenLimit, compressSize int) (json.RawMessage, error) {
 	var parsed struct {
 		Model *struct {
@@ -123,7 +128,7 @@ func ConnectModelPatch(cfg json.RawMessage, p provider.Model, baseURL, key strin
 		tokenLimit = 128000
 	}
 	if compressSize <= 0 {
-		compressSize = tokenLimit / 2
+		compressSize = tokenLimit * 80 / 100
 	}
 	if compressSize < 1 {
 		compressSize = 1
@@ -153,4 +158,33 @@ func ConnectModelPatch(cfg json.RawMessage, p provider.Model, baseURL, key strin
 		return nil, err
 	}
 	return b, nil
+}
+
+// FindModelKeyByID 返回 Model.Models 中 ModelID 匹配的模型的数字键。
+// 用于按模型 ID 定位服务端配置（如 /model 切换后更新压缩阈值）。
+func FindModelKeyByID(cfg json.RawMessage, modelID string) (string, bool) {
+	if modelID == "" {
+		return "", false
+	}
+	var parsed struct {
+		Model *struct {
+			Models map[string]struct {
+				ModelID string `json:"ModelID"`
+			} `json:"Models"`
+		} `json:"Model"`
+	}
+	if len(cfg) > 0 {
+		if err := json.Unmarshal(cfg, &parsed); err != nil {
+			return "", false
+		}
+	}
+	if parsed.Model == nil {
+		return "", false
+	}
+	for k, m := range parsed.Model.Models {
+		if m.ModelID == modelID {
+			return k, true
+		}
+	}
+	return "", false
 }

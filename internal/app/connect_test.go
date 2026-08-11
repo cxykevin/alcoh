@@ -10,6 +10,7 @@ import (
 	"github.com/cxykevin/alcoh/internal/demo"
 	"github.com/cxykevin/alcoh/internal/input"
 	"github.com/cxykevin/alcoh/internal/model"
+	"github.com/cxykevin/alcoh/internal/provider"
 )
 
 // TestConnectCommandFlow 验证 /connect 完整流程：打开向导 → 选择服务商模板
@@ -108,8 +109,8 @@ func TestConnectCommandFlow(t *testing.T) {
 	if m3.ModelID != "deepseek-chat" || m3.ProviderURL != srv.URL || m3.ProviderKey != "sk-test-123" {
 		t.Errorf("model3 = %+v", m3)
 	}
-	if m3.TokenLimit != 65536 || m3.CompressSize != 32768 {
-		t.Errorf("TokenLimit/CompressSize = %d/%d", m3.TokenLimit, m3.CompressSize)
+	if m3.TokenLimit != 65536 || m3.CompressSize != 52428 {
+		t.Errorf("TokenLimit/CompressSize = %d/%d, want 65536/52428 (80%%)", m3.TokenLimit, m3.CompressSize)
 	}
 	if got.Model.DefaultModelID != 3 {
 		t.Errorf("DefaultModelID = %d, want 3", got.Model.DefaultModelID)
@@ -171,14 +172,19 @@ func TestConnectManualCompressFlow(t *testing.T) {
 		return cs != nil && cs.Step == model.ConnectStepManual
 	})
 
-	// 输入压缩阈值并提交。
-	for _, r := range "20000" {
+	// 手动步骤：默认聚焦上下文长度字段，输入 512000（压缩阈值联动预填 256000）；
+	// Tab 切到压缩阈值字段改为 200000 后提交。
+	for _, r := range "512000" {
+		ft.sendKey(input.RuneKey(r, input.ModNone))
+	}
+	ft.sendKey(input.SimpleKey(input.KeyTab))
+	for _, r := range "200000" {
 		ft.sendKey(input.RuneKey(r, input.ModNone))
 	}
 	ft.sendKey(input.SimpleKey(input.KeyEnter))
 	waitCondition(t, "config set received", func() bool { return b.lastPatch() != nil })
 
-	// 校验 patch：新键 1（已有键 0），TokenLimit 默认 128000，CompressSize 手动输入。
+	// 校验 patch：新键 1（已有键 0），TokenLimit 与 CompressSize 均为手动输入。
 	var got struct {
 		Model struct {
 			Models map[string]struct {
@@ -194,8 +200,8 @@ func TestConnectManualCompressFlow(t *testing.T) {
 	if !ok {
 		t.Fatalf("patch Models keys = %v, want 1", mapKeys(got.Model.Models))
 	}
-	if m1.TokenLimit != 128000 || m1.CompressSize != 20000 {
-		t.Errorf("TokenLimit/CompressSize = %d/%d, want 128000/20000", m1.TokenLimit, m1.CompressSize)
+	if m1.TokenLimit != 512000 || m1.CompressSize != 200000 {
+		t.Errorf("TokenLimit/CompressSize = %d/%d, want 512000/200000", m1.TokenLimit, m1.CompressSize)
 	}
 
 	// 完成步骤 → 关闭向导。
@@ -214,4 +220,143 @@ func TestConnectManualCompressFlow(t *testing.T) {
 
 	quitApp(ft)
 	waitRun(t, done)
+}
+
+// TestConnectDeepseekV4Flash 验证 deepseek-v4-flash 特例：上下文已知 1M（TokenLimit
+// 1000000）、压缩阈值固定 140000，即使服务商未公布上下文长度也全自动写入，
+// 不进入手动输入步骤。
+func TestConnectDeepseekV4Flash(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"deepseek-v4-flash"}]}`))
+	}))
+	defer srv.Close()
+
+	ft := newFakeTerm()
+	b := &onboardingBackend{Backend: demo.New(true), caps: alkaid0Caps, cfg: json.RawMessage(`{"Model":{}}`)}
+	a := New(ft, b)
+	done := runApp(t, a)
+
+	time.Sleep(100 * time.Millisecond)
+	for _, r := range "/connect" {
+		ft.sendKey(input.RuneKey(r, input.ModNone))
+	}
+	ft.sendKey(input.SimpleKey(input.KeyEnter))
+	time.Sleep(150 * time.Millisecond)
+
+	connectInWizard(t, ft, srv.URL)
+	waitCondition(t, "models fetched", func() bool {
+		a.modelMu.RLock()
+		cs := a.model.Connect
+		defer a.modelMu.RUnlock()
+		return cs != nil && cs.Step == model.ConnectStepSelect && len(cs.Models) == 1
+	})
+
+	// 选择模型：应跳过手动步骤直接写入。
+	ft.sendKey(input.SimpleKey(input.KeyEnter))
+	waitCondition(t, "config set received", func() bool { return b.lastPatch() != nil })
+
+	var got struct {
+		Model struct {
+			Models map[string]struct {
+				TokenLimit   int `json:"TokenLimit"`
+				CompressSize int `json:"CompressSize"`
+			} `json:"Models"`
+		} `json:"Model"`
+	}
+	if err := json.Unmarshal(b.lastPatch(), &got); err != nil {
+		t.Fatalf("bad patch: %v", err)
+	}
+	m0, ok := got.Model.Models["0"]
+	if !ok {
+		t.Fatalf("patch Models keys = %v, want 0", mapKeys(got.Model.Models))
+	}
+	if m0.TokenLimit != 1000000 || m0.CompressSize != 140000 {
+		t.Errorf("TokenLimit/CompressSize = %d/%d, want 1000000/140000", m0.TokenLimit, m0.CompressSize)
+	}
+	// 应直接进入完成步骤（未走手动输入）。
+	a.modelMu.RLock()
+	step := model.ConnectStepSelect
+	if cs := a.model.Connect; cs != nil {
+		step = cs.Step
+	}
+	a.modelMu.RUnlock()
+	if step != model.ConnectStepDone {
+		t.Errorf("step = %v, want done (no manual step for deepseek-v4-flash)", step)
+	}
+
+	quitApp(ft)
+	waitRun(t, done)
+}
+
+// TestEnsureCompressForModel 验证切换模型后的压缩阈值规则：deepseek-v4-flash
+// 触发静默写回其 CompressSize=140000；其他模型不触发。
+func TestEnsureCompressForModel(t *testing.T) {
+	ft := newFakeTerm()
+	b := &onboardingBackend{Backend: demo.New(true), caps: alkaid0Caps, cfg: json.RawMessage(`{"Model":{"Models":{
+		"1":{"ModelName":"other","ModelID":"gpt-4o"},
+		"2":{"ModelName":"flash","ModelID":"deepseek-v4-flash","CompressSize":99999}
+	}}}`)}
+	a := New(ft, b)
+	done := runApp(t, a)
+	time.Sleep(100 * time.Millisecond)
+
+	// 非 flash 模型不触发写回。
+	a.ensureCompressForModel("gpt-4o")
+	time.Sleep(200 * time.Millisecond)
+	if b.lastPatch() != nil {
+		t.Fatal("non-flash model must not trigger compress write-back")
+	}
+
+	// flash 模型静默写回 Models.2 的 CompressSize=140000。
+	a.ensureCompressForModel("deepseek-v4-flash")
+	waitCondition(t, "flash compress written", func() bool { return b.lastPatch() != nil })
+	var got struct {
+		Model struct {
+			Models map[string]struct {
+				CompressSize int `json:"CompressSize"`
+			} `json:"Models"`
+		} `json:"Model"`
+	}
+	if err := json.Unmarshal(b.lastPatch(), &got); err != nil {
+		t.Fatalf("bad patch: %v", err)
+	}
+	m2, ok := got.Model.Models["2"]
+	if !ok {
+		t.Fatalf("patch Models keys = %v, want 2", mapKeys(got.Model.Models))
+	}
+	if m2.CompressSize != 140000 {
+		t.Errorf("CompressSize = %d, want 140000", m2.CompressSize)
+	}
+
+	quitApp(ft)
+	waitRun(t, done)
+}
+
+// TestConnectCompressForLimit 验证压缩阈值规则：
+// deepseek-v4-flash 固定 140000；含 gemini 固定 80000（优先于 1M 规则）；
+// 上下文 >=1M 且不含 claude 取 200000；1M 的 claude 走 80%；其余取 80%。
+func TestConnectCompressForLimit(t *testing.T) {
+	cases := []struct {
+		name      string
+		p         provider.Model
+		tokenLimit int
+		want      int
+	}{
+		{"deepseek fixed", provider.Model{ID: "deepseek-v4-flash"}, 2000000, 140000},
+		{"gemini low ctx", provider.Model{ID: "gemini-2.5-flash"}, 500000, 80000},
+		{"gemini 1M priority", provider.Model{ID: "gemini-2.5-pro", Name: "Gemini Pro"}, 1000000, 80000},
+		{"1M no claude", provider.Model{ID: "qwen-max"}, 1000000, 200000},
+		{"1M claude excluded", provider.Model{ID: "claude-sonnet-4"}, 1000000, 800000},
+		{"claude in name", provider.Model{ID: "anthropic-model", Name: "Claude Sonnet"}, 1000000, 800000},
+		{"under 1M", provider.Model{ID: "gpt-4o"}, 65536, 52428},
+		{"edge exactly 1M", provider.Model{ID: "kimi"}, 1000000, 200000},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := connectCompressForLimit(c.p, c.tokenLimit); got != c.want {
+				t.Errorf("connectCompressForLimit(%+v, %d) = %d, want %d", c.p, c.tokenLimit, got, c.want)
+			}
+		})
+	}
 }

@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"strconv"
 	"strings"
 
@@ -162,8 +164,9 @@ func (a *App) submitConnectForm() {
 	}()
 }
 
-// connectSelectKey 模型选择步骤：↑↓ 选择、Enter 确认写入（所选模型公布上下文
-// 长度时自动设压缩阈值=50%，否则进入手动输入步骤）、Esc 返回表单。
+// connectSelectKey 模型选择步骤：↑↓ 选择、Enter 确认写入（所选模型按规则自动
+// 计算压缩阈值，见 connectCompressForLimit；未公布上下文长度进入手动输入步骤）、
+// Esc 返回表单。
 func (a *App) connectSelectKey(ke input.KeyEvent, cs *model.ConnectState) {
 	switch ke.Type {
 	case input.KeyUp:
@@ -176,13 +179,19 @@ func (a *App) connectSelectKey(ke input.KeyEvent, cs *model.ConnectState) {
 		}
 	case input.KeyEnter:
 		if cs.ModelSel >= 0 && cs.ModelSel < len(cs.Models) {
-			if picked := cs.Models[cs.ModelSel]; picked.TokenLimit > 0 {
-				// 拉取到上下文长度：压缩阈值自动取其 50%。
-				a.submitConnectModel(picked, picked.TokenLimit, picked.TokenLimit/2)
+			if picked := cs.Models[cs.ModelSel]; picked.ID == "deepseek-v4-flash" {
+				// deepseek-v4-flash：上下文已知 1M，压缩阈值固定 140000，
+				// 全自动无需手动输入。
+				a.submitConnectModel(picked, 1000000, 140000)
+			} else if picked := cs.Models[cs.ModelSel]; picked.TokenLimit > 0 {
+				// 拉取到上下文长度：按规则自动计算压缩阈值（见 connectCompressForLimit）。
+				a.submitConnectModel(picked, picked.TokenLimit, connectCompressForLimit(picked, picked.TokenLimit))
 			} else {
-				// 未拉取到：手动设置压缩阈值。
+				// 未拉取到：手动输入上下文长度与压缩阈值。
 				cs.Step = model.ConnectStepManual
+				cs.ManualTokenLimit = ""
 				cs.ManualCompress = ""
+				cs.ManualCompressTouched = false
 				cs.ManualError = ""
 			}
 		}
@@ -191,42 +200,150 @@ func (a *App) connectSelectKey(ke input.KeyEvent, cs *model.ConnectState) {
 	}
 }
 
-// connectManualKey 手动设置压缩阈值步骤：输入数字、退格删除、Enter 提交、
-// Esc 返回模型选择。
+// connectCompressForLimit 按规则计算模型的自动压缩阈值：
+//   - deepseek-v4-flash：固定 140000（保持原值）；
+//   - 模型名（ID/Name）包含 "gemini"：80000；
+//   - 上下文长度 >= 1M 且模型名不含 "claude"：200000；
+//   - 其余：上下文长度的 80%。
+func connectCompressForLimit(p provider.Model, tokenLimit int) int {
+	if p.ID == "deepseek-v4-flash" {
+		return 140000
+	}
+	name := strings.ToLower(p.ID + p.Name)
+	if strings.Contains(name, "gemini") {
+		return 80000
+	}
+	if tokenLimit >= 1000000 && !strings.Contains(name, "claude") {
+		return 200000
+	}
+	return tokenLimit * 80 / 100
+}
+
+// connectManualKey 手动输入步骤：↑↓/Tab 切换字段（0=上下文长度 1=压缩阈值）、
+// 输入数字、退格删除、Enter 提交、Esc 返回模型选择。压缩阈值未手动修改过时
+// 随上下文长度按规则联动预填（见 connectCompressForLimit）。
 func (a *App) connectManualKey(ke input.KeyEvent, cs *model.ConnectState) {
 	switch {
 	case ke.Type == input.KeyEsc:
 		cs.Step = model.ConnectStepSelect
 		cs.ManualError = ""
+	case ke.Type == input.KeyUp, ke.Type == input.KeyDown, ke.Type == input.KeyTab:
+		cs.ManualFocus = 1 - cs.ManualFocus
 	case ke.Type == input.KeyEnter:
-		a.submitConnectManualCompress()
+		a.submitConnectManualInputs()
 	case ke.Type == input.KeyBackspace:
-		if len(cs.ManualCompress) > 0 {
-			cs.ManualCompress = cs.ManualCompress[:len(cs.ManualCompress)-1]
-		}
-		cs.ManualError = ""
+		a.manualBackspace(cs)
 	case ke.Type == input.KeyRune:
-		cs.ManualCompress += string(ke.Rune)
+		if cs.ManualFocus == 0 {
+			cs.ManualTokenLimit += string(ke.Rune)
+			a.manualSyncCompress(cs)
+		} else {
+			// 压缩阈值字段首次输入：清空联动预填值，以用户输入为准。
+			if !cs.ManualCompressTouched {
+				cs.ManualCompress = ""
+				cs.ManualCompressTouched = true
+			}
+			cs.ManualCompress += string(ke.Rune)
+		}
 		cs.ManualError = ""
 	}
 }
 
-// submitConnectManualCompress 校验手动输入的压缩阈值（正整数）并提交写入；
-// TokenLimit 未拉取到，使用默认 128000。
-func (a *App) submitConnectManualCompress() {
+// manualBackspace 删除当前聚焦字段的最后一个字符（压缩阈值字段标记为已手动
+// 修改，停止联动）。
+func (a *App) manualBackspace(cs *model.ConnectState) {
+	if cs.ManualFocus == 0 {
+		if len(cs.ManualTokenLimit) > 0 {
+			cs.ManualTokenLimit = cs.ManualTokenLimit[:len(cs.ManualTokenLimit)-1]
+			a.manualSyncCompress(cs)
+		}
+	} else {
+		if len(cs.ManualCompress) > 0 {
+			cs.ManualCompress = cs.ManualCompress[:len(cs.ManualCompress)-1]
+		}
+		cs.ManualCompressTouched = true
+	}
+	cs.ManualError = ""
+}
+
+// manualSyncCompress 在上下文长度变化时按规则联动压缩阈值（见
+// connectCompressForLimit）；压缩阈值已被手动修改过或上下文长度非法时不联动。
+func (a *App) manualSyncCompress(cs *model.ConnectState) {
+	if cs.ManualCompressTouched {
+		return
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(cs.ManualTokenLimit))
+	if err != nil || n <= 0 {
+		cs.ManualCompress = ""
+		return
+	}
+	if cs.ModelSel >= 0 && cs.ModelSel < len(cs.Models) {
+		cs.ManualCompress = strconv.Itoa(connectCompressForLimit(cs.Models[cs.ModelSel], n))
+	}
+}
+
+// submitConnectManualInputs 校验手动输入的上下文长度与压缩阈值（均需正整数）
+// 并提交写入。
+func (a *App) submitConnectManualInputs() {
 	cs := a.model.Connect
 	if cs == nil || cs.ModelSel < 0 || cs.ModelSel >= len(cs.Models) {
 		return
 	}
-	n, err := strconv.Atoi(strings.TrimSpace(cs.ManualCompress))
-	if err != nil || n <= 0 {
+	tl, err := strconv.Atoi(strings.TrimSpace(cs.ManualTokenLimit))
+	if err != nil || tl <= 0 {
+		cs.ManualError = i18n.T("上下文长度需为正整数")
+		return
+	}
+	compress, err := strconv.Atoi(strings.TrimSpace(cs.ManualCompress))
+	if err != nil || compress <= 0 {
 		cs.ManualError = i18n.T("压缩阈值需为正整数")
 		return
 	}
-	a.submitConnectModel(cs.Models[cs.ModelSel], 128000, n)
+	a.submitConnectModel(cs.Models[cs.ModelSel], tl, compress)
 }
 
-// submitConnectModel 把选中的模型写入服务端配置：先 config/get 计算下一个
+// ensureCompressForModel 在切换模型后生效的压缩阈值规则：模型为
+// deepseek-v4-flash 时，静默把服务端配置中该模型的 CompressSize 更新为
+// 140000。模型不在服务端配置中或写回失败时静默跳过，不打扰用户。
+func (a *App) ensureCompressForModel(modelID string) {
+	if modelID != "deepseek-v4-flash" {
+		return
+	}
+	if a.runCtx == nil {
+		return
+	}
+	ctx := a.runCtx
+	a.commandWG.Add(1)
+	go func() {
+		defer a.commandWG.Done()
+		_ = a.applyCompressForModel(ctx, modelID, 140000)
+	}()
+}
+
+// applyCompressForModel 定位服务端配置中 ModelID 匹配的模型并写回其
+// CompressSize。模型不存在时返回错误。
+func (a *App) applyCompressForModel(ctx context.Context, modelID string, compress int) error {
+	cfg, err := a.backend.GetConfig(ctx)
+	if err != nil {
+		return err
+	}
+	key, ok := model.FindModelKeyByID(cfg, modelID)
+	if !ok {
+		return errors.New("model not found in server config")
+	}
+	patch := map[string]any{
+		"Model": map[string]any{
+			"Models": map[string]any{
+				key: map[string]any{"CompressSize": compress},
+			},
+		},
+	}
+	b, err := json.Marshal(patch)
+	if err != nil {
+		return err
+	}
+	return a.backend.SetConfig(ctx, b)
+}
 // 模型键，再 config/set 写入并设为默认（后台 goroutine，结果经
 // applyCommandResult 的 commandConnectSubmit 回填）。
 func (a *App) submitConnectModel(picked provider.Model, tokenLimit, compressSize int) {
