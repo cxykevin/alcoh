@@ -37,10 +37,20 @@ func TestDetectPrecedence(t *testing.T) {
 	if got := Detect(""); got != En {
 		t.Errorf("Detect(env ALCOH_LANG=en) = %q, want en", got)
 	}
+	// 清空所有相关环境变量（CI 上 LC_ALL 可能默认 en_US.UTF-8）。
 	t.Setenv("ALCOH_LANG", "")
+	t.Setenv("LC_ALL", "")
+	t.Setenv("LC_MESSAGES", "")
+	t.Setenv("LANG", "")
 	if got := Detect(""); got != Zh {
 		t.Errorf("Detect(LANG=zh_CN) = %q, want zh", got)
 	}
+	// zh 环境不改变默认语言。
+	t.Setenv("LANG", "zh_CN.UTF-8")
+	if got := Detect(""); got != Zh {
+		t.Errorf("Detect(LANG=zh_CN.UTF-8) = %q, want zh", got)
+	}
+	// 全部清空回退默认中文。
 	t.Setenv("LANG", "")
 	if got := Detect(""); got != Zh {
 		t.Errorf("Detect(no env) = %q, want zh (default)", got)

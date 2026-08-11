@@ -65,7 +65,7 @@ func TestConnectCommandFlow(t *testing.T) {
 	waitSnapshot(t, a, func(s modelSnapshot) bool {
 		a.modelMu.RLock()
 		cs := a.model.Connect
-		a.modelMu.RUnlock()
+		defer a.modelMu.RUnlock()
 		return cs != nil && cs.Step == model.ConnectStepSelect && len(cs.Models) == 2
 	})
 
@@ -75,7 +75,7 @@ func TestConnectCommandFlow(t *testing.T) {
 	waitSnapshot(t, a, func(s modelSnapshot) bool {
 		a.modelMu.RLock()
 		cs := a.model.Connect
-		a.modelMu.RUnlock()
+		defer a.modelMu.RUnlock()
 		return cs != nil && cs.Step == model.ConnectStepDone
 	})
 
@@ -158,7 +158,7 @@ func TestConnectManualCompressFlow(t *testing.T) {
 	waitCondition(t, "models fetched without ctx", func() bool {
 		a.modelMu.RLock()
 		cs := a.model.Connect
-		a.modelMu.RUnlock()
+		defer a.modelMu.RUnlock()
 		return cs != nil && cs.Step == model.ConnectStepSelect && len(cs.Models) == 1 && cs.Models[0].TokenLimit == 0
 	})
 
@@ -167,7 +167,7 @@ func TestConnectManualCompressFlow(t *testing.T) {
 	waitCondition(t, "manual step", func() bool {
 		a.modelMu.RLock()
 		cs := a.model.Connect
-		a.modelMu.RUnlock()
+		defer a.modelMu.RUnlock()
 		return cs != nil && cs.Step == model.ConnectStepManual
 	})
 
@@ -202,7 +202,7 @@ func TestConnectManualCompressFlow(t *testing.T) {
 	waitCondition(t, "done step", func() bool {
 		a.modelMu.RLock()
 		cs := a.model.Connect
-		a.modelMu.RUnlock()
+		defer a.modelMu.RUnlock()
 		return cs != nil && cs.Step == model.ConnectStepDone
 	})
 	ft.sendKey(input.SimpleKey(input.KeyEnter))

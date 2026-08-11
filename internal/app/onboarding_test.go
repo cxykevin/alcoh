@@ -270,7 +270,7 @@ func TestOnboardingFullFlow(t *testing.T) {
 	waitCondition(t, "models fetched", func() bool {
 		a.modelMu.RLock()
 		cs := a.model.Connect
-		a.modelMu.RUnlock()
+		defer a.modelMu.RUnlock()
 		return cs != nil && cs.Step == model.ConnectStepSelect && len(cs.Models) == 2
 	})
 
