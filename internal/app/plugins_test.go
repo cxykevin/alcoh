@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -309,4 +310,63 @@ func TestPluginCommandsReachable(t *testing.T) {
 	if !containsStr(a.model.SlashCommands(), "/testcmd") {
 		t.Fatalf("SlashCommands = %v, want include /testcmd", a.model.SlashCommands())
 	}
+}
+
+// TestPluginsCommandIntegration 验证 /plugins 打开本地配置编辑器、聚焦到
+// plugins 段，编辑（切换 disabled）即保存到 config.json。
+func TestPluginsCommandIntegration(t *testing.T) {
+	cfgDir := setConfigDir(t)
+	cfgPath := filepath.Join(cfgDir, "alcoh", "config.json")
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	initial := `{"version":1,"colorMode":"auto","plugins":[{"name":"hello","command":"/bin/hello","disabled":false}]}`
+	if err := os.WriteFile(cfgPath, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ft := newFakeTerm()
+	b := &promptRecordingBackend{Backend: demo.New(true)}
+	a := New(ft, b)
+	done := runApp(t, a)
+	waitCondition(t, "home ready", func() bool { return homeCommandsReady(a) })
+
+	// 输入 /plugins 回车：打开本地配置编辑器。
+	for _, r := range "/plugins" {
+		ft.sendKey(input.RuneKey(r, input.ModNone))
+	}
+	ft.sendKey(input.SimpleKey(input.KeyEnter))
+	waitCondition(t, "plugins editor open", func() bool {
+		a.modelMu.RLock()
+		defer a.modelMu.RUnlock()
+		return a.model.Modal == model.ModalPlugins && a.model.PluginsCfg != nil
+	})
+	// 应聚焦到 plugins 数组页。
+	waitCondition(t, "focused on plugins page", func() bool {
+		a.modelMu.RLock()
+		defer a.modelMu.RUnlock()
+		ed := a.model.PluginsCfg
+		return ed != nil && ed.Current() != nil && ed.Current().Key == "plugins"
+	})
+	// 进入第一个插件条目；下移到 disabled 行（command/disabled/name 排序第 2）并回车切换。
+	ft.sendKey(input.SimpleKey(input.KeyEnter))
+	time.Sleep(50 * time.Millisecond)
+	ft.sendKey(input.SimpleKey(input.KeyDown))
+	ft.sendKey(input.SimpleKey(input.KeyEnter))
+	// 编辑即保存：config.json 中 disabled 应为 true。
+	waitCondition(t, "config saved with disabled=true", func() bool {
+		data, err := os.ReadFile(cfgPath)
+		if err != nil {
+			return false
+		}
+		return strings.Contains(string(data), `"disabled": true`)
+	})
+	// 编辑器打开时 Ctrl+q 被编辑器按键处理吞掉：先 Esc 关闭再退出。
+	ft.sendKey(input.SimpleKey(input.KeyEsc))
+	waitCondition(t, "plugins editor closed", func() bool {
+		a.modelMu.RLock()
+		defer a.modelMu.RUnlock()
+		return a.model.Modal == model.NoModal
+	})
+	quitPluginApp(t, ft, done)
 }

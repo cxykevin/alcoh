@@ -4,9 +4,11 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/cxykevin/alcoh/internal/acp"
+	"github.com/cxykevin/alcoh/internal/config"
 	"github.com/cxykevin/alcoh/internal/i18n"
 	"github.com/cxykevin/alcoh/internal/input"
 	"github.com/cxykevin/alcoh/internal/model"
@@ -157,6 +159,8 @@ func modalName(k model.ModalKind) string {
 		return "onboarding"
 	case model.ModalConnect:
 		return "connect"
+	case model.ModalPlugins:
+		return "plugins"
 	default:
 		return "none"
 	}
@@ -185,4 +189,122 @@ func (a *App) sendPromptRaw(session acp.Session, text string) {
 	a.startCommand(commandResult{kind: commandSessionAction, sessionID: s.ID()}, func(ctx context.Context) (acp.Session, error) {
 		return nil, s.SendPrompt(ctx, text)
 	})
+}
+
+// applyEditorPatch 按活动编辑器把 patch 写回：/plugins 弹窗 → 本地
+// config.json（applyLocalConfigPatch），/server 弹窗 → 服务端 config/set。
+func (a *App) applyEditorPatch(ed *model.ConfigEditor, patch json.RawMessage) {
+	if len(patch) == 0 {
+		return
+	}
+	if ed != nil && ed == a.model.PluginsCfg {
+		a.applyLocalConfigPatch(patch)
+		return
+	}
+	a.applyConfigSet(patch)
+}
+
+// openPluginsEditor 打开本地配置编辑器（/plugins）：读取 config.json 构建
+// 配置树并聚焦到 plugins 段（不存在时停留在根页）。
+func (a *App) openPluginsEditor() {
+	m := a.model
+	m.OpenPlugins()
+	values, err := config.Load()
+	if err != nil {
+		m.ShowError(i18n.T("读取本地配置失败: %s", err.Error()))
+		m.ClosePlugins()
+		return
+	}
+	raw, err := json.Marshal(values)
+	if err != nil {
+		m.ShowError(i18n.T("序列化本地配置失败: %s", err.Error()))
+		m.ClosePlugins()
+		return
+	}
+	m.SetPluginsConfig(raw)
+	if m.PluginsCfg != nil {
+		m.PluginsCfg.Focus([]string{"plugins"})
+	}
+}
+
+// reloadPluginsConfig 重新读取本地配置重建 /plugins 配置树（"r" 刷新，
+// 丢弃未保存的改动）。
+func (a *App) reloadPluginsConfig() {
+	if a.model.PluginsCfg == nil {
+		return
+	}
+	a.openPluginsEditor()
+}
+
+// applyLocalConfigPatch 把本地配置编辑器的部分 patch 合并进 config.json 并
+// 原子保存（/plugins 的"编辑即保存"）。数组/标量整体替换，对象递归合并，
+// null 键删除。
+func (a *App) applyLocalConfigPatch(patch json.RawMessage) {
+	if len(patch) == 0 {
+		return
+	}
+	values, err := config.Load()
+	if err != nil {
+		a.model.ShowError(i18n.T("读取本地配置失败: %s", err.Error()))
+		return
+	}
+	root, err := valuesAsMap(values)
+	if err != nil {
+		a.model.ShowError(i18n.T("序列化本地配置失败: %s", err.Error()))
+		return
+	}
+	var patchRoot map[string]any
+	if err := json.Unmarshal(patch, &patchRoot); err != nil {
+		a.model.ShowError(i18n.T("解析配置修改失败: %s", err.Error()))
+		return
+	}
+	mergeJSON(root, patchRoot)
+	merged, err := json.Marshal(root)
+	if err != nil {
+		a.model.ShowError(i18n.T("序列化配置失败: %s", err.Error()))
+		return
+	}
+	var updated config.Values
+	if err := json.Unmarshal(merged, &updated); err != nil {
+		a.model.ShowError(i18n.T("配置类型不匹配: %s", err.Error()))
+		return
+	}
+	if err := config.Save(updated); err != nil {
+		a.model.ShowError(i18n.T("保存本地配置失败: %s", err.Error()))
+		return
+	}
+	a.model.Settings = updated
+	a.model.ShowInfo(i18n.T("配置已保存（插件改动重启 alcoh 后生效）"))
+}
+
+// valuesAsMap 把本地配置序列化为可合并的 JSON 对象。
+func valuesAsMap(values config.Values) (map[string]any, error) {
+	raw, err := json.Marshal(values)
+	if err != nil {
+		return nil, err
+	}
+	var root map[string]any
+	if err := json.Unmarshal(raw, &root); err != nil {
+		return nil, err
+	}
+	return root, nil
+}
+
+// mergeJSON 把 patch（部分更新对象）递归合并进 dst：对象递归，数组/标量
+// 整体替换，null 值删除对应键（服务端 config/set 对 map 键的删除语义）。
+func mergeJSON(dst map[string]any, patch map[string]any) {
+	for k, pv := range patch {
+		if pv == nil {
+			delete(dst, k)
+			continue
+		}
+		dv, ok := dst[k]
+		pvMap, pvIsMap := pv.(map[string]any)
+		dvMap, dvIsMap := dv.(map[string]any)
+		if ok && pvIsMap && dvIsMap {
+			mergeJSON(dvMap, pvMap)
+			continue
+		}
+		dst[k] = pv
+	}
 }

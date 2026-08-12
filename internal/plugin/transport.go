@@ -270,8 +270,17 @@ func (t *transport) readLoop(stdout io.Reader) {
 
 func (t *transport) drainStderr(stderr io.Reader) {
 	defer t.wg.Done()
-	// 插件 stderr 绝不能阻塞协议进程；直接丢弃，避免污染 alternate screen。
-	_, _ = io.Copy(io.Discard, stderr)
+	// 插件 stderr 转发到 alcoh 端日志（stderr），带插件名前缀便于排查；
+	// 不输出到 stdout 以免污染 alternate screen。
+	scanner := bufio.NewScanner(stderr)
+	scanner.Buffer(make([]byte, 64<<10), defaultMaxRPCLine)
+	for scanner.Scan() {
+		line := strings.TrimRight(scanner.Text(), "\r\n")
+		if line == "" {
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "[plugin:%s] %s\n", t.name, line)
+	}
 }
 
 func (t *transport) waitLoop() {

@@ -24,8 +24,9 @@ type PluginConfig struct {
 	Dir string `json:"dir,omitempty"`
 	// Env 是追加给插件的 KEY=VALUE 环境变量。
 	Env []string `json:"env,omitempty"`
-	// Disabled 为 true 时跳过启动该插件。
-	Disabled bool `json:"disabled,omitempty"`
+	// Disabled 为 true 时跳过启动该插件。不带 omitempty：false 也要持久化，
+	// 否则 /plugins 编辑器里无法切换（false 在加载→保存往返中丢失）。
+	Disabled bool `json:"disabled"`
 }
 
 // Values 是项目本地 TUI 配置。ACP agent 配置不写入此文件。

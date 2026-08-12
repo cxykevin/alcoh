@@ -45,6 +45,21 @@ var configKeyLabels = map[string]string{
 	"Feedback":      "反馈",
 	"JSONSchema":    "JSON 模式",
 	"DataMask":      "数据掩码",
+	// 本地配置（/plugins 弹窗，见 config.Values）。
+	"version":             "配置版本",
+	"colorMode":           "颜色模式",
+	"language":            "界面语言",
+	"thinkingExpanded":    "思考默认展开",
+	"toolsExpanded":       "工具默认展开",
+	"terminalOutputLimit": "终端输出上限",
+	"onboardingEffort":    "首个会话推理强度",
+	"plugins":             "插件",
+	"name":                "名称",
+	"command":             "命令",
+	"args":                "参数",
+	"dir":                 "工作目录",
+	"env":                 "环境变量",
+	"disabled":            "禁用",
 	// Model 与模型项。
 	"ProviderURL":            "提供方 URL",
 	"ProviderKey":            "提供方密钥",
@@ -418,7 +433,8 @@ func (ed *ConfigEditor) Move(delta int) {
 // CanAdd 报告当前页面（集合）是否允许新增条目。开放的集合：Model.Models
 // （模型集合，键为数字字符串）、Agent.Agents（子代理集合，键为名称）与
 // Context.LSP.LanguageServers（语言服务器集合，键为文件扩展名），以及
-// Context.Phrase.Phrases（短语数组，直接追加元素）。
+// Context.Phrase.Phrases（短语数组，直接追加元素）与本地配置的 plugins
+// 数组（本地插件，/plugins 弹窗）。
 func (ed *ConfigEditor) CanAdd() bool {
 	n := ed.Current()
 	if n == nil {
@@ -435,7 +451,7 @@ func (ed *ConfigEditor) CanAdd() bool {
 			return n.Parent != nil && n.Parent.Key == "LSP"
 		}
 	case ConfigArray:
-		return n.Key == "Phrases" && n.Parent != nil && n.Parent.Key == "Phrase"
+		return n.Key == "plugins" || (n.Key == "Phrases" && n.Parent != nil && n.Parent.Key == "Phrase")
 	}
 	return false
 }
@@ -448,8 +464,8 @@ func (ed *ConfigEditor) IsModels() bool {
 
 // CanDelete 报告当前页面是否提供「(删除该项)」行：当前页面是单个模型项
 // （Model.Models.*）、子代理项（Agent.Agents.*）、语言服务器项
-// （Context.LSP.LanguageServers.*）或短语项（Context.Phrase.Phrases[*]）的子页时，
-// 可删除该项本身。
+// （Context.LSP.LanguageServers.*）、短语项（Context.Phrase.Phrases[*]）
+// 或本地插件项（plugins[*]）的子页时，可删除该项本身。
 func (ed *ConfigEditor) CanDelete() bool {
 	n := ed.Current()
 	if n == nil {
@@ -462,7 +478,8 @@ func (ed *ConfigEditor) CanDelete() bool {
 	return (p.Key == "Models" && p.Parent != nil && p.Parent.Key == "Model") ||
 		(p.Key == "Agents" && p.Parent != nil && p.Parent.Key == "Agent") ||
 		(p.Key == "LanguageServers" && p.Parent != nil && p.Parent.Key == "LSP") ||
-		(p.Key == "Phrases" && p.Kind == ConfigArray && p.Parent != nil && p.Parent.Key == "Phrase")
+		(p.Key == "Phrases" && p.Kind == ConfigArray && p.Parent != nil && p.Parent.Key == "Phrase") ||
+		(p.Key == "plugins" && p.Kind == ConfigArray)
 }
 
 // AddRowIndex 返回「(新增)」行的行索引；当前页面不允许新增时返回 -1。
@@ -731,6 +748,29 @@ func (ed *ConfigEditor) AddPhrasesItem() (json.RawMessage, bool) {
 	child := buildConfigNode(key, append(n.Path, key), n, val)
 	n.Children = append(n.Children, child)
 	// 自动进入新元素子页面并选中首行，便于立即编辑。
+	ed.EntryIdx = append(ed.EntryIdx, ed.Selected)
+	ed.Stack = append(ed.Stack, child)
+	ed.Selected = 0
+	return nodePatch(n.Path, n.AsValue()), true
+}
+
+// AddPluginsItem 在本地配置 plugins 数组页的「(新增)」行上追加一个插件条目
+// （{Name:"", Command:"", Disabled:false}），并自动进入其子页面选中首行。
+// 数组字段整体替换写回，返回的 patch 为整个数组。插件改动在重启 alcoh 后生效。
+func (ed *ConfigEditor) AddPluginsItem() (json.RawMessage, bool) {
+	n := ed.Current()
+	if n == nil || n.Kind != ConfigArray || n.Key != "plugins" {
+		return nil, false
+	}
+	key := strconv.Itoa(len(n.Children))
+	val := map[string]any{
+		"Name":     "",
+		"Command":  "",
+		"Disabled": false,
+	}
+	child := buildConfigNode(key, append(n.Path, key), n, val)
+	n.Children = append(n.Children, child)
+	// 自动进入新条目子页面并选中首行，便于立即编辑。
 	ed.EntryIdx = append(ed.EntryIdx, ed.Selected)
 	ed.Stack = append(ed.Stack, child)
 	ed.Selected = 0

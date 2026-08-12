@@ -51,6 +51,9 @@ const (
 	ModalOnboarding
 	// ModalConnect /connect 向导：选择服务商 → 填 key → 拉取模型列表 → 写入配置。
 	ModalConnect
+	// ModalPlugins /plugins 本地配置编辑器（复用 /server 的配置树面板），
+	// 用于管理 config.json 的插件列表等本地配置。
+	ModalPlugins
 )
 
 // Focus 表示会话视图的焦点区域。
@@ -123,6 +126,10 @@ type AppModel struct {
 	// 尚未从 config/get 加载。
 	ServerCfg *ConfigEditor
 
+	// PluginsCfg 是本地配置树编辑器状态（/plugins 弹窗，复用 ConfigEditor）。
+	// 由 app 打开时从 config.json 构建；编辑即保存回本地配置。
+	PluginsCfg *ConfigEditor
+
 	// Onboarding 是全屏新手引导状态（见 onboarding.go）。nil 表示不在引导中。
 	Onboarding *OnboardingState
 
@@ -172,7 +179,7 @@ func New() *AppModel {
 		HomeSelected:         -1,
 		HomeListFocused:      false,
 		Input:                widget.NewInputBuffer(),
-		LocalCommands:        []string{"/alcoh_help", "/clear", "/settings"},
+		LocalCommands:        []string{"/alcoh_help", "/clear", "/settings", "/plugins"},
 		Settings:             config.Defaults(),
 		pendingSessionEvents: map[string][]acp.Event{},
 	}
@@ -236,6 +243,7 @@ var localSlashCommandInfo = map[string]SlashCommandInfo{
 	"/clear":      {Name: "/clear", Description: "清除会话，返回会话列表", ArgsHint: "[on]"},
 	"/settings":   {Name: "/settings", Description: "打开本地设置"},
 	"/server":     {Name: "/server", Description: "服务端信息与操作弹窗"},
+	"/plugins":    {Name: "/plugins", Description: "管理本地配置（插件等）"},
 }
 
 // effortLevels 是客户端硬编码的推理强度（ACP v2 thought_level 目录）候选值。
@@ -317,7 +325,7 @@ func (m *AppModel) SlashCompletion() (ghost, description string) {
 // 未列入硬编码列表的 agent 命令优先级为 0。
 func slashCommandPriority(command string) int {
 	switch command {
-	case "/alcoh_help", "/connect", "/effort", "/clear", "/settings", "/server":
+	case "/alcoh_help", "/connect", "/effort", "/clear", "/settings", "/server", "/plugins":
 		return 1
 	default:
 		return 0
@@ -508,6 +516,29 @@ func (m *AppModel) SetServerConfig(raw json.RawMessage) {
 // CloseServer 关闭服务端配置编辑器并释放其状态。
 func (m *AppModel) CloseServer() {
 	m.ServerCfg = nil
+	m.SetModal(NoModal)
+}
+
+// OpenPlugins 打开本地配置编辑器弹窗（/plugins）。配置树由 app 打开时
+// 经 SetPluginsConfig 写入本地 config.json。
+func (m *AppModel) OpenPlugins() {
+	m.CloseSlash()
+	m.SetModal(ModalPlugins)
+}
+
+// SetPluginsConfig 用本地配置 JSON 构建配置树。重建后保留此前的导航位置
+// 与正在进行的编辑。
+func (m *AppModel) SetPluginsConfig(raw json.RawMessage) {
+	old := m.PluginsCfg
+	m.PluginsCfg = NewConfigEditor(raw)
+	if old != nil {
+		m.PluginsCfg.RestoreState(old.CaptureState())
+	}
+}
+
+// ClosePlugins 关闭本地配置编辑器并释放其状态。
+func (m *AppModel) ClosePlugins() {
+	m.PluginsCfg = nil
 	m.SetModal(NoModal)
 }
 

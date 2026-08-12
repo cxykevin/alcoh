@@ -123,8 +123,9 @@ alcoh 以**本地子进程 + NDJSON JSON-RPC 2.0 + protobuf payload** 的方式�
 经 stdin/stdout 双向传输 NDJSON 格式的 JSON-RPC 2.0 消息，每个方法的
 params/result 都是 `{"data": "<base64(protobuf)>"}` 单字段对象。
 
-- **协议 schema**：`proto/plugin/v1/plugin.proto`（Go 绑定已生成到
-  `pb/plugin/v1`；任意语言可用 protoc 按同一 schema 生成插件端代码）
+- **协议 schema**：`proto/plugin/v1/plugin.proto`；Go 绑定由
+  `go generate pb/plugin/v1/gen.go` 生成（纯 Go 管线，无需安装 protoc，
+  生成文件不入仓库），任意语言可用 protoc 按同一 schema 生成插件端代码
 - **参考实现**：`examples/plugins/hello`（演示全部 hooks 与回调）
 - **配置**：`~/.config/alcoh/config.json` 的 `plugins` 数组（`name` /
   `command` / `args` / `dir` / `env` / `disabled`），命令参数逐项传入不经过 shell
@@ -187,6 +188,9 @@ TUI 底部提示一次，其余插件与主程序不受影响。
 - `/effort [unset|low|medium|high|xhigh|max]`：设置推理强度。带参数直接经 `session/set_config_option` 写 `thought_level`；无参数弹出水平滑条（←→ 移动、Enter 确认、Esc 取消）。仅当 agent 公布 `thought_level` config 时可用
 - `/model [value]`：切换模型。带参数直接经 `session/set_config_option`（`type=id`）写模型；无参数弹出垂直模型菜单（↑↓/滚轮 选择、Enter 确认、Esc 取消）。仅当 agent 公布 `category="model"`（或 `configId="model"`）config 时可用；候选值与当前值均取自服务端公布的 `options`/`currentValue`
 - `/settings`：本地设置（`Ctrl+,` 亦可），切换 `colorMode` 等选项并即时保存
+- `/plugins`：本地配置编辑器（复用 `/server` 的配置树面板）——浏览/新增/删除
+  `config.json` 的插件条目（name/command/args/dir/env/disabled 等），编辑即
+  保存，插件改动重启 alcoh 后生效
 - `/server`：服务端配置编辑器，仅当服务端在 initialize 中声明 `alk.cxykevin.top/alkaid0/v0.4` 能力时出现
 
 ### 常用快捷键

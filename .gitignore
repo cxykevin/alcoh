@@ -8,6 +8,8 @@
 product/build.go
 # 根目录的生成文件副本（历史遗留，与 product/build.go 重复）
 /build.go
+# 插件协议 protobuf 绑定（go generate pb/plugin/v1/gen.go 生成，不进仓库）
+/pb/plugin/v1/plugin.pb.go
 
 # ---- 本地工具/运行数据 ----
 # alkaid0 扩展的本地数据库与缓存（任意层级）
