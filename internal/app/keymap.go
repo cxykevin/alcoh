@@ -17,8 +17,13 @@ import (
 	"github.com/cxykevin/alcoh/internal/widget"
 )
 
-// dispatchKey 分发按键事件（模态优先，再按视图）。
+// dispatchKey 分发按键事件（插件按键拦截优先，再按模态/视图）。
 func (a *App) dispatchKey(ke input.KeyEvent) {
+	// 插件 key hooks：仅当命中插件声明的按键绑定时才发起 IPC；返回 handled
+	// 时该键被插件消费，不再进入默认分发。
+	if a.pluginKeyHook(ke) {
+		return
+	}
 	m := a.model
 	switch m.Modal {
 	case model.ModalPermission:
@@ -396,7 +401,8 @@ func (a *App) tryLocalSlashCommand() bool {
 		}
 		a.openConnect()
 	default:
-		return false
+		// 插件注册的斜杠命令（/xxx 开头的 token 未命中本地命令时尝试插件）。
+		return a.runPluginCommand(name, rest)
 	}
 	return true
 }
@@ -1212,14 +1218,24 @@ func (a *App) cancelPermission() {
 }
 
 func (a *App) submitPrompt() {
-	text := a.model.SubmitInput()
-	if text == "" || a.sess == nil {
+	if a.sess == nil || a.model.Input == nil {
 		return
 	}
-	session := a.sess
-	a.startCommand(commandResult{kind: commandSessionAction, sessionID: session.ID()}, func(ctx context.Context) (acp.Session, error) {
-		return nil, session.SendPrompt(ctx, text)
-	})
+	// 先经插件 hooks 裁决（可改写/拦截），通过后才消费输入框；拦截时输入
+	// 框保留原文，便于用户修改后重试。
+	text := a.model.Input.Text()
+	if text == "" {
+		return
+	}
+	out, blocked := a.promptHook(a.sess.ID(), text)
+	if blocked {
+		return
+	}
+	if a.model.SubmitInput() == "" {
+		return
+	}
+	// 已裁决的文本直接发送，不再二次触发 hooks（见 sendPromptRaw）。
+	a.sendPromptRaw(a.sess, out)
 }
 
 func (a *App) cancelCurrent() {
@@ -1259,9 +1275,8 @@ func (a *App) usePreSession(prompt string) bool {
 	// 引导里选的 effort 应用到用户第一个会话（仅一次，此后由 /effort 管理）。
 	a.applyFirstSessionEffort(s)
 	if prompt != "" {
-		a.startCommand(commandResult{kind: commandSessionAction, sessionID: s.ID()}, func(ctx context.Context) (acp.Session, error) {
-			return nil, s.SendPrompt(ctx, prompt)
-		})
+		// 经插件 prompt hooks（可改写/拦截）后发送。
+		a.sendPrompt(s, prompt)
 	}
 	return true
 }

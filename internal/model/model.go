@@ -97,6 +97,14 @@ type AppModel struct {
 	SlashSelected int
 	LocalCommands []string
 
+	// PluginCommands 是插件注册的斜杠命令（"/" 规范化后，如 "/hello"），
+	// 由 app 在插件握手成功后写入（见 app.pluginHost）。
+	PluginCommands []string
+	// PluginCommandInfo 是插件命令的说明与参数提示（命令名 → 信息）。
+	PluginCommandInfo map[string]SlashCommandInfo
+	// PluginStatus 是各插件在状态栏左侧展示的文本（插件名 → 文本）。
+	PluginStatus map[string]string
+
 	Settings         config.Values
 	SettingsSelected int
 
@@ -170,6 +178,49 @@ func New() *AppModel {
 	}
 }
 
+// SetPluginCommands 设置插件注册的斜杠命令列表（握手成功后调用）。
+func (m *AppModel) SetPluginCommands(commands []string) {
+	m.PluginCommands = append([]string(nil), commands...)
+}
+
+// SetPluginCommandInfo 设置插件命令的说明与参数提示。
+func (m *AppModel) SetPluginCommandInfo(info map[string]SlashCommandInfo) {
+	m.PluginCommandInfo = make(map[string]SlashCommandInfo, len(info))
+	for k, v := range info {
+		m.PluginCommandInfo[k] = v
+	}
+}
+
+// SetPluginStatus 设置插件在状态栏左侧的文本；text 为空时清除。
+func (m *AppModel) SetPluginStatus(name, text string) {
+	if m.PluginStatus == nil {
+		m.PluginStatus = make(map[string]string)
+	}
+	if text == "" {
+		delete(m.PluginStatus, name)
+		return
+	}
+	m.PluginStatus[name] = text
+}
+
+// PluginStatusLines 返回状态栏展示用的"插件名: 文本"列表（按插件名排序，
+// 保证跨帧稳定）。
+func (m *AppModel) PluginStatusLines() []string {
+	if len(m.PluginStatus) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(m.PluginStatus))
+	for name := range m.PluginStatus {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		out = append(out, name+": "+m.PluginStatus[name])
+	}
+	return out
+}
+
 // SlashCommandInfo 是可用于补全和展示的命令元数据。
 type SlashCommandInfo struct {
 	Name        string
@@ -201,6 +252,10 @@ func (m *AppModel) slashCommandInfos() []SlashCommandInfo {
 		if info, ok := localSlashCommandInfo[name]; ok {
 			// 本地命令说明按当前语言翻译（渲染时调用，切换语言即时生效）。
 			info.Description = i18n.T(info.Description)
+			infos = append(infos, info)
+			continue
+		}
+		if info, ok := m.PluginCommandInfo[name]; ok {
 			infos = append(infos, info)
 			continue
 		}
@@ -307,6 +362,19 @@ func (m *AppModel) SlashCommands() []string {
 			if !duplicate {
 				out = append(out, name)
 			}
+		}
+	}
+	// 插件命令：与本地/agent 命令去重后追加。
+	for _, name := range m.PluginCommands {
+		duplicate := false
+		for _, existing := range out {
+			if existing == name {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			out = append(out, name)
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool {

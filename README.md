@@ -102,6 +102,62 @@ alcoh -m '你好'
 %AppData%\alcoh\config.json
 ```
 
+```json
+{
+  "version": 1,
+  "plugins": [
+    {
+      "name": "hello",
+      "command": "/abs/path/to/alcoh/examples/plugins/hello/hello"
+    }
+  ]
+}
+```
+
+---
+
+## 插件系统
+
+alcoh 以**本地子进程 + NDJSON JSON-RPC 2.0 + protobuf payload** 的方式接入前端插件：
+插件是独立的可执行进程，由 alcoh 在启动时拉起（`shutdown` 通知后超时强杀），
+经 stdin/stdout 双向传输 NDJSON 格式的 JSON-RPC 2.0 消息，每个方法的
+params/result 都是 `{"data": "<base64(protobuf)>"}` 单字段对象。
+
+- **协议 schema**：`proto/plugin/v1/plugin.proto`（Go 绑定已生成到
+  `pb/plugin/v1`；任意语言可用 protoc 按同一 schema 生成插件端代码）
+- **参考实现**：`examples/plugins/hello`（演示全部 hooks 与回调）
+- **配置**：`~/.config/alcoh/config.json` 的 `plugins` 数组（`name` /
+  `command` / `args` / `dir` / `env` / `disabled`），命令参数逐项传入不经过 shell
+
+### Host → Plugin 方法
+
+| 方法 | 类型 | 说明 |
+|---|---|---|
+| `initialize` | request | 启动后首条消息；插件应答名称、hooks、按键绑定与斜杠命令 |
+| `hook/prompt` | request | 提交 prompt 前裁决：`ALLOW` / `REWRITE` / `BLOCK`（拦截时原因展示给用户，输入框保留） |
+| `hook/key` | request | 仅当按键命中插件声明的 `key_bindings` 时调用；`handled=true` 消费按键 |
+| `hook/update` | notification | 每个 ACP 事件（`message_chunk`、`state_update`、`tool_call_update` 等）的只读快照 |
+| `command/run` | request | 用户执行插件注册的斜杠命令（自动出现在 `/` 命令面板） |
+| `shutdown` | notification | alcoh 退出，插件应尽快自行退出 |
+
+### Plugin → Host 方法
+
+| 方法 | 说明 |
+|---|---|
+| `notify` | TUI 底部提示（`kind`: `info`/`success`/`error`） |
+| `status` | 设置状态栏左侧插件文本（空串清除） |
+| `log` | 写入 alcoh stderr（不污染 TUI） |
+
+### Hooks 注入点
+
+- **prompt**：会话视图回车提交、主页回车提交、One Shot 初始消息全部经
+  `hook/prompt` 裁决后才发送（见 `internal/app/plugins.go` 的 `sendPrompt`）
+- **key**：按键分发前按插件绑定过滤，命中才发起 IPC，普通按键零开销
+- **update**：事件循环对每个 ACP 事件异步广播（不阻塞渲染）
+
+插件进程启动/握手失败、运行中崩溃或 hook 超时均不致命：该插件被停用并在
+TUI 底部提示一次，其余插件与主程序不受影响。
+
 ---
 
 ## 平台支持
@@ -171,6 +227,8 @@ cmd/alcoh/main.go
   └─ app
       ├─ term       跨平台终端/raw mode/尺寸事件
       ├─ view/model TUI 与纯状态机
+      ├─ plugin     插件宿主：本地进程 + JSON-RPC + protobuf hooks
+      │                （internal/plugin，协议见 proto/plugin/v1/plugin.proto）
       └─ acp
           ├─ rpc.go              JSON-RPC envelope 与 ID
           ├─ protocol_types.go   ACP method params/results
