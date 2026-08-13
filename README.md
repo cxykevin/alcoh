@@ -118,46 +118,12 @@ alcoh -m '你好'
 
 ## 插件系统
 
-alcoh 以**本地子进程 + NDJSON JSON-RPC 2.0 + protobuf payload** 的方式接入前端插件：
-插件是独立的可执行进程，由 alcoh 在启动时拉起（`shutdown` 通知后超时强杀），
-经 stdin/stdout 双向传输 NDJSON 格式的 JSON-RPC 2.0 消息，每个方法的
-params/result 都是 `{"data": "<base64(protobuf)>"}` 单字段对象。
+alcoh 以**本地子进程 + JSONLines JSON-RPC 2.0 + protobuf payload** 的方式接入前端插件：
+插件是独立的可执行进程，由 alcoh 在启动时拉起。
 
-- **协议 schema**：`proto/plugin/v1/plugin.proto`；Go 绑定由
-  `go generate pb/plugin/v1/gen.go` 生成（纯 Go 管线，无需安装 protoc，
-  生成文件不入仓库），任意语言可用 protoc 按同一 schema 生成插件端代码
-- **参考实现**：`examples/plugins/hello`（演示全部 hooks 与回调）
-- **配置**：`~/.config/alcoh/config.json` 的 `plugins` 数组（`name` /
-  `command` / `args` / `dir` / `env` / `disabled`），命令参数逐项传入不经过 shell
-
-### Host → Plugin 方法
-
-| 方法 | 类型 | 说明 |
-|---|---|---|
-| `initialize` | request | 启动后首条消息；插件应答名称、hooks、按键绑定与斜杠命令 |
-| `hook/prompt` | request | 提交 prompt 前裁决：`ALLOW` / `REWRITE` / `BLOCK`（拦截时原因展示给用户，输入框保留） |
-| `hook/key` | request | 仅当按键命中插件声明的 `key_bindings` 时调用；`handled=true` 消费按键 |
-| `hook/update` | notification | 每个 ACP 事件（`message_chunk`、`state_update`、`tool_call_update` 等）的只读快照 |
-| `command/run` | request | 用户执行插件注册的斜杠命令（自动出现在 `/` 命令面板） |
-| `shutdown` | notification | alcoh 退出，插件应尽快自行退出 |
-
-### Plugin → Host 方法
-
-| 方法 | 说明 |
-|---|---|
-| `notify` | TUI 底部提示（`kind`: `info`/`success`/`error`） |
-| `status` | 设置状态栏左侧插件文本（空串清除） |
-| `log` | 写入 alcoh stderr（不污染 TUI） |
-
-### Hooks 注入点
-
-- **prompt**：会话视图回车提交、主页回车提交、One Shot 初始消息全部经
-  `hook/prompt` 裁决后才发送（见 `internal/app/plugins.go` 的 `sendPrompt`）
-- **key**：按键分发前按插件绑定过滤，命中才发起 IPC，普通按键零开销
-- **update**：事件循环对每个 ACP 事件异步广播（不阻塞渲染）
-
-插件进程启动/握手失败、运行中崩溃或 hook 超时均不致命：该插件被停用并在
-TUI 底部提示一次，其余插件与主程序不受影响。
+- **协议 schema**：`proto/plugin/v1/plugin.proto`。
+- **参考实现**：`examples/plugins/hello`
+- **配置**：`~/.config/alcoh/config.json` 的 `plugins`。
 
 ---
 
@@ -183,7 +149,7 @@ TUI 底部提示一次，其余插件与主程序不受影响。
 以 `/` 开头的输入会弹出命令面板，`Enter` / `Tab` 补全并执行本地命令。未匹配的斜杠命令原样作为 prompt 提交给 agent（按 agent 公布的能力出现）。
 
 - `/alcoh_help`：显示命令帮助（输入框为空时按 `?` 亦可）
-- `/connect`：**连接模型服务商向导**——内置服务商模板（DeepSeek / OpenAI / OpenCode Go / Moonshot / GLM / Qwen / S3AI / 自定义）自动预填 base_url，填 API key 后自动调用服务商 `/models` 接口拉取模型列表，选择模型即写入服务端配置（自动分配模型键并设为默认）。**压缩阈值自动规则**（拉取到上下文长度时生效）：模型名为 gemini → 80000；deepseek-v4-flash → 140000（上下文已知 1M，TokenLimit 1000000，全自动无需手动输入）；上下文 ≥1M 且模型名不含 claude → 200000；其余取上下文长度的 80%。未公布上下文长度的模型进入手动输入步骤（上下文长度 + 压缩阈值，压缩阈值随上下文长度按同一规则联动预填、可改）。`/model` 切换到 deepseek-v4-flash 时也会自动把服务端配置中的压缩阈值更新为 140000。仅当服务端声明 alkaid0 扩展能力时可用
+- `/connect`：**连接模型服务商向导**——内置服务商模板（DeepSeek / OpenAI / OpenCode Go / Moonshot / GLM / Qwen / S3AI / 自定义）自动预填 base_url，填 API key 后自动调用服务商 `/models` 接口拉取模型列表，选择模型即写入服务端配置（自动分配模型键并设为默认）。仅当服务端声明 alkaid0 扩展能力时可用
 - `/clear [on]`：返回主页会话列表；默认先取消正在运行的会话，`on` 不取消直接返回
 - `/effort [unset|low|medium|high|xhigh|max]`：设置推理强度。带参数直接经 `session/set_config_option` 写 `thought_level`；无参数弹出水平滑条（←→ 移动、Enter 确认、Esc 取消）。仅当 agent 公布 `thought_level` config 时可用
 - `/model [value]`：切换模型。带参数直接经 `session/set_config_option`（`type=id`）写模型；无参数弹出垂直模型菜单（↑↓/滚轮 选择、Enter 确认、Esc 取消）。仅当 agent 公布 `category="model"`（或 `configId="model"`）config 时可用；候选值与当前值均取自服务端公布的 `options`/`currentValue`
@@ -247,6 +213,7 @@ cmd/alcoh/main.go
 ## 测试
 
 ```bash
+go generate ./...
 go test ./...
 go test -race ./...
 go vet ./...
