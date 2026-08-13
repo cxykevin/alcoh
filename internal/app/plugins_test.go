@@ -371,15 +371,18 @@ func TestPluginsCommandIntegration(t *testing.T) {
 	quitPluginApp(t, ft, done)
 }
 
-// TestPluginsCommandAutoCreate 验证配置文件中没有 plugins 段时，/plugins
-// 自动新建空数组并聚焦到该页，可直接新增插件条目并保存。
-func TestPluginsCommandAutoCreate(t *testing.T) {
+// TestPluginsNoPhantomConfig 验证配置文件中没有 plugins 段时，/plugins 不会
+// 凭空生成空配置：打开后停留在根页（不自动新建空数组），直接关闭后 config.json
+// 不变；新增插件（进入子页）后仍不写盘，编辑 command 字段时才把 plugins 段
+// 写入 config.json。
+func TestPluginsNoPhantomConfig(t *testing.T) {
 	cfgDir := setConfigDir(t)
 	cfgPath := filepath.Join(cfgDir, "alcoh", "config.json")
 	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(cfgPath, []byte(`{"version":1,"colorMode":"auto"}`), 0o600); err != nil {
+	initial := `{"version":1,"colorMode":"auto"}`
+	if err := os.WriteFile(cfgPath, []byte(initial), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -389,33 +392,66 @@ func TestPluginsCommandAutoCreate(t *testing.T) {
 	done := runApp(t, a)
 	waitCondition(t, "home ready", func() bool { return homeCommandsReady(a) })
 
-	for _, r := range "/plugins" {
-		ft.sendKey(input.RuneKey(r, input.ModNone))
+	openPlugins := func() {
+		for _, r := range "/plugins" {
+			ft.sendKey(input.RuneKey(r, input.ModNone))
+		}
+		ft.sendKey(input.SimpleKey(input.KeyEnter))
 	}
-	ft.sendKey(input.SimpleKey(input.KeyEnter))
-	// 编辑器应打开并聚焦到 plugins 页（自动新建的空数组）。
-	waitCondition(t, "focused on auto-created plugins page", func() bool {
+	atRootNoPlugins := func() bool {
 		a.modelMu.RLock()
 		defer a.modelMu.RUnlock()
 		ed := a.model.PluginsCfg
 		return a.model.Modal == model.ModalPlugins && ed != nil &&
-			ed.Current() != nil && ed.Current().Key == "plugins"
+			ed.Current() != nil && ed.Current().Parent == nil && !ed.HasPluginsArray()
+	}
+
+	// 打开 /plugins：无 plugins 段时停留在根页，不凭空新建空数组。
+	openPlugins()
+	waitCondition(t, "plugins editor open at root", atRootNoPlugins)
+	// 直接关闭：config.json 保持不变（仍无 plugins 段）。
+	ft.sendKey(input.SimpleKey(input.KeyEsc))
+	waitCondition(t, "plugins editor closed", func() bool {
+		a.modelMu.RLock()
+		defer a.modelMu.RUnlock()
+		return a.model.Modal == model.NoModal
 	})
-	// 空数组页只有「(新增)」行：Enter 新增插件并进入其子页。
+	if data, err := os.ReadFile(cfgPath); err != nil || string(data) != initial {
+		t.Fatalf("config after open+close = %q, want unchanged %q", string(data), initial)
+	}
+
+	// 再次打开并新增插件：进入新条目子页，但尚未写盘。
+	openPlugins()
+	waitCondition(t, "plugins editor open at root", atRootNoPlugins)
+	// 根页子项为 colorMode/terminalOutputLimit/version（config.Load 注入默认值）
+	// 之后是「(新增)」行：下移 3 次后 Enter。
+	ft.sendKey(input.SimpleKey(input.KeyDown))
+	ft.sendKey(input.SimpleKey(input.KeyDown))
+	ft.sendKey(input.SimpleKey(input.KeyDown))
 	ft.sendKey(input.SimpleKey(input.KeyEnter))
-	waitCondition(t, "entered new plugin item", func() bool {
+	waitCondition(t, "entered pending plugin item", func() bool {
 		a.modelMu.RLock()
 		defer a.modelMu.RUnlock()
 		ed := a.model.PluginsCfg
-		return ed != nil && ed.Current() != nil && ed.Current().Key == "0"
+		return ed != nil && ed.Current() != nil && ed.Current().Key == "0" && ed.Current().Pending
 	})
-	// config.json 应写入 plugins 数组（含新条目）。
+	// 仅新增（尚未编辑任何字段）不写盘。
+	if data, err := os.ReadFile(cfgPath); err != nil || string(data) != initial {
+		t.Fatalf("config after add = %q, want unchanged %q", string(data), initial)
+	}
+
+	// 编辑 command 字段（新条目子页首行即 Command）：此刻才把 plugins 段写入。
+	ft.sendKey(input.SimpleKey(input.KeyEnter)) // 进入 Command 值编辑
+	for _, r := range "/bin/new" {
+		ft.sendKey(input.RuneKey(r, input.ModNone))
+	}
+	ft.sendKey(input.SimpleKey(input.KeyEnter)) // 提交编辑即保存
 	waitCondition(t, "config saved with plugins array", func() bool {
 		data, err := os.ReadFile(cfgPath)
 		if err != nil {
 			return false
 		}
-		return strings.Contains(string(data), `"plugins"`)
+		return strings.Contains(string(data), `"plugins"`) && strings.Contains(string(data), "/bin/new")
 	})
 	ft.sendKey(input.SimpleKey(input.KeyEsc))
 	waitCondition(t, "plugins editor closed", func() bool {

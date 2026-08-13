@@ -765,8 +765,10 @@ func (a *App) activateConfigRow(ed *model.ConfigEditor) {
 }
 
 // activateAddRow 处理「(新增)」行：Model.Models 直接分配数字键新增空模型；
-// Context.Phrase.Phrases 数组直接追加元素；本地配置 plugins 数组追加插件条目；
-// 名称键 map（Agent.Agents、Context.LSP.LanguageServers）进入新增键名输入。
+// Context.Phrase.Phrases 数组直接追加元素；本地配置 plugins 数组追加插件条目
+// （仅入内存，编辑该条目字段时才写回，见 AddPluginsItem）；本地配置根页无
+// plugins 段时直接新建该段并追加首条目（AddPluginsArray）；名称键 map
+// （Agent.Agents、Context.LSP.LanguageServers）进入新增键名输入。
 func (a *App) activateAddRow(ed *model.ConfigEditor) {
 	if ed.IsModels() {
 		patch, ok := ed.AddModelsItem()
@@ -778,21 +780,27 @@ func (a *App) activateAddRow(ed *model.ConfigEditor) {
 		}
 		return
 	}
-	if cur := ed.Current(); cur != nil && cur.Kind == model.ConfigArray {
-		if cur.Key == "plugins" {
-			// 本地插件数组：直接追加条目并自动进入其子页编辑。
-			patch, ok := ed.AddPluginsItem()
+	if cur := ed.Current(); cur != nil {
+		if cur.Kind == model.ConfigArray {
+			if cur.Key == "plugins" {
+				// 本地插件数组：仅在内存中追加条目并进入其子页，编辑该条目
+				// 任一字段时才随整体数组写回（避免把空条目凭空持久化）。
+				ed.AddPluginsItem()
+				return
+			}
+			patch, ok := ed.AddPhrasesItem()
 			if ok {
+				a.serverCfgFocus = append([]string(nil), ed.Current().Path...)
 				a.applyEditorPatch(ed, patch)
 			}
 			return
 		}
-		patch, ok := ed.AddPhrasesItem()
-		if ok {
-			a.serverCfgFocus = append([]string(nil), ed.Current().Path...)
-			a.applyEditorPatch(ed, patch)
+		if cur.Parent == nil && ed.IsLocalConfig() && !ed.HasPluginsArray() {
+			// 本地配置根页且尚无 plugins 段：直接新建插件数组 + 首条目
+			// （同样延迟写回，编辑条目字段时才保存）。
+			ed.AddPluginsArray()
+			return
 		}
-		return
 	}
 	ed.BeginAddKey()
 }

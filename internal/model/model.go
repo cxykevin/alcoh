@@ -526,11 +526,13 @@ func (m *AppModel) OpenPlugins() {
 	m.SetModal(ModalPlugins)
 }
 
-// SetPluginsConfig 用本地配置 JSON 构建配置树。重建后保留此前的导航位置
-// 与正在进行的编辑。
+// SetPluginsConfig 用本地配置 JSON 构建配置树（标记为本地配置编辑器：
+// 根页可新增 plugins 段、plugins 数组整体替换写回）。重建后保留此前的
+// 导航位置与正在进行的编辑。
 func (m *AppModel) SetPluginsConfig(raw json.RawMessage) {
 	old := m.PluginsCfg
 	m.PluginsCfg = NewConfigEditor(raw)
+	m.PluginsCfg.isLocalConfig = true
 	if old != nil {
 		m.PluginsCfg.RestoreState(old.CaptureState())
 	}

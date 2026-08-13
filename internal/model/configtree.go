@@ -221,6 +221,10 @@ type ConfigNode struct {
 	Str       string
 	Num       float64
 	Bool      bool
+	// Pending 表示本地配置（/plugins）中新增但尚未写回的插件条目：条目加入
+	// 配置树（用于展示与编辑）但不参与持久化，直到其任一字段被编辑时清空
+	// 该标记并随整体数组写回——避免仅按一次 Enter 就把空配置写入 config.json。
+	Pending bool
 }
 
 // DisplayKey 返回该键在界面上的显示名：数组元素显示位置 "[i]"；其余键优先
@@ -316,30 +320,22 @@ func configKeyLess(a, b string) bool {
 	return a < b
 }
 
-// EnsureArrayKey 确保根对象下存在指定键的数组节点（如本地配置的 plugins）：
-// 键不存在时追加空数组，键存在但为 null 时改写为空数组，并保持子项排序。
-// 返回是否发生了补充。用于 /plugins 打开时保证该段可进入、可新增。
-func (ed *ConfigEditor) EnsureArrayKey(key string) bool {
-	if ed.Root == nil || ed.Root.Kind != ConfigObject {
+// IsLocalConfig 报告该编辑器编辑的是本地 config.json（/plugins）而非服务端
+// 配置。本地配置的根页支持直接新增 plugins 段。
+func (ed *ConfigEditor) IsLocalConfig() bool { return ed.isLocalConfig }
+
+// HasPluginsArray 报告本地配置根下是否存在可编辑的 plugins 数组（缺失或为
+// null 等非数组值时返回 false，此时根页提供「(新增)」入口来新建该段）。
+func (ed *ConfigEditor) HasPluginsArray() bool {
+	if ed.Root == nil {
 		return false
 	}
 	for _, c := range ed.Root.Children {
-		if c.Key != key {
-			continue
-		}
-		if c.Kind == ConfigNull {
-			c.Kind = ConfigArray
-			c.Children = nil
+		if c.Key == "plugins" && c.Kind == ConfigArray {
 			return true
 		}
-		return false
 	}
-	child := buildConfigNode(key, []string{key}, ed.Root, []any{})
-	ed.Root.Children = append(ed.Root.Children, child)
-	sort.Slice(ed.Root.Children, func(i, j int) bool {
-		return configKeyLess(ed.Root.Children[i].Key, ed.Root.Children[j].Key)
-	})
-	return true
+	return false
 }
 
 // AsValue 返回节点作为 JSON 值的表示（供序列化 patch）。
@@ -386,10 +382,10 @@ func nodePatch(path []string, val any) json.RawMessage {
 	return b
 }
 
-// ConfigEditor 是服务端配置编辑器状态（/server 弹窗）。
-// 采用子页面导航：每次只展示一个集合（对象/数组）的直接子项作为一页，
-// Stack 记录从根到当前页面的路径，Enter 进入子页面、Back 返回上一页。
-// 编辑即自动保存：每次修改后调用方构造 patch 并经 config/set 写回。
+// ConfigEditor 是配置树编辑器状态（/server 服务端配置弹窗与 /plugins 本地
+// config.json 弹窗共用）。采用子页面导航：每次只展示一个集合（对象/数组）的
+// 直接子项作为一页，Stack 记录从根到当前页面的路径，Enter 进入子页面、
+// Back 返回上一页。编辑即自动保存：每次修改后调用方构造 patch 并写回。
 type ConfigEditor struct {
 	Root     *ConfigNode
 	Stack    []*ConfigNode // 导航栈；Stack[0] 恒为根对象
@@ -406,6 +402,11 @@ type ConfigEditor struct {
 	// Saving 表示配置写回（config/set）与随后的全量重载（config/get）进行中。
 	// 期间阻塞新的改动，界面底部显示"保存中…"，直到重载完成解除。
 	Saving bool
+
+	// isLocalConfig 表示编辑的是本地 config.json（/plugins）而非服务端配置。
+	// 用于根页新增 plugins 段、plugins 数组整体替换写回与 pending 延迟写回等
+	// 本地配置特有的语义。
+	isLocalConfig bool
 }
 
 // NewConfigEditor 从 config/get 的完整配置 JSON 构建配置编辑器。
@@ -463,7 +464,9 @@ func (ed *ConfigEditor) Move(delta int) {
 // （模型集合，键为数字字符串）、Agent.Agents（子代理集合，键为名称）与
 // Context.LSP.LanguageServers（语言服务器集合，键为文件扩展名），以及
 // Context.Phrase.Phrases（短语数组，直接追加元素）与本地配置的 plugins
-// 数组（本地插件，/plugins 弹窗）。
+// 数组（本地插件，/plugins 弹窗）。本地配置根页且尚无 plugins 段时也允许
+// 新增——直接创建 plugins 数组并追加首条目（见 AddPluginsArray），使无插件
+// 配置也能进入插件管理而不凭空生成空段。
 func (ed *ConfigEditor) CanAdd() bool {
 	n := ed.Current()
 	if n == nil {
@@ -471,6 +474,10 @@ func (ed *ConfigEditor) CanAdd() bool {
 	}
 	switch n.Kind {
 	case ConfigObject:
+		// 本地配置（/plugins）根页且尚无 plugins 数组（缺失或为 null 等非数组值）。
+		if ed.isLocalConfig && n.Parent == nil && !ed.HasPluginsArray() {
+			return true
+		}
 		switch n.Key {
 		case "Models":
 			return n.Parent != nil && n.Parent.Key == "Model"
@@ -614,13 +621,47 @@ func (ed *ConfigEditor) ToggleBool() json.RawMessage {
 // （{"Phrases":{"0":{...}}}）会把数组段变成 map，服务端 applyPatch 类型不匹配
 // 保存失败。因此必须整体替换最近的数组祖先（内含 n 的全部兄弟元素）。
 // 否则按字段路径局部 patch（map 集合与 struct 字段均可局部更新）。
+//
+// 本地配置（/plugins）的 plugins 数组同理：其子树内（含条目内的 args/env
+// 数组）任何编辑都写回整个 plugins 数组，且过滤尚未写回的 pending 空条目，
+// 避免按字段路径的局部 patch 被 mergeJSON 误判为 map、以及把空配置持久化。
 func (ed *ConfigEditor) patchForNode(n *ConfigNode, val any) json.RawMessage {
+	for a := n.Parent; a != nil; a = a.Parent {
+		if a.Kind == ConfigArray && ed.isLocalConfig && a.Key == "plugins" {
+			ed.clearPendingEntry(n)
+			return nodePatch(a.Path, ed.pluginsArrayValue(a))
+		}
+	}
 	for a := n.Parent; a != nil; a = a.Parent {
 		if a.Kind == ConfigArray {
 			return nodePatch(a.Path, a.AsValue())
 		}
 	}
 	return nodePatch(n.Path, val)
+}
+
+// pluginsArrayValue 返回 plugins 数组的 JSON 值，排除尚未写回的 pending 条目
+// （新增后未编辑任何字段的空条目），避免把空配置持久化到 config.json。
+func (ed *ConfigEditor) pluginsArrayValue(a *ConfigNode) any {
+	out := make([]any, 0, len(a.Children))
+	for _, c := range a.Children {
+		if c.Pending {
+			continue
+		}
+		out = append(out, c.AsValue())
+	}
+	return out
+}
+
+// clearPendingEntry 清除包含 n 的 plugins 数组条目的 pending 标记：编辑该条目
+// 任一字段即视为提交，此后随整体数组写回。非 plugins 子树内调用为无操作。
+func (ed *ConfigEditor) clearPendingEntry(n *ConfigNode) {
+	for a := n; a != nil; a = a.Parent {
+		if a.Parent != nil && a.Parent.Kind == ConfigArray && a.Parent.Key == "plugins" {
+			a.Pending = false
+			return
+		}
+	}
 }
 
 // BeginEdit 进入当前标量节点的值编辑模式。敏感字段输入框初始为空
@@ -785,11 +826,13 @@ func (ed *ConfigEditor) AddPhrasesItem() (json.RawMessage, bool) {
 
 // AddPluginsItem 在本地配置 plugins 数组页的「(新增)」行上追加一个插件条目
 // （{Name:"", Command:"", Disabled:false}），并自动进入其子页面选中首行。
-// 数组字段整体替换写回，返回的 patch 为整个数组。插件改动在重启 alcoh 后生效。
-func (ed *ConfigEditor) AddPluginsItem() (json.RawMessage, bool) {
+// 新条目标记为 pending（尚未写回）：不立即保存，直到该条目任一字段被编辑时
+// 才随整体数组写回（见 patchForNode/pluginsArrayValue）——避免仅按一次 Enter
+// 就把空配置持久化到 config.json。插件改动在重启 alcoh 后生效。
+func (ed *ConfigEditor) AddPluginsItem() bool {
 	n := ed.Current()
 	if n == nil || n.Kind != ConfigArray || n.Key != "plugins" {
-		return nil, false
+		return false
 	}
 	key := strconv.Itoa(len(n.Children))
 	val := map[string]any{
@@ -798,12 +841,41 @@ func (ed *ConfigEditor) AddPluginsItem() (json.RawMessage, bool) {
 		"Disabled": false,
 	}
 	child := buildConfigNode(key, append(n.Path, key), n, val)
+	child.Pending = true
 	n.Children = append(n.Children, child)
 	// 自动进入新条目子页面并选中首行，便于立即编辑。
 	ed.EntryIdx = append(ed.EntryIdx, ed.Selected)
 	ed.Stack = append(ed.Stack, child)
 	ed.Selected = 0
-	return nodePatch(n.Path, n.AsValue()), true
+	return true
+}
+
+// AddPluginsArray 在本地配置根页「(新增)」行上新增 plugins 数组并追加首个
+// 插件条目（配置中还没有 plugins 段时）。根下 plugins 键若存在但非数组
+// （如 null）则替换为数组；排序保持。新条目同样标记 pending 延迟写回。
+// 成功进入新条目子页面时返回 true。
+func (ed *ConfigEditor) AddPluginsArray() bool {
+	if ed.Root == nil || ed.Root.Kind != ConfigObject || !ed.isLocalConfig {
+		return false
+	}
+	for i, c := range ed.Root.Children {
+		if c.Key != "plugins" {
+			continue
+		}
+		if c.Kind == ConfigArray {
+			return false // 已是数组，应走 AddPluginsItem。
+		}
+		ed.Root.Children = append(ed.Root.Children[:i], ed.Root.Children[i+1:]...)
+		break
+	}
+	child := buildConfigNode("plugins", []string{"plugins"}, ed.Root, []any{})
+	ed.Root.Children = append(ed.Root.Children, child)
+	sort.Slice(ed.Root.Children, func(i, j int) bool {
+		return configKeyLess(ed.Root.Children[i].Key, ed.Root.Children[j].Key)
+	})
+	// 进入 plugins 页并追加首条目（AddPluginsItem 会继续进入该条目子页）。
+	ed.Focus([]string{"plugins"})
+	return ed.AddPluginsItem()
 }
 
 // BeginAddKey 进入当前集合页（名称键的 map：Agent.Agents、Context.LSP.
@@ -917,6 +989,10 @@ func (ed *ConfigEditor) DeleteItem() (json.RawMessage, bool) {
 			c.Key = ik
 			setPath(c, append(append([]string(nil), parent.Path...), ik))
 		}
+		// 本地 plugins 数组：过滤尚未写回的 pending 条目，避免把空条目一并落盘。
+		if ed.isLocalConfig && parent.Key == "plugins" {
+			return nodePatch(parent.Path, ed.pluginsArrayValue(parent)), true
+		}
 		return nodePatch(parent.Path, parent.AsValue()), true
 	}
 	// 对象：本地删除键，以 null 键写回（服务端 config/set 真正删除 map 键）。
@@ -951,6 +1027,11 @@ func (ed *ConfigEditor) Focus(path []string) {
 		}
 		if idx < 0 {
 			return // 段不存在（键已变化/被删），停留在最近可达页面。
+		}
+		// 只进入可展开的容器（对象/数组）；标量/null 停留在父页，避免聚焦进
+		// 无内容的子页（如本地配置的 plugins:null，其修复入口在根页「(新增)」）。
+		if k := cur.Children[idx].Kind; k != ConfigObject && k != ConfigArray {
+			return
 		}
 		ed.EntryIdx = append(ed.EntryIdx, idx)
 		ed.Stack = append(ed.Stack, cur.Children[idx])
