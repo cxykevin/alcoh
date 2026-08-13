@@ -303,14 +303,43 @@ func buildConfigNode(key string, path []string, parent *ConfigNode, v any) *Conf
 // sortConfigKeys 按自然顺序排序对象键：数字字符串按数值比较，其余按字典序。
 // 使 Models/Agents 等数字键的模型集合按 ID 顺序展示。
 func sortConfigKeys(keys []string) {
-	sort.Slice(keys, func(i, j int) bool {
-		a, erra := strconv.Atoi(keys[i])
-		b, errb := strconv.Atoi(keys[j])
-		if erra == nil && errb == nil {
-			return a < b
+	sort.Slice(keys, func(i, j int) bool { return configKeyLess(keys[i], keys[j]) })
+}
+
+// configKeyLess 是配置对象键的排序比较：数字字符串按数值比较，其余按字典序。
+func configKeyLess(a, b string) bool {
+	ai, erra := strconv.Atoi(a)
+	bi, errb := strconv.Atoi(b)
+	if erra == nil && errb == nil {
+		return ai < bi
+	}
+	return a < b
+}
+
+// EnsureArrayKey 确保根对象下存在指定键的数组节点（如本地配置的 plugins）：
+// 键不存在时追加空数组，键存在但为 null 时改写为空数组，并保持子项排序。
+// 返回是否发生了补充。用于 /plugins 打开时保证该段可进入、可新增。
+func (ed *ConfigEditor) EnsureArrayKey(key string) bool {
+	if ed.Root == nil || ed.Root.Kind != ConfigObject {
+		return false
+	}
+	for _, c := range ed.Root.Children {
+		if c.Key != key {
+			continue
 		}
-		return keys[i] < keys[j]
+		if c.Kind == ConfigNull {
+			c.Kind = ConfigArray
+			c.Children = nil
+			return true
+		}
+		return false
+	}
+	child := buildConfigNode(key, []string{key}, ed.Root, []any{})
+	ed.Root.Children = append(ed.Root.Children, child)
+	sort.Slice(ed.Root.Children, func(i, j int) bool {
+		return configKeyLess(ed.Root.Children[i].Key, ed.Root.Children[j].Key)
 	})
+	return true
 }
 
 // AsValue 返回节点作为 JSON 值的表示（供序列化 patch）。

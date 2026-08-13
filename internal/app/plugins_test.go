@@ -370,3 +370,58 @@ func TestPluginsCommandIntegration(t *testing.T) {
 	})
 	quitPluginApp(t, ft, done)
 }
+
+// TestPluginsCommandAutoCreate 验证配置文件中没有 plugins 段时，/plugins
+// 自动新建空数组并聚焦到该页，可直接新增插件条目并保存。
+func TestPluginsCommandAutoCreate(t *testing.T) {
+	cfgDir := setConfigDir(t)
+	cfgPath := filepath.Join(cfgDir, "alcoh", "config.json")
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfgPath, []byte(`{"version":1,"colorMode":"auto"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ft := newFakeTerm()
+	b := &promptRecordingBackend{Backend: demo.New(true)}
+	a := New(ft, b)
+	done := runApp(t, a)
+	waitCondition(t, "home ready", func() bool { return homeCommandsReady(a) })
+
+	for _, r := range "/plugins" {
+		ft.sendKey(input.RuneKey(r, input.ModNone))
+	}
+	ft.sendKey(input.SimpleKey(input.KeyEnter))
+	// 编辑器应打开并聚焦到 plugins 页（自动新建的空数组）。
+	waitCondition(t, "focused on auto-created plugins page", func() bool {
+		a.modelMu.RLock()
+		defer a.modelMu.RUnlock()
+		ed := a.model.PluginsCfg
+		return a.model.Modal == model.ModalPlugins && ed != nil &&
+			ed.Current() != nil && ed.Current().Key == "plugins"
+	})
+	// 空数组页只有「(新增)」行：Enter 新增插件并进入其子页。
+	ft.sendKey(input.SimpleKey(input.KeyEnter))
+	waitCondition(t, "entered new plugin item", func() bool {
+		a.modelMu.RLock()
+		defer a.modelMu.RUnlock()
+		ed := a.model.PluginsCfg
+		return ed != nil && ed.Current() != nil && ed.Current().Key == "0"
+	})
+	// config.json 应写入 plugins 数组（含新条目）。
+	waitCondition(t, "config saved with plugins array", func() bool {
+		data, err := os.ReadFile(cfgPath)
+		if err != nil {
+			return false
+		}
+		return strings.Contains(string(data), `"plugins"`)
+	})
+	ft.sendKey(input.SimpleKey(input.KeyEsc))
+	waitCondition(t, "plugins editor closed", func() bool {
+		a.modelMu.RLock()
+		defer a.modelMu.RUnlock()
+		return a.model.Modal == model.NoModal
+	})
+	quitPluginApp(t, ft, done)
+}

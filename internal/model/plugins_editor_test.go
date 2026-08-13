@@ -104,3 +104,43 @@ func TestPluginsCommandInPanel(t *testing.T) {
 		t.Fatalf("SlashCommands = %v, want include /plugins", m.SlashCommands())
 	}
 }
+
+// TestEnsureArrayKey 验证 EnsureArrayKey：键不存在时补空数组、null 时改写
+// 为空数组、已存在时保持不动，并维持子项排序。
+func TestEnsureArrayKey(t *testing.T) {
+	// 缺失：追加空数组并保持排序。
+	ed := NewConfigEditor(json.RawMessage(`{"version":1,"colorMode":"auto"}`))
+	if !ed.EnsureArrayKey("plugins") {
+		t.Fatal("EnsureArrayKey should add missing key")
+	}
+	ed.Focus([]string{"plugins"})
+	if cur := ed.Current(); cur == nil || cur.Key != "plugins" || cur.Kind != ConfigArray || len(cur.Children) != 0 {
+		t.Fatalf("after ensure current = %+v, want empty plugins array", cur)
+	}
+	if !ed.CanAdd() {
+		t.Fatal("empty plugins array should allow add")
+	}
+	// 排序：colorMode < plugins < version。
+	var order []string
+	for _, c := range ed.Root.Children {
+		order = append(order, c.Key)
+	}
+	if order[0] != "colorMode" || order[1] != "plugins" || order[2] != "version" {
+		t.Fatalf("root child order = %v", order)
+	}
+
+	// 已存在：不动。
+	ed2 := NewConfigEditor(json.RawMessage(`{"version":1,"plugins":[{"command":"/bin/a"}]}`))
+	if ed2.EnsureArrayKey("plugins") {
+		t.Fatal("EnsureArrayKey should not modify existing key")
+	}
+	// null：改写为空数组。
+	ed3 := NewConfigEditor(json.RawMessage(`{"version":1,"plugins":null}`))
+	if !ed3.EnsureArrayKey("plugins") {
+		t.Fatal("EnsureArrayKey should rewrite null key")
+	}
+	ed3.Focus([]string{"plugins"})
+	if cur := ed3.Current(); cur == nil || cur.Kind != ConfigArray {
+		t.Fatalf("after null rewrite current kind = %v, want array", cur)
+	}
+}

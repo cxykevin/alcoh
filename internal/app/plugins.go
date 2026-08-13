@@ -205,7 +205,8 @@ func (a *App) applyEditorPatch(ed *model.ConfigEditor, patch json.RawMessage) {
 }
 
 // openPluginsEditor 打开本地配置编辑器（/plugins）：读取 config.json 构建
-// 配置树并聚焦到 plugins 段（不存在时停留在根页）。
+// 配置树，确保 plugins 段存在（配置文件中没有时自动新建空数组）并聚焦到
+// plugins 页。
 func (a *App) openPluginsEditor() {
 	m := a.model
 	m.OpenPlugins()
@@ -222,8 +223,9 @@ func (a *App) openPluginsEditor() {
 		return
 	}
 	m.SetPluginsConfig(raw)
-	if m.PluginsCfg != nil {
-		m.PluginsCfg.Focus([]string{"plugins"})
+	if ed := m.PluginsCfg; ed != nil {
+		ed.EnsureArrayKey("plugins")
+		ed.Focus([]string{"plugins"})
 	}
 }
 
