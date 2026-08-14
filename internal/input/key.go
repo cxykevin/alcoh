@@ -46,6 +46,7 @@ const (
 	KeyF10
 	KeyF11
 	KeyF12
+	KeyPaste
 )
 
 // KeyEvent 描述一次按键。
@@ -53,6 +54,7 @@ type KeyEvent struct {
 	Type KeyType
 	Rune rune // Type==KeyRune 时有效
 	Mod  Mod
+	Text string // Type==KeyPaste 时有效
 }
 
 // RuneKey 构造普通字符按键。
