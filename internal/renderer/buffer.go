@@ -46,6 +46,12 @@ func (b *Buffer) Set(x, y int, c Cell) {
 	if i < 0 {
 		return
 	}
+	// 若覆盖宽字符续列，先清除左侧首列，避免网格保留非法宽字符。
+	if x > 0 && b.Cells[i].Width == 0 {
+		if prev := b.Index(x-1, y); prev >= 0 && b.Cells[prev].Width == 2 {
+			b.Cells[prev] = Cell{R: ' ', Style: c.Style, Width: 1}
+		}
+	}
 	// 清除旧的续列残留：若旧 cell 是宽字符首列，其续列在 x+1
 	if old := b.Cells[i]; old.Width == 2 && (c.Width == 1 || c.Width == 0) {
 		if j := b.Index(x+1, y); j >= 0 {

@@ -146,6 +146,19 @@ func TestBufferSetWide(t *testing.T) {
 	}
 }
 
+func TestBufferSetContinuationOverwrite(t *testing.T) {
+	b := NewBuffer(4, 1)
+	b.PutText(0, 0, "中", DefaultStyle(), 4)
+	b.Set(1, 0, Cell{R: 'x', Style: DefaultStyle(), Width: 1})
+
+	if got := b.Get(0, 0); got.Width != 1 || got.R != ' ' {
+		t.Fatalf("wide-character head should be cleared, got %#v", got)
+	}
+	if got := b.Get(1, 0); got.Width != 1 || got.R != 'x' {
+		t.Fatalf("continuation should contain replacement cell, got %#v", got)
+	}
+}
+
 func TestDetectColorMode(t *testing.T) {
 	// 不改变环境变量，只验证函数存在且返回合法值
 	m := DetectColorMode()
