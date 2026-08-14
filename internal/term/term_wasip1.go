@@ -48,7 +48,7 @@ func (t *wasip1Term) EnterRaw() error {
 		return nil
 	}
 	// WASI 无 raw mode：直接进入 alternate screen（若 host 支持 VT）；一并请求鼠标上报。
-	t.Write([]byte("\x1b[?1049h\x1b[2J\x1b[H" + hideCursorSeq + mouseEnableSeq))
+	t.Write([]byte("\x1b[?1049h\x1b[2J\x1b[H" + hideCursorSeq + mouseEnableSeq + bracketedPasteEnableSeq))
 	t.stopCh = make(chan struct{})
 	t.parser = input.NewParser(t.stdin)
 	go t.readLoop()
@@ -60,7 +60,7 @@ func (t *wasip1Term) ExitRaw() error {
 		return nil
 	}
 	close(t.stopCh)
-	t.Write([]byte(mouseDisableSeq + "\x1b[0m\x1b[?25h\x1b[?1049l"))
+	t.Write([]byte(bracketedPasteDisableSeq + mouseDisableSeq + "\x1b[0m\x1b[?25h\x1b[?1049l"))
 	return nil
 }
 

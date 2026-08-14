@@ -79,7 +79,7 @@ func (t *unixTerm) EnterRaw() error {
 	t.rawMode = true
 
 	// 进入 alternate screen、隐藏光标、启用鼠标按键与滚轮上报
-	t.Write([]byte("\x1b[?1049h\x1b[2J\x1b[H" + hideCursorSeq + mouseEnableSeq))
+	t.Write([]byte("\x1b[?1049h\x1b[2J\x1b[H" + hideCursorSeq + mouseEnableSeq + bracketedPasteEnableSeq))
 
 	// 启动事件采集
 	t.evCh = make(chan Event, 64)
@@ -105,7 +105,7 @@ func (t *unixTerm) ExitRaw() error {
 	}
 	t.rawMode = false
 	// 关闭鼠标上报、退出 alternate screen、复位样式、显示光标
-	t.Write([]byte(mouseDisableSeq + "\x1b[0m\x1b[?25h\x1b[?1049l"))
+	t.Write([]byte(bracketedPasteDisableSeq + mouseDisableSeq + "\x1b[0m\x1b[?25h\x1b[?1049l"))
 	return nil
 }
 

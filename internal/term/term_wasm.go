@@ -106,13 +106,13 @@ func (t *wasmTerm) Size() (int, int) { return t.w, t.h }
 func (t *wasmTerm) EnterRaw() error {
 	// 浏览器本来就是 raw 语义（xterm.js 逐键回调），无需模式切换；
 	// 通过 mouseEnableSeq 请求 xterm.js 上报滚轮 / 按键 SGR 序列。
-	t.Write([]byte("\x1b[?1049h\x1b[2J\x1b[H" + hideCursorSeq + mouseEnableSeq))
+	t.Write([]byte("\x1b[?1049h\x1b[2J\x1b[H" + hideCursorSeq + mouseEnableSeq + bracketedPasteEnableSeq))
 	go t.readLoop()
 	return nil
 }
 
 func (t *wasmTerm) ExitRaw() error {
-	t.Write([]byte(mouseDisableSeq + "\x1b[0m\x1b[?25h\x1b[?1049l"))
+	t.Write([]byte(bracketedPasteDisableSeq + mouseDisableSeq + "\x1b[0m\x1b[?25h\x1b[?1049l"))
 	return nil
 }
 
