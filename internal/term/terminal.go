@@ -50,6 +50,9 @@ const (
 	// ?1006: SGR 参数格式（无 223 列上限）。
 	mouseEnableSeq  = "\x1b[?1000h\x1b[?1002h\x1b[?1006h"
 	mouseDisableSeq = "\x1b[?1006l\x1b[?1002l\x1b[?1000l"
+	// bracketedPasteEnableSeq makes pasted text arrive as one delimited input event.
+	bracketedPasteEnableSeq  = "\x1b[?2004h"
+	bracketedPasteDisableSeq = "\x1b[?2004l"
 )
 
 // eventFromInput 把 parser 事件转换为 term 事件。

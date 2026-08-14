@@ -67,6 +67,15 @@ func TestParserBasics(t *testing.T) {
 	}
 }
 
+func TestParserBracketedPaste(t *testing.T) {
+	p := feedParser([]byte("\x1b[200~a\n中\x1b[201~"))
+	got := nextKey(t, p)
+	want := KeyEvent{Type: KeyPaste, Text: "a\n中"}
+	if got != want {
+		t.Fatalf("paste = %+v, want %+v", got, want)
+	}
+}
+
 func TestParserEscSequence(t *testing.T) {
 	// 序列形式的输入：\x1b[A 应立即解析为 Up（不能误判为孤立 Esc）
 	p := feedParser([]byte("\x1b[A"))

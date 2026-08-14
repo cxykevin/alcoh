@@ -194,6 +194,23 @@ func TestInputBoxCursorWrapsWithoutPromptOffset(t *testing.T) {
 	}
 }
 
+func TestInputBufferPaste(t *testing.T) {
+	b := NewInputBuffer()
+	b.InsertRune('x')
+	b.MoveLeft()
+	b.InsertText("a\r\nb\r中")
+	if got := b.Text(); got != "a\nb\n中x" {
+		t.Fatalf("paste = %q, want %q", got, "a\nb\n中x")
+	}
+	if b.CY != 2 || b.CX != 1 {
+		t.Fatalf("cursor = (%d,%d), want (2,1)", b.CY, b.CX)
+	}
+	b.Undo()
+	if got := b.Text(); got != "x" {
+		t.Fatalf("undo paste = %q, want x", got)
+	}
+}
+
 func TestInputBufferTrailingContinuation(t *testing.T) {
 	b := NewInputBuffer()
 	for _, r := range "中文\\" {
