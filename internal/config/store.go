@@ -11,6 +11,24 @@ import (
 
 const currentVersion = 1
 
+// PluginConfig 描述一个本地插件进程（alcoh 前端插件系统，见 internal/plugin）。
+// Command/Args 直接作为 argv 传给 os/exec，不经过 shell 解析。
+type PluginConfig struct {
+	// Name 是展示名；空时用 Command 的最后一段。
+	Name string `json:"name,omitempty"`
+	// Command 是插件可执行文件路径。
+	Command string `json:"command"`
+	// Args 是传给插件的单个 argv，可重复。
+	Args []string `json:"args,omitempty"`
+	// Dir 是插件工作目录；空表示继承 alcoh。
+	Dir string `json:"dir,omitempty"`
+	// Env 是追加给插件的 KEY=VALUE 环境变量。
+	Env []string `json:"env,omitempty"`
+	// Disabled 为 true 时跳过启动该插件。不带 omitempty：false 也要持久化，
+	// 否则 /plugins 编辑器里无法切换（false 在加载→保存往返中丢失）。
+	Disabled bool `json:"disabled"`
+}
+
 // Values 是项目本地 TUI 配置。ACP agent 配置不写入此文件。
 type Values struct {
 	Version             int    `json:"version"`
@@ -25,6 +43,8 @@ type Values struct {
 	// （thought_level 值，如 high/xhigh）。首个会话激活时经 session/set_config_option
 	// 应用后清空；空表示未设置。仅由引导流程写入。
 	OnboardingEffort string `json:"onboardingEffort,omitempty"`
+	// Plugins 是启动时加载的本地插件进程（前端插件系统）。
+	Plugins []PluginConfig `json:"plugins,omitempty"`
 }
 
 func Defaults() Values {

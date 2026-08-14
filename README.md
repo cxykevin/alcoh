@@ -102,6 +102,29 @@ alcoh -m '你好'
 %AppData%\alcoh\config.json
 ```
 
+```json
+{
+  "version": 1,
+  "plugins": [
+    {
+      "name": "hello",
+      "command": "/abs/path/to/alcoh/examples/plugins/hello/hello"
+    }
+  ]
+}
+```
+
+---
+
+## 插件系统
+
+alcoh 以**本地子进程 + JSONLines JSON-RPC 2.0 + protobuf payload** 的方式接入前端插件：
+插件是独立的可执行进程，由 alcoh 在启动时拉起。
+
+- **协议 schema**：`proto/plugin/v1/plugin.proto`。
+- **参考实现**：`examples/plugins/hello`
+- **配置**：`~/.config/alcoh/config.json` 的 `plugins`。
+
 ---
 
 ## 平台支持
@@ -126,11 +149,14 @@ alcoh -m '你好'
 以 `/` 开头的输入会弹出命令面板，`Enter` / `Tab` 补全并执行本地命令。未匹配的斜杠命令原样作为 prompt 提交给 agent（按 agent 公布的能力出现）。
 
 - `/alcoh_help`：显示命令帮助（输入框为空时按 `?` 亦可）
-- `/connect`：**连接模型服务商向导**——内置服务商模板（DeepSeek / OpenAI / OpenCode Go / Moonshot / GLM / Qwen / S3AI / 自定义）自动预填 base_url，填 API key 后自动调用服务商 `/models` 接口拉取模型列表，选择模型即写入服务端配置（自动分配模型键并设为默认）。**压缩阈值自动规则**（拉取到上下文长度时生效）：模型名为 gemini → 80000；deepseek-v4-flash → 140000（上下文已知 1M，TokenLimit 1000000，全自动无需手动输入）；上下文 ≥1M 且模型名不含 claude → 200000；其余取上下文长度的 80%。未公布上下文长度的模型进入手动输入步骤（上下文长度 + 压缩阈值，压缩阈值随上下文长度按同一规则联动预填、可改）。`/model` 切换到 deepseek-v4-flash 时也会自动把服务端配置中的压缩阈值更新为 140000。仅当服务端声明 alkaid0 扩展能力时可用
+- `/connect`：**连接模型服务商向导**——内置服务商模板（DeepSeek / OpenAI / OpenCode Go / Moonshot / GLM / Qwen / S3AI / 自定义）自动预填 base_url，填 API key 后自动调用服务商 `/models` 接口拉取模型列表，选择模型即写入服务端配置（自动分配模型键并设为默认）。仅当服务端声明 alkaid0 扩展能力时可用
 - `/clear [on]`：返回主页会话列表；默认先取消正在运行的会话，`on` 不取消直接返回
 - `/effort [unset|low|medium|high|xhigh|max]`：设置推理强度。带参数直接经 `session/set_config_option` 写 `thought_level`；无参数弹出水平滑条（←→ 移动、Enter 确认、Esc 取消）。仅当 agent 公布 `thought_level` config 时可用
 - `/model [value]`：切换模型。带参数直接经 `session/set_config_option`（`type=id`）写模型；无参数弹出垂直模型菜单（↑↓/滚轮 选择、Enter 确认、Esc 取消）。仅当 agent 公布 `category="model"`（或 `configId="model"`）config 时可用；候选值与当前值均取自服务端公布的 `options`/`currentValue`
 - `/settings`：本地设置（`Ctrl+,` 亦可），切换 `colorMode` 等选项并即时保存
+- `/plugins`：本地配置编辑器（复用 `/server` 的配置树面板）——浏览/新增/删除
+  `config.json` 的插件条目（name/command/args/dir/env/disabled 等），编辑即
+  保存，插件改动重启 alcoh 后生效
 - `/server`：服务端配置编辑器，仅当服务端在 initialize 中声明 `alk.cxykevin.top/alkaid0/v0.4` 能力时出现
 
 ### 常用快捷键
@@ -171,6 +197,8 @@ cmd/alcoh/main.go
   └─ app
       ├─ term       跨平台终端/raw mode/尺寸事件
       ├─ view/model TUI 与纯状态机
+      ├─ plugin     插件宿主：本地进程 + JSON-RPC + protobuf hooks
+      │                （internal/plugin，协议见 proto/plugin/v1/plugin.proto）
       └─ acp
           ├─ rpc.go              JSON-RPC envelope 与 ID
           ├─ protocol_types.go   ACP method params/results
@@ -185,6 +213,7 @@ cmd/alcoh/main.go
 ## 测试
 
 ```bash
+go generate ./...
 go test ./...
 go test -race ./...
 go vet ./...

@@ -96,7 +96,7 @@ func (v *AppView) modalHeight(m *model.AppModel) int {
 		}
 	case model.ModalExitConfirm:
 		h = 5
-	case model.ModalServer:
+	case model.ModalServer, model.ModalPlugins:
 		h = 9
 	case model.ModalOnboarding, model.ModalConnect:
 		// 新手引导 / 连接向导占满整屏：底层内容无需缩小。
@@ -157,6 +157,11 @@ func (v *AppView) drawModalAtInput(c *renderer.Canvas, r renderer.Rect, m *model
 		h = r.H
 		title = i18n.T("服务端配置 (alk.cxykevin.top/config)")
 		content = &ConfigTree{Theme: v.Theme, Tree: m.ServerCfg}
+	case model.ModalPlugins:
+		// 本地配置编辑器占满整屏（复用 /server 的 ConfigTree 面板）。
+		h = r.H
+		title = i18n.T("本地配置 (config.json)")
+		content = &ConfigTree{Theme: v.Theme, Tree: m.PluginsCfg}
 	case model.ModalOnboarding:
 		// 新手引导占满整屏（DrawSheet 全宽面板）。
 		h = r.H
@@ -218,6 +223,8 @@ func (v *AppView) drawModalAtInputLegacy(c *renderer.Canvas, r renderer.Rect, m 
 		(&widget.Modal{Width: minModalWidth(r.W, 68), Height: minValue(availableH, 8), Title: i18n.T("推理强度 (thought_level)"), Style: v.Theme.Style(v.Theme.BorderActive), Content: effortContent(v.Theme, m)}).DrawBottom(c, r, bottomMargin)
 	case model.ModalServer:
 		(&widget.Modal{Width: minModalWidth(r.W, 70), Height: minValue(availableH, availableH), Title: i18n.T("服务端配置"), Style: v.Theme.Style(v.Theme.BorderActive), Content: &ConfigTree{Theme: v.Theme, Tree: m.ServerCfg}}).DrawBottom(c, r, bottomMargin)
+	case model.ModalPlugins:
+		(&widget.Modal{Width: minModalWidth(r.W, 70), Height: minValue(availableH, availableH), Title: i18n.T("本地配置"), Style: v.Theme.Style(v.Theme.BorderActive), Content: &ConfigTree{Theme: v.Theme, Tree: m.PluginsCfg}}).DrawBottom(c, r, bottomMargin)
 	}
 }
 
