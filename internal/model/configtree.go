@@ -535,7 +535,9 @@ func (ed *ConfigEditor) CanDelete() bool {
 		(p.Key == "Agents" && p.Parent != nil && p.Parent.Key == "Agent") ||
 		(p.Key == "LanguageServers" && p.Parent != nil && p.Parent.Key == "LSP") ||
 		(p.Key == "Phrases" && p.Kind == ConfigArray && p.Parent != nil && p.Parent.Key == "Phrase") ||
-		(p.Key == "plugins" && p.Kind == ConfigArray)
+		(p.Key == "plugins" && p.Kind == ConfigArray) ||
+		(p.Key == "RewriteHeaders") ||
+		(p.Parent != nil && p.Parent.Key == "RewriteHeaders")
 }
 
 // AddRowIndex 返回「(新增)」行的行索引；当前页面不允许新增时返回 -1。
@@ -727,6 +729,30 @@ func (ed *ConfigEditor) CancelEdit() {
 	ed.EditNode = nil
 }
 
+// isStringMapEntry reports whether an editable string is a value in a map.
+// Empty values in these maps are deletion requests, not persisted empty strings.
+func (ed *ConfigEditor) isStringMapEntry(n *ConfigNode) bool {
+	if n == nil || n.Parent == nil || n.Parent.Kind != ConfigObject {
+		return false
+	}
+	return n.Parent.Key == "TerminalEnvs" ||
+		(n.Parent.Parent != nil && n.Parent.Parent.Key == "RewriteHeaders")
+}
+
+// deleteMapEntry removes a string-valued map entry through the normal patch path.
+func (ed *ConfigEditor) deleteMapEntry(n *ConfigNode) (json.RawMessage, bool, string) {
+	parent := n.Parent
+	for i, child := range parent.Children {
+		if child == n {
+			parent.Children = append(parent.Children[:i], parent.Children[i+1:]...)
+			break
+		}
+	}
+	ed.Editing = false
+	ed.EditNode = nil
+	return nodePatch(parent.Path, map[string]any{n.Key: nil}), true, ""
+}
+
 // CommitEdit 解析编辑输入为对应类型的值并更新节点，返回写回 patch。
 // 成功时 ok=true；解析失败返回 errMsg（节点与树不变）。
 func (ed *ConfigEditor) CommitEdit() (patch json.RawMessage, ok bool, errMsg string) {
@@ -757,7 +783,10 @@ func (ed *ConfigEditor) CommitEdit() (patch json.RawMessage, ok bool, errMsg str
 			n.Str = text
 		}
 	default:
-		// 字符串：按字符串处理。
+		// 字符串：按字符串处理。地图中的空字符串表示删除该键。
+		if text == "" && ed.isStringMapEntry(n) {
+			return ed.deleteMapEntry(n)
+		}
 		n.Kind = ConfigString
 		n.Str = text
 	}
@@ -1029,7 +1058,7 @@ func (ed *ConfigEditor) DeleteItem() (json.RawMessage, bool) {
 		}
 		return nodePatch(parent.Path, parent.AsValue()), true
 	}
-	// 对象：本地删除键，以 null 键写回（服务端 config/set 真正删除 map 键）。
+	// 对象：删除 map 键，以 null 写回服务端。
 	return nodePatch(parent.Path, map[string]any{n.Key: nil}), true
 }
 
