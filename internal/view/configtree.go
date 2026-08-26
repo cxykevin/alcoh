@@ -135,7 +135,7 @@ func (ct *ConfigTree) draw(c *renderer.Canvas, r renderer.Rect, ed *model.Config
 			ib := &widget.InputBox{Buf: ed.AddInput, Prompt: i18n.T("新键名: "), Style: t.Style(t.Text), Cursor: t.StyleOn(t.Background, t.Primary), Focused: true}
 			ib.Draw(c, renderer.NewRect(r.X, inputY, r.W, 1))
 		}
-		c.PutText(r.X, bottomY, i18n.T("Esc 取消    Enter 添加（map 键；对结构体字段无效会被服务端忽略）"), t.Style(t.TextMuted))
+		c.PutText(r.X, bottomY, i18n.T("Esc 取消    Enter 添加键"), t.Style(t.TextMuted))
 		return
 	}
 	c.PutText(r.X, bottomY, i18n.T("Esc 关闭   ↑↓ 选择   Enter 进入/编辑   ← 返回   r 刷新"), t.Style(t.TextMuted))

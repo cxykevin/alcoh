@@ -31,8 +31,7 @@ const (
 
 // configKeyLabels 是服务端配置字段名的中文显示名。键为 alkaid0 服务端 Go
 // 结构体硬编码的 JSON 字段名（见 alkaid0 README 配置示例）。编辑器用它作为
-// 显示键；未收录的键（如 map 的用户自定义键、数字模型 ID）直接显示原始名称。
-// 翻译只做展示，写回的 patch 始终使用原始字段名（Key）。
+// 显示键；翻译只做展示，写回的 patch 始终使用原始字段名（Key）。
 var configKeyLabels = map[string]string{
 	// Config 顶层。
 	"Version":       "配置版本",
@@ -968,7 +967,8 @@ func (ed *ConfigEditor) ConfirmAddKey() (json.RawMessage, bool, string) {
 			"Command": "",
 			"Args":    []any{},
 		}
-	default:
+	}
+	if val == nil {
 		return nil, false, i18n.T("该集合不支持新增")
 	}
 	child := buildConfigNode(key, append(n.Path, key), n, val)
