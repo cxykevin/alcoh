@@ -498,6 +498,14 @@ func (ed *ConfigEditor) CanAdd() bool {
 			return n.Parent != nil && n.Parent.Key == "Agent"
 		case "LanguageServers":
 			return n.Parent != nil && n.Parent.Key == "LSP"
+		case "TerminalEnvs":
+			return n.Parent != nil && n.Parent.Key == "Agent"
+		case "RewriteHeaders":
+			return n.Parent != nil && n.Parent.Key == "Fetch"
+		default:
+			// URL patterns and their nested header maps are both editable maps.
+			return n.Parent != nil && (n.Parent.Key == "RewriteHeaders" ||
+				(n.Parent.Parent != nil && n.Parent.Parent.Key == "RewriteHeaders"))
 		}
 	case ConfigArray:
 		return n.Key == "plugins" || (n.Key == "Phrases" && n.Parent != nil && n.Parent.Key == "Phrase")
@@ -891,8 +899,9 @@ func (ed *ConfigEditor) AddPluginsArray() bool {
 	return ed.AddPluginsItem()
 }
 
-// BeginAddKey 进入当前集合页（名称键的 map：Agent.Agents、Context.LSP.
-// LanguageServers）的新增键输入模式（「(新增)」行）。仅在 CanAdd 时由 app 调用。
+// BeginAddKey 进入当前集合页的新增键输入模式（「(新增)」行）。仅在 CanAdd
+// 时由 app 调用；支持 Agents、LanguageServers、TerminalEnvs、RewriteHeaders
+// 以及 RewriteHeaders 下的请求头 map。
 func (ed *ConfigEditor) BeginAddKey() bool {
 	n := ed.Current()
 	if n == nil || n.Kind != ConfigObject {
@@ -928,7 +937,19 @@ func (ed *ConfigEditor) ConfirmAddKey() (json.RawMessage, bool, string) {
 	if key == "" {
 		return nil, false, i18n.T("键名不能为空")
 	}
-	var val map[string]any
+	var val any
+	// Reuse the same key-entry flow for nested maps while preserving the
+	// schema's value type: environment/header entries are strings, URL patterns
+	// contain header maps, and the collection itself is an object.
+	switch {
+	case n.Key == "TerminalEnvs":
+		val = ""
+	case n.Key == "RewriteHeaders":
+		val = map[string]any{}
+	case n.Parent != nil && n.Parent.Key == "RewriteHeaders":
+		// A header name under a URL pattern maps to a string value.
+		val = ""
+	}
 	switch n.Key {
 	case "Agents":
 		val = map[string]any{
