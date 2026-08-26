@@ -51,6 +51,9 @@ const (
 	ModalOnboarding
 	// ModalConnect /connect 向导：选择服务商 → 填 key → 拉取模型列表 → 写入配置。
 	ModalConnect
+	// ModalPlugins /plugins 本地配置编辑器（复用 /server 的配置树面板），
+	// 用于管理 config.json 的插件列表等本地配置。
+	ModalPlugins
 )
 
 // Focus 表示会话视图的焦点区域。
@@ -97,6 +100,14 @@ type AppModel struct {
 	SlashSelected int
 	LocalCommands []string
 
+	// PluginCommands 是插件注册的斜杠命令（"/" 规范化后，如 "/hello"），
+	// 由 app 在插件握手成功后写入（见 app.pluginHost）。
+	PluginCommands []string
+	// PluginCommandInfo 是插件命令的说明与参数提示（命令名 → 信息）。
+	PluginCommandInfo map[string]SlashCommandInfo
+	// PluginStatus 是各插件在状态栏左侧展示的文本（插件名 → 文本）。
+	PluginStatus map[string]string
+
 	Settings         config.Values
 	SettingsSelected int
 
@@ -114,6 +125,10 @@ type AppModel struct {
 	// ServerCfg 是服务端配置树编辑器状态（/server 弹窗）。nil 表示配置
 	// 尚未从 config/get 加载。
 	ServerCfg *ConfigEditor
+
+	// PluginsCfg 是本地配置树编辑器状态（/plugins 弹窗，复用 ConfigEditor）。
+	// 由 app 打开时从 config.json 构建；编辑即保存回本地配置。
+	PluginsCfg *ConfigEditor
 
 	// Onboarding 是全屏新手引导状态（见 onboarding.go）。nil 表示不在引导中。
 	Onboarding *OnboardingState
@@ -164,10 +179,53 @@ func New() *AppModel {
 		HomeSelected:         -1,
 		HomeListFocused:      false,
 		Input:                widget.NewInputBuffer(),
-		LocalCommands:        []string{"/alcoh_help", "/clear", "/settings"},
+		LocalCommands:        []string{"/alcoh_help", "/clear", "/settings", "/plugins"},
 		Settings:             config.Defaults(),
 		pendingSessionEvents: map[string][]acp.Event{},
 	}
+}
+
+// SetPluginCommands 设置插件注册的斜杠命令列表（握手成功后调用）。
+func (m *AppModel) SetPluginCommands(commands []string) {
+	m.PluginCommands = append([]string(nil), commands...)
+}
+
+// SetPluginCommandInfo 设置插件命令的说明与参数提示。
+func (m *AppModel) SetPluginCommandInfo(info map[string]SlashCommandInfo) {
+	m.PluginCommandInfo = make(map[string]SlashCommandInfo, len(info))
+	for k, v := range info {
+		m.PluginCommandInfo[k] = v
+	}
+}
+
+// SetPluginStatus 设置插件在状态栏左侧的文本；text 为空时清除。
+func (m *AppModel) SetPluginStatus(name, text string) {
+	if m.PluginStatus == nil {
+		m.PluginStatus = make(map[string]string)
+	}
+	if text == "" {
+		delete(m.PluginStatus, name)
+		return
+	}
+	m.PluginStatus[name] = text
+}
+
+// PluginStatusLines 返回状态栏展示用的"插件名: 文本"列表（按插件名排序，
+// 保证跨帧稳定）。
+func (m *AppModel) PluginStatusLines() []string {
+	if len(m.PluginStatus) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(m.PluginStatus))
+	for name := range m.PluginStatus {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		out = append(out, name+": "+m.PluginStatus[name])
+	}
+	return out
 }
 
 // SlashCommandInfo 是可用于补全和展示的命令元数据。
@@ -185,6 +243,7 @@ var localSlashCommandInfo = map[string]SlashCommandInfo{
 	"/clear":      {Name: "/clear", Description: "清除会话，返回会话列表", ArgsHint: "[on]"},
 	"/settings":   {Name: "/settings", Description: "打开本地设置"},
 	"/server":     {Name: "/server", Description: "服务端信息与操作弹窗"},
+	"/plugins":    {Name: "/plugins", Description: "管理本地配置（插件等）"},
 }
 
 // effortLevels 是客户端硬编码的推理强度（ACP v2 thought_level 目录）候选值。
@@ -201,6 +260,10 @@ func (m *AppModel) slashCommandInfos() []SlashCommandInfo {
 		if info, ok := localSlashCommandInfo[name]; ok {
 			// 本地命令说明按当前语言翻译（渲染时调用，切换语言即时生效）。
 			info.Description = i18n.T(info.Description)
+			infos = append(infos, info)
+			continue
+		}
+		if info, ok := m.PluginCommandInfo[name]; ok {
 			infos = append(infos, info)
 			continue
 		}
@@ -262,7 +325,7 @@ func (m *AppModel) SlashCompletion() (ghost, description string) {
 // 未列入硬编码列表的 agent 命令优先级为 0。
 func slashCommandPriority(command string) int {
 	switch command {
-	case "/alcoh_help", "/connect", "/effort", "/clear", "/settings", "/server":
+	case "/alcoh_help", "/connect", "/effort", "/clear", "/settings", "/server", "/plugins":
 		return 1
 	default:
 		return 0
@@ -307,6 +370,19 @@ func (m *AppModel) SlashCommands() []string {
 			if !duplicate {
 				out = append(out, name)
 			}
+		}
+	}
+	// 插件命令：与本地/agent 命令去重后追加。
+	for _, name := range m.PluginCommands {
+		duplicate := false
+		for _, existing := range out {
+			if existing == name {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			out = append(out, name)
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool {
@@ -440,6 +516,31 @@ func (m *AppModel) SetServerConfig(raw json.RawMessage) {
 // CloseServer 关闭服务端配置编辑器并释放其状态。
 func (m *AppModel) CloseServer() {
 	m.ServerCfg = nil
+	m.SetModal(NoModal)
+}
+
+// OpenPlugins 打开本地配置编辑器弹窗（/plugins）。配置树由 app 打开时
+// 经 SetPluginsConfig 写入本地 config.json。
+func (m *AppModel) OpenPlugins() {
+	m.CloseSlash()
+	m.SetModal(ModalPlugins)
+}
+
+// SetPluginsConfig 用本地配置 JSON 构建配置树（标记为本地配置编辑器：
+// 根页可新增 plugins 段、plugins 数组整体替换写回）。重建后保留此前的
+// 导航位置与正在进行的编辑。
+func (m *AppModel) SetPluginsConfig(raw json.RawMessage) {
+	old := m.PluginsCfg
+	m.PluginsCfg = NewConfigEditor(raw)
+	m.PluginsCfg.isLocalConfig = true
+	if old != nil {
+		m.PluginsCfg.RestoreState(old.CaptureState())
+	}
+}
+
+// ClosePlugins 关闭本地配置编辑器并释放其状态。
+func (m *AppModel) ClosePlugins() {
+	m.PluginsCfg = nil
 	m.SetModal(NoModal)
 }
 

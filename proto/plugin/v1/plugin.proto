@@ -1,0 +1,185 @@
+// alcoh 前端插件系统协议。
+//
+// 传输层为 NDJSON JSON-RPC 2.0（每行一个 JSON 对象，经 stdio 双向传输）；
+// 每个方法的 params / result 均为 {"data": "<base64(protobuf)>"} 的单字段对象，
+// data 中按本 schema 编码对应消息。任何语言的插件只要能用 protoc 生成本
+// schema 的代码，即可与 alcoh 对接。
+syntax = "proto3";
+
+package alcoh.plugin.v1;
+
+option go_package = "github.com/cxykevin/alcoh/pb/plugin/v1;v1";
+
+// ---------------------------------------------------------------------------
+// 握手（Host → Plugin, request/response）
+// ---------------------------------------------------------------------------
+
+// InitializeRequest 是 alcoh 在插件进程启动后发出的第一条消息。
+message InitializeRequest {
+  // protocol_version 是插件协议版本，当前为 1。插件应拒绝不认识的版本。
+  int32 protocol_version = 1;
+  // host_name / host_version 是宿主（alcoh）的标识与版本。
+  string host_name = 2;
+  string host_version = 3;
+  // cwd 是 alcoh 当前工作目录（会话默认目录）。
+  string cwd = 4;
+}
+
+// InitializeResult 是插件对 initialize 的应答：声明自身信息、要接收的 hook
+// 与注册的斜杠命令。
+message InitializeResult {
+  string name = 1;
+  string description = 2;
+  string version = 3;
+  // hooks_prompt 为 true 时，每次提交 prompt 前 alcoh 会调用 hook/prompt。
+  bool hooks_prompt = 4;
+  // hooks_update 为 true 时，每个 ACP 事件 alcoh 会以 hook/update 通知插件。
+  bool hooks_update = 5;
+  // key_bindings 声明需要拦截的按键；未列出的按键不会产生任何 IPC。
+  repeated KeyBinding key_bindings = 6;
+  // commands 注册到命令面板的斜杠命令（以 / 开头）。
+  repeated CommandInfo commands = 7;
+}
+
+// KeyBinding 描述一个按键绑定。type 取值与 alcoh 的 input.KeyType 对应：
+// "rune" | "enter" | "tab" | "backspace" | "delete" | "esc" | "up" | "down" |
+// "left" | "right" | "home" | "end" | "pageup" | "pagedown" | "insert" |
+// "f1".."f12"。
+message KeyBinding {
+  string type = 1;
+  // rune 在 type == "rune" 时为 Unicode 码点。
+  uint32 rune = 2;
+  bool ctrl = 3;
+  bool alt = 4;
+  bool shift = 5;
+}
+
+// CommandInfo 是插件注册的斜杠命令。
+message CommandInfo {
+  // name 以 / 开头，如 "/hello"。
+  string name = 1;
+  string description = 2;
+  // args_hint 展示在命令面板，如 "[name]"。
+  string args_hint = 3;
+}
+
+// ---------------------------------------------------------------------------
+// prompt hook（Host → Plugin, request/response）
+// ---------------------------------------------------------------------------
+
+// PromptRequest 携带即将提交给 ACP agent 的 prompt。
+message PromptRequest {
+  string session_id = 1;
+  string prompt = 2;
+}
+
+// PromptResult 是插件的裁决：放行 / 改写 / 拦截。
+message PromptResult {
+  enum Action {
+    ACTION_UNSPECIFIED = 0;
+    // 原样发送。
+    ACTION_ALLOW = 1;
+    // 以 rewritten 替换后发送。
+    ACTION_REWRITE = 2;
+    // 拦截发送，reason 展示给用户。
+    ACTION_BLOCK = 3;
+  }
+  Action action = 1;
+  string rewritten = 2;
+  string reason = 3;
+}
+
+// ---------------------------------------------------------------------------
+// key hook（Host → Plugin, request/response）
+// ---------------------------------------------------------------------------
+
+// KeyRequest 携带一次按键及其上下文。仅当该键命中插件声明的 key_bindings
+// 时才会被调用。
+message KeyRequest {
+  // type 与 KeyBinding.type 同义。
+  string type = 1;
+  uint32 rune = 2;
+  bool ctrl = 3;
+  bool alt = 4;
+  bool shift = 5;
+  // view 为 "home" | "session"。
+  string view = 6;
+  // modal 为当前弹窗："none" | "settings" | "help" | "effort" | "model" |
+  // "server" | "permission" | "elicitation" | "exit_confirm" | "onboarding" |
+  // "connect"。非 "none" 时通常不拦截。
+  string modal = 7;
+  // input_empty / input 是输入框状态。
+  bool input_empty = 8;
+  string input = 9;
+}
+
+// KeyResult 返回该按键是否已被插件消费（handled=true 时 alcoh 不再处理）。
+message KeyResult {
+  bool handled = 1;
+}
+
+// ---------------------------------------------------------------------------
+// update 通知（Host → Plugin, notification，仅观察）
+// ---------------------------------------------------------------------------
+
+// UpdateRequest 是 ACP 事件流中一个事件的只读快照。作为 notification
+// 发送，插件不应回复。
+message UpdateRequest {
+  string session_id = 1;
+  // method 是事件判别符，如 "message_chunk"、"state_update"、"usage_update"、
+  // "tool_call_update" 等（与 alcoh internal/acp 事件类型一一对应）。
+  string method = 2;
+  // payload 是事件的原始 JSON（尽力而为；无法 JSON 化的内部事件为空）。
+  bytes payload = 3;
+}
+
+// ---------------------------------------------------------------------------
+// 命令调用（Host → Plugin, request/response）
+// ---------------------------------------------------------------------------
+
+// CommandRequest 是用户执行插件斜杠命令时发送。
+message CommandRequest {
+  // command 是完整命令 token，如 "/hello"。
+  string command = 1;
+  // args 是命令名之后剩余的输入。
+  string args = 2;
+  string session_id = 3;
+}
+
+message CommandResult {
+  // handled=false 时该命令视为未执行。
+  bool handled = 1;
+}
+
+// ---------------------------------------------------------------------------
+// 关闭（Host → Plugin, notification）
+// ---------------------------------------------------------------------------
+
+// ShutdownNotice 表示 alcoh 即将退出；插件应尽快清理并退出。
+message ShutdownNotice {}
+
+// ---------------------------------------------------------------------------
+// 插件 → Host（Plugin → Host, request/response，result 为空的 protobuf）
+// ---------------------------------------------------------------------------
+
+// NotifyRequest 在 TUI 底部展示一条提示。
+message NotifyRequest {
+  // kind 为 "info" | "success" | "error"。
+  string kind = 1;
+  string text = 2;
+}
+
+// StatusRequest 设置状态栏左侧的插件状态文本；text 为空串时清除。
+message StatusRequest {
+  string text = 1;
+}
+
+// LogRequest 输出一条日志（写入 alcoh stderr，不污染 TUI）。
+message LogRequest {
+  // level 为 "debug" | "info" | "warn" | "error"。
+  string level = 1;
+  string text = 2;
+}
+
+// Empty 是插件 → Host 请求的通用空 result。
+message Empty {}

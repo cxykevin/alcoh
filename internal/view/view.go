@@ -22,6 +22,9 @@ type AppView struct {
 	Body       []BodyBlock
 	BodyRect   renderer.Rect
 	BodyScroll int
+	// BodyToggles 记录最近一帧可点击切换展开/折叠的正文行（contentY → 目标，
+	// 思考/工具标题行）。鼠标左键命中时展开/折叠对应单项。
+	BodyToggles map[int]ToggleRef
 }
 
 // NewAppView 创建视图。
@@ -93,7 +96,7 @@ func (v *AppView) modalHeight(m *model.AppModel) int {
 		}
 	case model.ModalExitConfirm:
 		h = 5
-	case model.ModalServer:
+	case model.ModalServer, model.ModalPlugins:
 		h = 9
 	case model.ModalOnboarding, model.ModalConnect:
 		// 新手引导 / 连接向导占满整屏：底层内容无需缩小。
@@ -154,6 +157,11 @@ func (v *AppView) drawModalAtInput(c *renderer.Canvas, r renderer.Rect, m *model
 		h = r.H
 		title = i18n.T("服务端配置 (alk.cxykevin.top/config)")
 		content = &ConfigTree{Theme: v.Theme, Tree: m.ServerCfg}
+	case model.ModalPlugins:
+		// 本地配置编辑器占满整屏（复用 /server 的 ConfigTree 面板）。
+		h = r.H
+		title = i18n.T("本地配置 (config.json)")
+		content = &ConfigTree{Theme: v.Theme, Tree: m.PluginsCfg}
 	case model.ModalOnboarding:
 		// 新手引导占满整屏（DrawSheet 全宽面板）。
 		h = r.H
@@ -215,6 +223,8 @@ func (v *AppView) drawModalAtInputLegacy(c *renderer.Canvas, r renderer.Rect, m 
 		(&widget.Modal{Width: minModalWidth(r.W, 68), Height: minValue(availableH, 8), Title: i18n.T("推理强度 (thought_level)"), Style: v.Theme.Style(v.Theme.BorderActive), Content: effortContent(v.Theme, m)}).DrawBottom(c, r, bottomMargin)
 	case model.ModalServer:
 		(&widget.Modal{Width: minModalWidth(r.W, 70), Height: minValue(availableH, availableH), Title: i18n.T("服务端配置"), Style: v.Theme.Style(v.Theme.BorderActive), Content: &ConfigTree{Theme: v.Theme, Tree: m.ServerCfg}}).DrawBottom(c, r, bottomMargin)
+	case model.ModalPlugins:
+		(&widget.Modal{Width: minModalWidth(r.W, 70), Height: minValue(availableH, availableH), Title: i18n.T("本地配置"), Style: v.Theme.Style(v.Theme.BorderActive), Content: &ConfigTree{Theme: v.Theme, Tree: m.PluginsCfg}}).DrawBottom(c, r, bottomMargin)
 	}
 }
 
@@ -321,6 +331,7 @@ func helpContent(t renderer.Theme) *TextLines {
 		i18n.T("Ctrl+/         撤销            Ctrl+Q        退出"),
 		i18n.T("PageUp/Down    滚动            Home/End      顶部/底部"),
 		i18n.T("Tab            切换焦点        Enter         展开/折叠"),
+		i18n.T("鼠标点击       思考/工具标题    展开/折叠单项"),
 		i18n.T("?              帮助            Esc           关闭"),
 		i18n.T("Enter          恢复会话(空输入) d            删除选中会话（首页）"), "",
 		i18n.T("权限弹窗: ↑↓ 选择选项, a=allow, r=reject, Enter 确认, Esc 取消"),
@@ -346,11 +357,12 @@ func (v *AppView) drawSession(c *renderer.Canvas, r renderer.Rect, m *model.AppM
 	if m.Modal != model.NoModal {
 		msgH := r.H - planH
 		if msgH > 0 {
-			ml := &MessageList{Theme: v.Theme, SpinFrame: v.SpinFrame}
-			ml.Draw(c, renderer.NewRect(r.X, r.Y, r.W, msgH), s)
-			v.Body = ml.Body
-			v.BodyRect = renderer.NewRect(r.X, r.Y, r.W, msgH)
-			v.BodyScroll = ml.Scroll
+		ml := &MessageList{Theme: v.Theme, SpinFrame: v.SpinFrame}
+		ml.Draw(c, renderer.NewRect(r.X, r.Y, r.W, msgH), s)
+		v.Body = ml.Body
+		v.BodyRect = renderer.NewRect(r.X, r.Y, r.W, msgH)
+		v.BodyScroll = ml.Scroll
+		v.BodyToggles = ml.Toggles
 		}
 		if planH > 0 {
 			pp.Draw(c, renderer.NewRect(r.X, r.Y+msgH, r.W, planH), s)
@@ -400,6 +412,7 @@ func (v *AppView) drawSession(c *renderer.Canvas, r renderer.Rect, m *model.AppM
 	v.Body = ml.Body
 	v.BodyRect = msgRect
 	v.BodyScroll = ml.Scroll
+	v.BodyToggles = ml.Toggles
 
 	if planH > 0 {
 		pp := &PlanPanel{Theme: v.Theme, SpinFrame: v.SpinFrame}
@@ -464,6 +477,7 @@ func (v *AppView) drawHome(c *renderer.Canvas, r renderer.Rect, m *model.AppMode
 	v.Body = nil
 	v.BodyRect = renderer.Rect{}
 	v.BodyScroll = 0
+	v.BodyToggles = nil
 
 	listW := 32
 	if r.W > 0 {

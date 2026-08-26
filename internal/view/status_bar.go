@@ -78,6 +78,10 @@ func (sb *StatusBar) Draw(c *renderer.Canvas, r renderer.Rect, m *model.AppModel
 			left += "  " + s.WorkingDir
 		}
 	}
+	// 插件状态文本（插件经 status 请求设置，见 internal/plugin）。
+	for _, line := range m.PluginStatusLines() {
+		left += "  [" + line + "]"
+	}
 	maxLeft := r.W - rightW - 4
 	if maxLeft < 1 {
 		maxLeft = 1

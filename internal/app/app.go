@@ -12,6 +12,7 @@ import (
 	"github.com/cxykevin/alcoh/internal/config"
 	"github.com/cxykevin/alcoh/internal/i18n"
 	"github.com/cxykevin/alcoh/internal/model"
+	"github.com/cxykevin/alcoh/internal/plugin"
 	"github.com/cxykevin/alcoh/internal/provider"
 	"github.com/cxykevin/alcoh/internal/renderer"
 	"github.com/cxykevin/alcoh/internal/term"
@@ -57,6 +58,11 @@ type App struct {
 	// （config/set）成功后据此触发整配置重载（config/get），重载完成后再经
 	// SetServerConfig 重建的配置树 Focus 到该路径。非 nil 表示有待重载定位。
 	serverCfgFocus []string
+
+	// plugins 是前端插件宿主（本地子进程 + JSON-RPC + protobuf hooks）。
+	// pluginEvents 是插件 → 宿主事件通道，由 Run 事件循环应用。
+	plugins      *plugin.Host
+	pluginEvents <-chan plugin.UIEvent
 
 	// cfgGetSeq 是 config/get 请求序号（仅事件循环主 goroutine 访问）。
 	// 每次发起 get 递增；结果带响应序号，晚回的旧序号结果被丢弃，避免覆盖
@@ -117,7 +123,7 @@ func New(t term.Terminal, b acp.Backend) *App {
 func NewWithConfig(t term.Terminal, b acp.Backend, values config.Values) *App {
 	m := model.New()
 	m.Settings = values
-	return &App{
+	a := &App{
 		term:     t,
 		backend:  b,
 		model:    m,
@@ -125,6 +131,9 @@ func NewWithConfig(t term.Terminal, b acp.Backend, values config.Values) *App {
 		mode:     colorMode(values.ColorMode),
 		commands: make(chan commandResult, 32),
 	}
+	a.plugins = plugin.NewHost(values.Plugins)
+	a.pluginEvents = a.plugins.Events()
+	return a
 }
 
 // SetWorkdir 设置新建会话使用的默认工作目录（启动时解析后的绝对路径）。
@@ -341,6 +350,8 @@ type modelSnapshot struct {
 	ServerSaving  bool   // 服务端配置写回/全量重载进行中（编辑被阻塞）
 	ServerCurKey  string // 服务端配置编辑器当前页 Key（根为空串）
 	ServerSelKey  string // 当前页选中行节点 Key（无选中行或非对象键时为空串）
+	BodyScroll    int    // 最近一帧正文滚动偏移
+	ThoughtRow    int    // 最近一帧首个思考标题行（contentY），无则 -1
 }
 
 // snapshot 返回当前模型状态快照，供测试在应用运行期间安全轮询。
@@ -348,8 +359,10 @@ func (a *App) snapshot() modelSnapshot {
 	a.modelMu.RLock()
 	defer a.modelMu.RUnlock()
 	s := modelSnapshot{
-		Quitting: a.model.Quitting,
-		Modal:    a.model.Modal,
+		Quitting:      a.model.Quitting,
+		Modal:         a.model.Modal,
+		BodyScroll:    a.view.BodyScroll,
+		ThoughtRow:    firstThoughtRow(a.view.BodyToggles),
 	}
 	if a.model.ServerCfg != nil {
 		s.ServerCfg = true
@@ -369,6 +382,17 @@ func (a *App) snapshot() modelSnapshot {
 		s.FollowBottom = a.model.Active.FollowBottom
 	}
 	return s
+}
+
+// firstThoughtRow 返回 Toggles 中第一个思考标题行的 contentY；无则 -1。
+func firstThoughtRow(toggles map[int]view.ToggleRef) int {
+	row := -1
+	for r, ref := range toggles {
+		if ref.Kind == view.ToggleThought && (row < 0 || r < row) {
+			row = r
+		}
+	}
+	return row
 }
 
 func colorMode(value string) renderer.ColorMode {
@@ -397,10 +421,15 @@ func (a *App) Run() error {
 		// 程序退出时删除主页预创建的空会话，避免服务端残留。必须在 backend.Close()
 		// 之前执行（删除需要活动 transport），且不依赖任何 in-flight 命令。
 		a.deletePreSessionAtExit()
+		// 通知并回收全部插件进程（shutdown notification + 超时强杀）。
+		a.plugins.Close()
 		_ = a.backend.Close()
 		a.commandWG.Wait()
 		_ = a.term.ExitRaw()
 	}()
+
+	// 先启动插件（握手带 3s 超时），再初始化后端：插件命令随即进入命令面板。
+	a.startPlugins()
 
 	if err := a.backend.Initialize(a.runCtx); err != nil {
 		return err
@@ -453,6 +482,17 @@ func (a *App) Run() error {
 			} else {
 				a.modelMu.Lock()
 				a.model.ApplyEvent(ev)
+				a.modelMu.Unlock()
+				// 事件观察 hook：异步广播给订阅的插件（不等待响应）。
+				a.plugins.NotifyUpdate(ev)
+				needsRender = true
+			}
+		case ev, ok := <-a.pluginEvents:
+			if !ok {
+				a.pluginEvents = nil
+			} else {
+				a.modelMu.Lock()
+				a.applyPluginEvent(ev)
 				a.modelMu.Unlock()
 				needsRender = true
 			}
@@ -629,11 +669,9 @@ func (a *App) applyCommandResult(result commandResult) {
 		}
 		if prompt := a.model.PendingInitialPrompt; prompt != "" {
 			a.model.PendingInitialPrompt = ""
-			// 不本地回显：agent 会反射 user_message，避免重复显示。
-			session := result.session
-			a.startCommand(commandResult{kind: commandSessionAction, sessionID: session.ID()}, func(ctx context.Context) (acp.Session, error) {
-				return nil, session.SendPrompt(ctx, prompt)
-			})
+			// 不本地回显：agent 会反射 user_message，避免重复显示。经插件
+			// prompt hooks（可改写/拦截）后发送。
+			a.sendPrompt(result.session, prompt)
 		}
 	}
 }
@@ -666,6 +704,7 @@ func (a *App) drain(eventsCh <-chan acp.Event) bool {
 				return changed
 			}
 			a.model.ApplyEvent(ev)
+			a.plugins.NotifyUpdate(ev)
 			changed = true
 		default:
 			return changed

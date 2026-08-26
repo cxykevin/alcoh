@@ -13,11 +13,17 @@ import (
 	"github.com/cxykevin/alcoh/internal/input"
 	"github.com/cxykevin/alcoh/internal/model"
 	"github.com/cxykevin/alcoh/internal/renderer"
+	"github.com/cxykevin/alcoh/internal/view"
 	"github.com/cxykevin/alcoh/internal/widget"
 )
 
-// dispatchKey 分发按键事件（模态优先，再按视图）。
+// dispatchKey 分发按键事件（插件按键拦截优先，再按模态/视图）。
 func (a *App) dispatchKey(ke input.KeyEvent) {
+	// 插件 key hooks：仅当命中插件声明的按键绑定时才发起 IPC；返回 handled
+	// 时该键被插件消费，不再进入默认分发。
+	if a.pluginKeyHook(ke) {
+		return
+	}
 	m := a.model
 	switch m.Modal {
 	case model.ModalPermission:
@@ -50,6 +56,9 @@ func (a *App) dispatchKey(ke input.KeyEvent) {
 	case model.ModalServer:
 		a.serverConfigKey(ke)
 		return
+	case model.ModalPlugins:
+		a.pluginsConfigKey(ke)
+		return
 	case model.ModalOnboarding:
 		a.onboardingKey(ke)
 		return
@@ -72,6 +81,10 @@ func (a *App) dispatchKey(ke input.KeyEvent) {
 	}
 	if ke.IsCtrl() && ke.Rune == 'c' {
 		a.handleCtrlC()
+		return
+	}
+	if ke.IsCtrl() && ke.Rune == 'o' {
+		a.expandAll()
 		return
 	}
 	// ? 帮助：仅当输入框为空时触发；输入框有内容时 "?" 按普通字符输入。
@@ -390,8 +403,13 @@ func (a *App) tryLocalSlashCommand() bool {
 			return true
 		}
 		a.openConnect()
+	case "/plugins":
+		m.Input.Clear()
+		m.CloseSlash()
+		a.openPluginsEditor()
 	default:
-		return false
+		// 插件注册的斜杠命令（/xxx 开头的 token 未命中本地命令时尝试插件）。
+		return a.runPluginCommand(name, rest)
 	}
 	return true
 }
@@ -589,6 +607,42 @@ func (a *App) serverConfigKey(ke input.KeyEvent) {
 		}
 		return
 	}
+	if a.configEditorKey(ke, ed, func() {
+		a.startConfigGet() // 重新拉取，丢弃本地未写回状态
+	}) {
+		return
+	}
+	if ke.Type == input.KeyEsc {
+		a.closeServerEditor()
+	}
+}
+
+// pluginsConfigKey 处理本地配置编辑器（ModalPlugins）按键，与 serverConfigKey
+// 共用同一套导航/编辑逻辑（configEditorKey），仅写回目标为本地 config.json。
+func (a *App) pluginsConfigKey(ke input.KeyEvent) {
+	m := a.model
+	ed := m.PluginsCfg
+	if ed == nil {
+		// 配置尚未加载：仅 Esc 可关闭。
+		if ke.Type == input.KeyEsc {
+			m.ClosePlugins()
+		}
+		return
+	}
+	if a.configEditorKey(ke, ed, func() {
+		a.reloadPluginsConfig() // 重新读取本地配置，丢弃未保存改动
+	}) {
+		return
+	}
+	if ke.Type == input.KeyEsc {
+		m.ClosePlugins()
+	}
+}
+
+// configEditorKey 处理配置树编辑器的公共按键（导航/编辑/新增键输入）。
+// onRefresh 是 "r" 重新加载的钩子（服务端重新 config/get，本地重新读盘）。
+// 返回 true 表示按键已处理；Esc 关闭由调用方决定。
+func (a *App) configEditorKey(ke input.KeyEvent, ed *model.ConfigEditor, onRefresh func()) bool {
 	if ed.Editing {
 		switch {
 		case ke.Type == input.KeyEsc:
@@ -598,7 +652,7 @@ func (a *App) serverConfigKey(ke input.KeyEvent) {
 		default:
 			(&widget.InputBox{Buf: ed.EditInput, Style: a.view.Theme.Style(a.view.Theme.Text)}).OnKey(ke)
 		}
-		return
+		return true
 	}
 	if ed.AddingKey {
 		switch {
@@ -609,7 +663,7 @@ func (a *App) serverConfigKey(ke input.KeyEvent) {
 		default:
 			(&widget.InputBox{Buf: ed.AddInput, Style: a.view.Theme.Style(a.view.Theme.Text)}).OnKey(ke)
 		}
-		return
+		return true
 	}
 	switch {
 	case ke.Type == input.KeyUp:
@@ -623,10 +677,11 @@ func (a *App) serverConfigKey(ke input.KeyEvent) {
 	case ke.Type == input.KeyEnter:
 		a.activateConfigRow(ed)
 	case ke.Type == input.KeyRune && ke.Rune == 'r':
-		a.startConfigGet() // 重新拉取，丢弃本地未写回状态
-	case ke.Type == input.KeyEsc:
-		a.closeServerEditor()
+		onRefresh()
+	default:
+		return false
 	}
+	return true
 }
 
 // onboardingKey 处理新手引导剩余步骤按键（模型配置由 /connect 向导完成）。
@@ -703,15 +758,17 @@ func (a *App) activateConfigRow(ed *model.ConfigEditor) {
 	case model.ConfigObject, model.ConfigArray:
 		ed.Enter()
 	case model.ConfigBool:
-		a.applyConfigSet(ed.ToggleBool())
+		a.applyEditorPatch(ed, ed.ToggleBool())
 	default:
 		ed.BeginEdit()
 	}
 }
 
 // activateAddRow 处理「(新增)」行：Model.Models 直接分配数字键新增空模型；
-// Context.Phrase.Phrases 数组直接追加元素；名称键 map（Agent.Agents、
-// Context.LSP.LanguageServers）进入新增键名输入。
+// Context.Phrase.Phrases 数组直接追加元素；本地配置 plugins 数组追加插件条目
+// （仅入内存，编辑该条目字段时才写回，见 AddPluginsItem）；本地配置根页无
+// plugins 段时直接新建该段并追加首条目（AddPluginsArray）；名称键 map
+// （Agent.Agents、Context.LSP.LanguageServers）进入新增键名输入。
 func (a *App) activateAddRow(ed *model.ConfigEditor) {
 	if ed.IsModels() {
 		patch, ok := ed.AddModelsItem()
@@ -719,29 +776,44 @@ func (a *App) activateAddRow(ed *model.ConfigEditor) {
 			// 新增后本地已进入新项子页；记录其路径，写回成功即整配置重载并
 			// 重定向回该页（展示以服务端真实返回为准，避免本地硬编码偏差）。
 			a.serverCfgFocus = append([]string(nil), ed.Current().Path...)
-			a.applyConfigSet(patch)
+			a.applyEditorPatch(ed, patch)
 		}
 		return
 	}
-	if cur := ed.Current(); cur != nil && cur.Kind == model.ConfigArray {
-		patch, ok := ed.AddPhrasesItem()
-		if ok {
-			a.serverCfgFocus = append([]string(nil), ed.Current().Path...)
-			a.applyConfigSet(patch)
+	if cur := ed.Current(); cur != nil {
+		if cur.Kind == model.ConfigArray {
+			if cur.Key == "plugins" {
+				// 本地插件数组：仅在内存中追加条目并进入其子页，编辑该条目
+				// 任一字段时才随整体数组写回（避免把空条目凭空持久化）。
+				ed.AddPluginsItem()
+				return
+			}
+			patch, ok := ed.AddPhrasesItem()
+			if ok {
+				a.serverCfgFocus = append([]string(nil), ed.Current().Path...)
+				a.applyEditorPatch(ed, patch)
+			}
+			return
 		}
-		return
+		if cur.Parent == nil && ed.IsLocalConfig() && !ed.HasPluginsArray() {
+			// 本地配置根页且尚无 plugins 段：直接新建插件数组 + 首条目
+			// （同样延迟写回，编辑条目字段时才保存）。
+			ed.AddPluginsArray()
+			return
+		}
 	}
 	ed.BeginAddKey()
 }
 
-// commitConfigEdit 解析编辑输入并写回服务端。
+// commitConfigEdit 解析编辑输入并按活动编辑器写回（服务端 config/set 或
+// 本地 config.json）。
 func (a *App) commitConfigEdit(ed *model.ConfigEditor) {
 	patch, ok, errMsg := ed.CommitEdit()
 	if !ok {
 		a.model.ShowError(i18n.T("编辑失败: %s", errMsg))
 		return
 	}
-	a.applyConfigSet(patch)
+	a.applyEditorPatch(ed, patch)
 }
 
 // confirmConfigAddKey 确认新增 Agent.Agents 键并写回（该键置空对象）。
@@ -753,17 +825,18 @@ func (a *App) confirmConfigAddKey(ed *model.ConfigEditor) {
 	}
 	// 记录新项路径：写回成功后整配置重载并重定向到新项子页。
 	a.serverCfgFocus = append([]string(nil), ed.Current().Path...)
-	a.applyConfigSet(patch)
+	a.applyEditorPatch(ed, patch)
 }
 
 // deleteConfigItem 删除当前页面本身（模型项或子代理项），并返回其父页面。
-// 对象键以 null 键写回，服务端 config/set 对 map 字段的 null 键真正删除。
+// 对象键以 null 键写回，服务端 config/set 对 map 字段的 null 键真正删除；
+// 数组（本地 plugins）整体替换写回。
 func (a *App) deleteConfigItem(ed *model.ConfigEditor) {
 	patch, ok := ed.DeleteItem()
 	if !ok {
 		return
 	}
-	a.applyConfigSet(patch)
+	a.applyEditorPatch(ed, patch)
 }
 
 func (a *App) saveSettings() {
@@ -876,6 +949,17 @@ func (a *App) dispatchMouse(me input.MouseEvent) {
 			ed.Move(1)
 		}
 		return
+	case model.ModalPlugins:
+		ed := m.PluginsCfg
+		if ed == nil || ed.Editing || ed.AddingKey {
+			return
+		}
+		if me.Button == input.MouseWheelUp {
+			ed.Move(-1)
+		} else if me.Button == input.MouseWheelDown {
+			ed.Move(1)
+		}
+		return
 	case model.ModalHelp, model.ModalExitConfirm, model.ModalEffort:
 		return
 	}
@@ -927,6 +1011,10 @@ func (a *App) handleSelect(me input.MouseEvent) {
 			m.Selection = nil
 			return
 		}
+		// 左键点击思考/工具标题行：切换该单项展开/折叠，不进入框选。
+		if a.clickBodyToggle(x, y, rect) {
+			return
+		}
 		m.Selection = &model.Selection{AnchorX: x, AnchorY: y, CurX: x, CurY: y}
 	case input.MouseMove:
 		if m.Selection != nil {
@@ -947,6 +1035,31 @@ func (a *App) handleSelect(me input.MouseEvent) {
 			}
 		}
 	}
+}
+
+// clickBodyToggle 处理鼠标左键点击正文中思考/工具标题行：命中时切换该单项的
+// 展开/折叠状态并返回 true（不进入框选）。坐标 x/y 为 0-based buffer 坐标。
+func (a *App) clickBodyToggle(x, y int, rect renderer.Rect) bool {
+	m := a.model
+	if !m.HasActive() {
+		return false
+	}
+	row := y - rect.Y + a.view.BodyScroll
+	ref, ok := a.view.BodyToggles[row]
+	if !ok {
+		return false
+	}
+	s := m.Active
+	switch ref.Kind {
+	case view.ToggleThought:
+		s.ToggleMessage(ref.ID)
+	case view.ToggleTool:
+		s.ToggleToolCall(ref.ID)
+	default:
+		return false
+	}
+	a.render()
+	return true
 }
 
 // copySelection 提取当前选择区域的正文原始文本并复制到剪贴板。复制成功后清除选择。
@@ -1077,6 +1190,24 @@ func (a *App) bodyText(sel *model.Selection) string {
 	return sb.String()
 }
 
+// expandAll 切换当前会话全部思维链与工具调用的展开状态（Ctrl+O）：
+// 全部已展开时再按一次收回（折叠全部），否则展开全部。
+func (a *App) expandAll() {
+	m := a.model
+	if !m.HasActive() {
+		return
+	}
+	s := m.Active
+	if s.AllExpanded() && s.HasCollapsible() {
+		s.CollapseAll()
+		m.ShowInfo(i18n.T("已折叠全部思考与工具调用"))
+	} else {
+		s.ExpandAll()
+		m.ShowInfo(i18n.T("已展开全部思考与工具调用"))
+	}
+	a.render()
+}
+
 // handleCtrlC 处理 Ctrl+C：
 //   - 存在选择 → 复制选区文本到剪贴板并清除；
 //   - 输入框非空 → 清空输入；
@@ -1160,14 +1291,24 @@ func (a *App) cancelPermission() {
 }
 
 func (a *App) submitPrompt() {
-	text := a.model.SubmitInput()
-	if text == "" || a.sess == nil {
+	if a.sess == nil || a.model.Input == nil {
 		return
 	}
-	session := a.sess
-	a.startCommand(commandResult{kind: commandSessionAction, sessionID: session.ID()}, func(ctx context.Context) (acp.Session, error) {
-		return nil, session.SendPrompt(ctx, text)
-	})
+	// 先经插件 hooks 裁决（可改写/拦截），通过后才消费输入框；拦截时输入
+	// 框保留原文，便于用户修改后重试。
+	text := a.model.Input.Text()
+	if text == "" {
+		return
+	}
+	out, blocked := a.promptHook(a.sess.ID(), text)
+	if blocked {
+		return
+	}
+	if a.model.SubmitInput() == "" {
+		return
+	}
+	// 已裁决的文本直接发送，不再二次触发 hooks（见 sendPromptRaw）。
+	a.sendPromptRaw(a.sess, out)
 }
 
 func (a *App) cancelCurrent() {
@@ -1207,9 +1348,8 @@ func (a *App) usePreSession(prompt string) bool {
 	// 引导里选的 effort 应用到用户第一个会话（仅一次，此后由 /effort 管理）。
 	a.applyFirstSessionEffort(s)
 	if prompt != "" {
-		a.startCommand(commandResult{kind: commandSessionAction, sessionID: s.ID()}, func(ctx context.Context) (acp.Session, error) {
-			return nil, s.SendPrompt(ctx, prompt)
-		})
+		// 经插件 prompt hooks（可改写/拦截）后发送。
+		a.sendPrompt(s, prompt)
 	}
 	return true
 }

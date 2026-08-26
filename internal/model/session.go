@@ -309,6 +309,55 @@ func (s *SessionState) CollapseThoughts() {
 	}
 }
 
+// ExpandAll 展开会话中全部思维链（思考消息）与工具调用（Ctrl+O）。
+func (s *SessionState) ExpandAll() {
+	for _, m := range s.Messages {
+		if m.Kind == MsgThought {
+			m.Expanded = true
+		}
+	}
+	for _, tc := range s.ToolCalls {
+		tc.Expanded = true
+	}
+}
+
+// CollapseAll 折叠会话中全部思维链与工具调用（再次按 Ctrl+O 收回）。
+func (s *SessionState) CollapseAll() {
+	for _, m := range s.Messages {
+		if m.Kind == MsgThought {
+			m.Expanded = false
+		}
+	}
+	for _, tc := range s.ToolCalls {
+		tc.Expanded = false
+	}
+}
+
+// AllExpanded 报告会话中全部思维链与工具调用是否均已展开。
+func (s *SessionState) AllExpanded() bool {
+	for _, m := range s.Messages {
+		if m.Kind == MsgThought && !m.Expanded {
+			return false
+		}
+	}
+	for _, tc := range s.ToolCalls {
+		if !tc.Expanded {
+			return false
+		}
+	}
+	return true
+}
+
+// HasCollapsible 报告会话是否存在可展开/折叠的思维链或工具调用。
+func (s *SessionState) HasCollapsible() bool {
+	for _, m := range s.Messages {
+		if m.Kind == MsgThought {
+			return true
+		}
+	}
+	return len(s.ToolCalls) > 0
+}
+
 // MarkStreamingDone 在会话转入 idle 时补齐完成标记。
 // 部分 agent（如 alkaid0）流式期间只发 *message_chunk / *thought_chunk，不补发完整块；
 // 若没有它，消息会永远停留在“流式中”状态。
