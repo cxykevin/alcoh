@@ -134,6 +134,31 @@ func (b *InputBuffer) InsertRune(r rune) {
 	})
 }
 
+// InsertText 在光标处一次性插入文本，粘贴内容作为单次 undo 操作。
+func (b *InputBuffer) InsertText(text string) {
+	text = strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
+	if text == "" {
+		return
+	}
+	parts := strings.Split(text, "\n")
+	b.edit(func(x *InputBuffer) {
+		line := x.curLine()
+		cx, cy := x.CX, x.CY
+		first := append([]rune(nil), line[:cx]...)
+		last := append([]rune(nil), line[cx:]...)
+		newLines := make([][]rune, len(parts))
+		newLines[0] = append(first, []rune(parts[0])...)
+		for i := 1; i < len(parts)-1; i++ {
+			newLines[i] = []rune(parts[i])
+		}
+		newLines[len(parts)-1] = append([]rune(parts[len(parts)-1]), last...)
+		x.Lines = append(x.Lines[:cy], append(newLines, x.Lines[cy+1:]...)...)
+		x.CY = cy + len(newLines) - 1
+		// Keep the cursor before the original suffix, not after it.
+		x.CX = len([]rune(parts[len(parts)-1]))
+	})
+}
+
 // InsertNewline 在光标处换行。
 func (b *InputBuffer) InsertNewline() {
 	b.edit(func(x *InputBuffer) {
@@ -519,6 +544,8 @@ type InputBox struct {
 func (ib *InputBox) OnKey(ke input.KeyEvent) bool {
 	b := ib.Buf
 	switch {
+	case ke.Type == input.KeyPaste:
+		b.InsertText(ke.Text)
 	case ke.Type == input.KeyRune && !ke.IsCtrl() && !ke.IsAlt():
 		b.InsertRune(ke.Rune)
 	case ke.Type == input.KeyEnter && !ke.IsShift():

@@ -98,7 +98,7 @@ func (t *winTerm) EnterRaw() error {
 	}
 
 	t.rawMode = true
-	t.Write([]byte("\x1b[?1049h\x1b[2J\x1b[H" + hideCursorSeq + mouseEnableSeq))
+	t.Write([]byte("\x1b[?1049h\x1b[2J\x1b[H" + hideCursorSeq + mouseEnableSeq + bracketedPasteEnableSeq))
 
 	t.evCh = make(chan Event, 64)
 	t.stopCh = make(chan struct{})
@@ -118,7 +118,7 @@ func (t *winTerm) ExitRaw() error {
 	windows.SetConsoleMode(t.inHandle, t.origInMode)
 	windows.SetConsoleMode(t.outHandle, t.origOutMode)
 	t.rawMode = false
-	t.Write([]byte(mouseDisableSeq + "\x1b[0m\x1b[?25h\x1b[?1049l"))
+	t.Write([]byte(bracketedPasteDisableSeq + mouseDisableSeq + "\x1b[0m\x1b[?25h\x1b[?1049l"))
 	return nil
 }
 

@@ -182,6 +182,9 @@ func (p *Parser) parseCSI() (Event, error) {
 			if sgrMouse && (c == 'M' || c == 'm') {
 				return MouseEventOf(decodeSGRMouse(params, c == 'M')), nil
 			}
+			if c == '~' && len(params) > 0 && params[0] == 200 {
+				return p.parseBracketedPaste()
+			}
 			ke, err := p.mapCSI(params, c)
 			return KeyEventOf(ke), err
 		}
@@ -255,6 +258,22 @@ func decodeSGRMouse(params []int, press bool) MouseEvent {
 		}
 	}
 	return ev
+}
+
+func (p *Parser) parseBracketedPaste() (Event, error) {
+	const end = "\x1b[201~"
+	var text []byte
+	for {
+		b, err := p.rd.ReadByte()
+		if err != nil {
+			return Event{}, err
+		}
+		text = append(text, b)
+		if len(text) >= len(end) && string(text[len(text)-len(end):]) == end {
+			text = text[:len(text)-len(end)]
+			return KeyEventOf(KeyEvent{Type: KeyPaste, Text: string(text)}), nil
+		}
+	}
 }
 
 func (p *Parser) mapCSI(params []int, final byte) (KeyEvent, error) {
