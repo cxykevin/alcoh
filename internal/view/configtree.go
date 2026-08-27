@@ -44,6 +44,7 @@ func (ct *ConfigTree) draw(c *renderer.Canvas, r renderer.Rect, ed *model.Config
 	}
 	rows := ed.CurrentChildren()
 	addIdx := ed.AddRowIndex()
+	copyIdx := ed.CopyRowIndex()
 	delIdx := ed.DelRowIndex()
 	count := ed.RowCount()
 	start := 0
@@ -81,6 +82,12 @@ func (ct *ConfigTree) draw(c *renderer.Canvas, r renderer.Rect, ed *model.Config
 			}
 		case i == addIdx:
 			line = marker + i18n.T("(新增)")
+			st = t.Style(t.TextMuted)
+			if selected {
+				st = st.WithBold(true)
+			}
+		case i == copyIdx:
+			line = marker + i18n.T("(复制)")
 			st = t.Style(t.TextMuted)
 			if selected {
 				st = st.WithBold(true)

@@ -750,6 +750,13 @@ func (a *App) activateConfigRow(ed *model.ConfigEditor) {
 		a.deleteConfigItem(ed)
 		return
 	}
+	if ed.OnCopyRow() {
+		patch, ok := ed.CopyItem()
+		if ok {
+			a.applyEditorPatch(ed, patch)
+		}
+		return
+	}
 	n := ed.SelectedNode()
 	if n == nil {
 		return

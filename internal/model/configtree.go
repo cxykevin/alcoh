@@ -558,19 +558,10 @@ func (ed *ConfigEditor) DelRowIndex() int {
 	if ed.CanAdd() {
 		idx++
 	}
+	if ed.CanCopy() {
+		idx++
+	}
 	return idx
-}
-
-// RowCount 返回当前页面的总行数（含末尾「(新增)」/「(删除该项)」行，若存在）。
-func (ed *ConfigEditor) RowCount() int {
-	n := len(ed.CurrentChildren())
-	if ed.AddRowIndex() >= 0 {
-		n++
-	}
-	if ed.DelRowIndex() >= 0 {
-		n++
-	}
-	return n
 }
 
 // OnAddRow 报告选中行是否为末尾的「(新增)」行。
@@ -581,6 +572,84 @@ func (ed *ConfigEditor) OnAddRow() bool {
 // OnDeleteRow 报告选中行是否为末尾的「(删除该项)」行。
 func (ed *ConfigEditor) OnDeleteRow() bool {
 	return ed.Selected == ed.DelRowIndex()
+}
+
+// CanCopy 报告当前页面是否可以复制选中的集合条目。
+func (ed *ConfigEditor) CanCopy() bool {
+	n := ed.Current()
+	if n == nil || len(n.Children) == 0 {
+		return false
+	}
+	return (n.Key == "Models" && n.Parent != nil && n.Parent.Key == "Model") ||
+		(n.Key == "Agents" && n.Parent != nil && n.Parent.Key == "Agent") ||
+		(n.Key == "RewriteHeaders") ||
+		(n.Parent != nil && (n.Parent.Key == "RewriteHeaders" ||
+			(n.Parent.Parent != nil && n.Parent.Parent.Key == "RewriteHeaders")))
+}
+
+// OnCopyRow 报告选中行是否为末尾的「(复制)」行。
+func (ed *ConfigEditor) OnCopyRow() bool {
+	return ed.Selected == ed.CopyRowIndex()
+}
+
+// CopyRowIndex 返回「(复制)」行索引。
+func (ed *ConfigEditor) CopyRowIndex() int {
+	if !ed.CanCopy() {
+		return -1
+	}
+	idx := len(ed.CurrentChildren())
+	if ed.CanAdd() {
+		idx++
+	}
+	if ed.CanCopy() {
+		idx++
+	}
+	return idx
+}
+
+// RowCount 返回当前页面的总行数（含新增、复制、删除操作行）。
+func (ed *ConfigEditor) RowCount() int {
+	n := len(ed.CurrentChildren())
+	if ed.AddRowIndex() >= 0 {
+		n++
+	}
+	if ed.CopyRowIndex() >= 0 {
+		n++
+	}
+	if ed.DelRowIndex() >= 0 {
+		n++
+	}
+	return n
+}
+
+// CopyItem copies the current collection item, generating a unique key and patch.
+func (ed *ConfigEditor) CopyItem() (json.RawMessage, bool) {
+	collection := ed.Current()
+	if !ed.CanCopy() || collection == nil || len(collection.Children) == 0 {
+		return nil, false
+	}
+	idx := ed.Selected
+	if idx < 0 {
+		return nil, false
+	}
+	// The action row has no item index; use the last visible item when activated.
+	// Direct callers may select any concrete collection item explicitly.
+	if idx >= len(collection.Children) {
+		idx = len(collection.Children) - 1
+	}
+	source := collection.Children[idx]
+	value := source.AsValue()
+	key := source.Key + "-copy"
+	if collection.Key == "Models" {
+		key = strconv.Itoa(len(collection.Children))
+	}
+	for _, child := range collection.Children {
+		if child.Key == key {
+			key += "-copy"
+		}
+	}
+	collection.Children = append(collection.Children, buildConfigNode(key, append(collection.Path, key), collection, value))
+	return nodePatch(collection.Path, map[string]any{key: value}), true
 }
 
 // Enter 进入当前选中行（对象/数组）的子页面，返回是否进入。标量行不动作。
