@@ -581,18 +581,16 @@ func (ed *ConfigEditor) OnDeleteRow() bool {
 	return ed.Selected == ed.DelRowIndex()
 }
 
-// CanCopy 报告当前页面是否可以复制选中的集合条目。
 // CanRename reports whether the current collection supports key renaming.
 func (ed *ConfigEditor) CanRename() bool {
 	n := ed.Current()
-	if n == nil || len(n.Children) == 0 {
+	if n == nil || n.Kind != ConfigObject || len(n.Children) == 0 {
 		return false
 	}
 	return (n.Key == "Models" && n.Parent != nil && n.Parent.Key == "Model") ||
 		(n.Key == "Agents" && n.Parent != nil && n.Parent.Key == "Agent") ||
-		(n.Key == "TerminalEnvs") || n.Key == "RewriteHeaders" ||
-		(n.Parent != nil && n.Parent.Key == "RewriteHeaders") ||
-		(n.Parent != nil && n.Parent.Parent != nil && n.Parent.Parent.Key == "RewriteHeaders")
+		n.Key == "TerminalEnvs" || n.Key == "RewriteHeaders" ||
+		(n.Parent != nil && n.Parent.Key == "RewriteHeaders")
 }
 
 func (ed *ConfigEditor) RenameRowIndex() int {
@@ -604,9 +602,6 @@ func (ed *ConfigEditor) RenameRowIndex() int {
 		idx++
 	}
 	if ed.CanCopy() {
-		idx++
-	}
-	if ed.CanDelete() {
 		idx++
 	}
 	return idx
@@ -662,7 +657,7 @@ func (ed *ConfigEditor) ConfirmRenameKey() (json.RawMessage, bool, string) {
 
 func (ed *ConfigEditor) CanCopy() bool {
 	n := ed.Current()
-	if n == nil || len(n.Children) == 0 {
+	if n == nil {
 		return false
 	}
 	return (n.Key == "Models" && n.Parent != nil && n.Parent.Key == "Model") ||
@@ -684,9 +679,6 @@ func (ed *ConfigEditor) CopyRowIndex() int {
 	}
 	idx := len(ed.CurrentChildren())
 	if ed.CanAdd() {
-		idx++
-	}
-	if ed.CanCopy() {
 		idx++
 	}
 	return idx
@@ -1337,5 +1329,5 @@ func (ed *ConfigEditor) focusNode(path []string) {
 
 // IsEditing 报告当前是否处于值编辑或新增键输入模式（重载重建后不应被覆盖）。
 func (ed *ConfigEditor) IsEditing() bool {
-	return ed.Editing || ed.AddingKey
+	return ed.Editing || ed.AddingKey || ed.RenamingKey
 }
