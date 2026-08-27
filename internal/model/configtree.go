@@ -414,6 +414,9 @@ type ConfigEditor struct {
 	RenamingKey bool
 	RenameInput *widget.InputBuffer
 	RenameNode  *ConfigNode
+	CopyingKey  bool
+	CopyInput   *widget.InputBuffer
+	CopyNode    *ConfigNode
 
 	// Saving 表示配置写回（config/set）与随后的全量重载（config/get）进行中。
 	// 期间阻塞新的改动，界面底部显示"保存中…"，直到重载完成解除。
@@ -581,16 +584,17 @@ func (ed *ConfigEditor) OnDeleteRow() bool {
 	return ed.Selected == ed.DelRowIndex()
 }
 
-// CanRename reports whether the current collection supports key renaming.
+// CanRename reports whether the current child entry supports key renaming.
 func (ed *ConfigEditor) CanRename() bool {
 	n := ed.Current()
-	if n == nil || n.Kind != ConfigObject || len(n.Children) == 0 {
+	if n == nil || n.Parent == nil || n.Parent.Kind != ConfigObject {
 		return false
 	}
-	return (n.Key == "Models" && n.Parent != nil && n.Parent.Key == "Model") ||
-		(n.Key == "Agents" && n.Parent != nil && n.Parent.Key == "Agent") ||
-		n.Key == "TerminalEnvs" || n.Key == "RewriteHeaders" ||
-		(n.Parent != nil && n.Parent.Key == "RewriteHeaders")
+	p := n.Parent
+	return (p.Key == "Models" && p.Parent != nil && p.Parent.Key == "Model") ||
+		(p.Key == "Agents" && p.Parent != nil && p.Parent.Key == "Agent") ||
+		p.Key == "TerminalEnvs" || p.Key == "RewriteHeaders" ||
+		(p.Parent != nil && p.Parent.Key == "RewriteHeaders")
 }
 
 func (ed *ConfigEditor) RenameRowIndex() int {
@@ -614,7 +618,7 @@ func (ed *ConfigEditor) BeginRenameKey() bool {
 	if !ed.CanRename() {
 		return false
 	}
-	n := ed.SelectedNode()
+	n := ed.Current()
 	ed.RenameNode = n
 	ed.RenamingKey = true
 	ed.RenameInput = inputFromString(n.Key)
@@ -657,17 +661,17 @@ func (ed *ConfigEditor) ConfirmRenameKey() (json.RawMessage, bool, string) {
 
 func (ed *ConfigEditor) CanCopy() bool {
 	n := ed.Current()
-	if n == nil {
+	if n == nil || n.Parent == nil || n.Parent.Kind != ConfigObject {
 		return false
 	}
-	return (n.Key == "Models" && n.Parent != nil && n.Parent.Key == "Model") ||
-		(n.Key == "Agents" && n.Parent != nil && n.Parent.Key == "Agent") ||
-		(n.Key == "RewriteHeaders") ||
-		(n.Parent != nil && (n.Parent.Key == "RewriteHeaders" ||
-			(n.Parent.Parent != nil && n.Parent.Parent.Key == "RewriteHeaders")))
+	p := n.Parent
+	return (p.Key == "Models" && p.Parent != nil && p.Parent.Key == "Model") ||
+		(p.Key == "Agents" && p.Parent != nil && p.Parent.Key == "Agent") ||
+		p.Key == "TerminalEnvs" || p.Key == "RewriteHeaders" ||
+		(p.Parent != nil && p.Parent.Key == "RewriteHeaders")
 }
 
-// OnCopyRow 报告选中行是否为末尾的「(复制)」行。
+// OnCopyRow reports whether the copy action row is selected.
 func (ed *ConfigEditor) OnCopyRow() bool {
 	return ed.Selected == ed.CopyRowIndex()
 }
@@ -693,46 +697,66 @@ func (ed *ConfigEditor) RowCount() int {
 	if ed.CopyRowIndex() >= 0 {
 		n++
 	}
+	if ed.RenameRowIndex() >= 0 {
+		n++
+	}
 	if ed.DelRowIndex() >= 0 {
 		n++
 	}
 	return n
 }
 
-// CopyItem copies the current collection item, generating a unique key and patch.
-func (ed *ConfigEditor) CopyItem() (json.RawMessage, bool) {
-	collection := ed.Current()
-	if !ed.CanCopy() || collection == nil || len(collection.Children) == 0 {
-		return nil, false
+// BeginCopyKey starts copying the selected map entry and asks for its new key.
+func (ed *ConfigEditor) BeginCopyKey() bool {
+	if !ed.CanCopy() {
+		return false
 	}
-	idx := ed.Selected
-	if idx < 0 {
-		return nil, false
+	n := ed.Current()
+	if n == nil || n.Parent == nil {
+		return false
 	}
-	// The action row has no item index; use the last visible item when activated.
-	// Direct callers may select any concrete collection item explicitly.
-	if idx >= len(collection.Children) {
-		idx = len(collection.Children) - 1
+	ed.CopyNode = n
+	ed.CopyingKey = true
+	ed.CopyInput = widget.NewInputBuffer()
+	return true
+}
+
+func (ed *ConfigEditor) CancelCopyKey() {
+	ed.CopyingKey = false
+	ed.CopyNode = nil
+}
+
+// ConfirmCopyKey duplicates the selected entry under the user-provided key.
+func (ed *ConfigEditor) ConfirmCopyKey() (json.RawMessage, bool, string) {
+	if !ed.CopyingKey || ed.CopyNode == nil {
+		return nil, false, ""
 	}
-	source := collection.Children[idx]
-	value := source.AsValue()
-	key := source.Key + "-copy"
-	if collection.Key == "Models" {
-		key = strconv.Itoa(len(collection.Children))
+	key := ed.CopyInput.Text()
+	if key == "" {
+		return nil, false, i18n.T("键名不能为空")
 	}
-	for _, child := range collection.Children {
-		if child.Key == key {
-			key += "-copy"
+	n := ed.CopyNode
+	for _, c := range n.Parent.Children {
+		if c.Key == key {
+			return nil, false, i18n.T("键名已存在")
 		}
 	}
-	collection.Children = append(collection.Children, buildConfigNode(key, append(collection.Path, key), collection, value))
-	return nodePatch(collection.Path, map[string]any{key: value}), true
+	value := n.AsValue()
+	n.Parent.Children = append(n.Parent.Children, buildConfigNode(key, append(n.Parent.Path, key), n.Parent, value))
+	ed.CancelCopyKey()
+	return nodePatch(n.Parent.Path, map[string]any{key: value}), true, ""
 }
 
 // Enter 进入当前选中行（对象/数组）的子页面，返回是否进入。标量行不动作。
 func (ed *ConfigEditor) Enter() bool {
 	n := ed.SelectedNode()
-	if n == nil || (n.Kind != ConfigObject && n.Kind != ConfigArray) {
+	if n == nil {
+		return false
+	}
+	// Key actions live on the entry's own page. Scalar map entries need an
+	// empty page too, so copy/rename/delete remain available for env/header keys.
+	if n.Kind != ConfigObject && n.Kind != ConfigArray &&
+		!ed.CanCopy() && !ed.CanRename() && !ed.CanDelete() {
 		return false
 	}
 	ed.EntryIdx = append(ed.EntryIdx, ed.Selected)
@@ -1329,5 +1353,5 @@ func (ed *ConfigEditor) focusNode(path []string) {
 
 // IsEditing 报告当前是否处于值编辑或新增键输入模式（重载重建后不应被覆盖）。
 func (ed *ConfigEditor) IsEditing() bool {
-	return ed.Editing || ed.AddingKey || ed.RenamingKey
+	return ed.Editing || ed.AddingKey || ed.RenamingKey || ed.CopyingKey
 }

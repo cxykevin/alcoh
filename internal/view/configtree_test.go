@@ -173,17 +173,23 @@ func TestConfigTreeDrawDeleteRow(t *testing.T) {
 	if !strings.Contains(rows[1], "代理名称 = \"Main\"") {
 		t.Errorf("row1 = %q, want AgentName row", rows[1])
 	}
-	if !strings.Contains(rows[3], "(删除该项)") {
-		t.Errorf("row3 = %q, want (删除该项) delete row", rows[3])
+	if !strings.Contains(rows[3], "(复制)") {
+		t.Errorf("row3 = %q, want (复制) action row", rows[3])
+	}
+	if !strings.Contains(rows[4], "(重命名键)") {
+		t.Errorf("row4 = %q, want (重命名键) action row", rows[4])
+	}
+	if !strings.Contains(rows[5], "(删除该项)") {
+		t.Errorf("row5 = %q, want (删除该项) delete row", rows[5])
 	}
 	// 移到「(删除该项)」行并高亮。
-	ed.Move(2)
+	ed.Move(ed.DelRowIndex())
 	if !ed.OnDeleteRow() {
 		t.Fatal("Move should land on delete row")
 	}
 	rows = drawConfigTree(ed, w, h)
-	if !strings.Contains(rows[3], "❯") || !strings.Contains(rows[3], "(删除该项)") {
-		t.Errorf("highlighted delete row = %q, want ❯ (删除该项)", rows[3])
+	if !strings.Contains(rows[5], "❯") || !strings.Contains(rows[5], "(删除该项)") {
+		t.Errorf("highlighted delete row = %q, want ❯ (删除该项)", rows[5])
 	}
 }
 
