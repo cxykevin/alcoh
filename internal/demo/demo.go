@@ -64,6 +64,12 @@ func (b *Backend) SetConfig(ctx context.Context, patch json.RawMessage) error {
 
 // ListSessions 返回可恢复的会话列表（内部维护，删除操作实时反映）。
 func (b *Backend) ListSessions(ctx context.Context) ([]*acp.SessionInfo, error) {
+	page, err := b.ListSessionsPage(ctx, "")
+	return page.Sessions, err
+}
+
+// ListSessionsPage 演示 backend 不分页，返回完整列表。
+func (b *Backend) ListSessionsPage(ctx context.Context, cursor string) (acp.SessionPage, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	out := make([]*acp.SessionInfo, len(b.sessions))
@@ -71,7 +77,7 @@ func (b *Backend) ListSessions(ctx context.Context) ([]*acp.SessionInfo, error) 
 		cp := *s
 		out[i] = &cp
 	}
-	return out, nil
+	return acp.SessionPage{Sessions: out}, nil
 }
 
 // DeleteSession 从可恢复会话列表移除指定会话。幂等：会话不存在时静默成功，

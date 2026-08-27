@@ -110,6 +110,7 @@ func (a *App) homeKey(ke input.KeyEvent) {
 			m.HomeSelected--
 		case ke.Type == input.KeyDown && m.HomeSelected < len(m.Sessions)-1:
 			m.HomeSelected++
+			a.maybeLoadMoreSessions()
 		case ke.Type == input.KeyEnter:
 			m.HomeListFocused = false
 			if len(m.Sessions) > 0 {
@@ -121,6 +122,8 @@ func (a *App) homeKey(ke input.KeyEvent) {
 					a.resumeSession(m.Sessions[sel].SessionID)
 				}
 			}
+		case ke.Type == input.KeyRune && ke.Rune == 'r':
+			a.refreshSessionsLocked()
 		case ke.Type == input.KeyRune && ke.Rune == 'd':
 			if m.HomeSelected >= 0 && m.HomeSelected < len(m.Sessions) {
 				a.deleteSession(m.Sessions[m.HomeSelected].SessionID)
@@ -171,6 +174,7 @@ func (a *App) homeKey(ke input.KeyEvent) {
 		if m.HomeSelected < 0 && len(m.Sessions) > 0 {
 			m.HomeSelected = 0
 		}
+		a.maybeLoadMoreSessions()
 		return
 	}
 
@@ -196,6 +200,7 @@ func (a *App) homeKey(ke input.KeyEvent) {
 	case ke.Type == input.KeyDown:
 		if m.Input.Text() == "" && m.HomeSelected < len(m.Sessions)-1 {
 			m.HomeSelected++
+			a.maybeLoadMoreSessions()
 		}
 	case ke.Type == input.KeyEnter:
 		if a.tryLocalSlashCommand() {

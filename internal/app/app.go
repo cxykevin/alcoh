@@ -36,8 +36,8 @@ type App struct {
 	// 轮询模型状态时，经 App.snapshot 并发读取，避免 data race。
 	modelMu sync.RWMutex
 
-	spinFrame     int
-	sess          acp.Session // 当前活动 backend 会话
+	spinFrame int
+	sess      acp.Session // 当前活动 backend 会话
 	// preSession 是主页预创建会话的 backend 句柄。它只在主页存活：用户恢复旧
 	// 会话、新建会话或程序退出时被删除（见 ensurePreSession / discardPreSession /
 	// deletePreSessionAtExit）。主页时 sess 指向它，使 /effort 与 /model 可写。
@@ -53,6 +53,10 @@ type App struct {
 	cancelRun     context.CancelFunc
 	commandWG     sync.WaitGroup
 	sessionOpID   uint64
+	// Session list pagination state; accessed by the event loop and guarded by modelMu.
+	sessionNextCursor string
+	sessionLoading    bool
+	sessionGeneration uint64
 
 	// serverCfgFocus 是服务端配置编辑器新增项后的重定向目标路径：新增写回
 	// （config/set）成功后据此触发整配置重载（config/get），重载完成后再经
@@ -109,9 +113,15 @@ type commandResult struct {
 	sessionID string
 	opID      uint64
 	config    json.RawMessage
+	page      *sessionPageResult
 	cfgSeq    uint64 // config/get 请求序号，用于丢弃乱序晚回的旧结果
 	models    []provider.Model
 	err       error
+}
+
+type sessionPageResult struct {
+	page       acp.SessionPage
+	appendPage bool
 }
 
 // New 创建使用默认本地配置的 App。
@@ -313,7 +323,7 @@ func (a *App) maybeStartOnboarding() {
 // sendInitialPrompt 在启动流程完成后发送 One Shot 模式的启动消息：优先复用主页
 // 预创建会话（不删除、不新建，与主页输入 prompt 回车同一条路径），否则新建会话
 // 并把消息记为 PendingInitialPrompt——会话建立后由 applyCommandResult 自动发送
-//（见 applyCommandResult 中 PendingInitialPrompt 分支）。新手引导进行中时不发送。
+// （见 applyCommandResult 中 PendingInitialPrompt 分支）。新手引导进行中时不发送。
 func (a *App) sendInitialPrompt() {
 	if a.initialPrompt == "" {
 		return
@@ -359,10 +369,10 @@ func (a *App) snapshot() modelSnapshot {
 	a.modelMu.RLock()
 	defer a.modelMu.RUnlock()
 	s := modelSnapshot{
-		Quitting:      a.model.Quitting,
-		Modal:         a.model.Modal,
-		BodyScroll:    a.view.BodyScroll,
-		ThoughtRow:    firstThoughtRow(a.view.BodyToggles),
+		Quitting:   a.model.Quitting,
+		Modal:      a.model.Modal,
+		BodyScroll: a.view.BodyScroll,
+		ThoughtRow: firstThoughtRow(a.view.BodyToggles),
 	}
 	if a.model.ServerCfg != nil {
 		s.ServerCfg = true
@@ -439,6 +449,7 @@ func (a *App) Run() error {
 	a.modelMu.Lock()
 	a.model.SetAgentInfo(a.backend.AgentInfo(), a.backend.AgentCapabilities())
 	a.modelMu.Unlock()
+	// Initial refresh is asynchronous; the event loop applies its page result.
 	a.refreshSessions()
 	// 判断是否进入新手引导；否则按正常主页流程预创建一个会话（仅当服务端支持
 	// session.delete）。预创建会话承载 agent 广播的 config，使 /effort 与 /model
@@ -621,6 +632,37 @@ func (a *App) applyCommandResult(result commandResult) {
 			} else {
 				cs.ConnectMarkResult(i18n.T("模型已添加并设为默认模型"))
 			}
+		}
+		return
+	}
+	if result.kind == commandSession && result.page != nil {
+		p := *result.page
+		if result.opID != a.sessionGeneration {
+			return
+		}
+		if result.err != nil {
+			a.sessionLoading = false
+			a.model.ShowError(result.err.Error())
+			return
+		}
+		if p.appendPage {
+			a.model.Sessions = append(a.model.Sessions, p.page.Sessions...)
+		} else {
+			a.model.Sessions = p.page.Sessions
+			if len(a.model.Sessions) == 0 {
+				a.model.HomeSelected = -1
+			} else if a.model.HomeSelected < 0 {
+				a.model.HomeSelected = 0
+			}
+		}
+		requestedCursor := result.sessionID
+		a.sessionNextCursor = p.page.NextCursor
+		if p.appendPage && requestedCursor == p.page.NextCursor {
+			a.sessionNextCursor = ""
+		}
+		a.sessionLoading = false
+		if p.appendPage {
+			a.maybeLoadMoreSessions()
 		}
 		return
 	}
@@ -821,16 +863,49 @@ func (f writerFunc) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// refreshSessions 拉取会话列表。模型写入在 modelMu 锁保护区内执行。
+// refreshSessions 从头拉取会话列表；调用方通常在事件循环中持有 modelMu。
 func (a *App) refreshSessions() {
-	sessions, err := a.backend.ListSessions(a.runCtx)
 	a.modelMu.Lock()
-	defer a.modelMu.Unlock()
-	if err != nil {
-		a.model.ShowError(err.Error())
+	a.refreshSessionsLocked()
+	a.modelMu.Unlock()
+}
+
+// refreshSessionsLocked starts a first-page request while modelMu is held.
+func (a *App) refreshSessionsLocked() {
+	a.sessionGeneration++
+	generation := a.sessionGeneration
+	a.sessionNextCursor = ""
+	a.sessionLoading = true
+	a.startSessionPage(generation, "", false)
+}
+
+func (a *App) startSessionPage(generation uint64, cursor string, appendPage bool) {
+	a.commandWG.Add(1)
+	go func() {
+		defer a.commandWG.Done()
+		page, err := a.backend.ListSessionsPage(a.runCtx, cursor)
+		select {
+		case a.commands <- commandResult{kind: commandSession, opID: generation, sessionID: cursor, page: &sessionPageResult{page: page, appendPage: appendPage}, err: err}:
+		case <-a.runCtx.Done():
+		}
+	}()
+}
+
+// loadMoreSessions fetches the next page when selection nears the list bottom.
+func (a *App) loadMoreSessions() {
+	if a.sessionLoading || a.sessionNextCursor == "" {
 		return
 	}
-	a.model.Sessions = sessions
+	cursor := a.sessionNextCursor
+	generation := a.sessionGeneration
+	a.sessionLoading = true
+	a.startSessionPage(generation, cursor, true)
+}
+
+func (a *App) maybeLoadMoreSessions() {
+	if len(a.model.Sessions) > 0 && a.model.HomeSelected >= len(a.model.Sessions)-5 {
+		a.loadMoreSessions()
+	}
 }
 
 // RunDump 在无 TTY 模式下渲染 frames 帧 ANSI 输出（冒烟测试）。

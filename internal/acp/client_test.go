@@ -24,7 +24,7 @@ func (f *fakeTransport) Request(ctx context.Context, method string, params any, 
 	return errors.New("unexpected method " + method)
 }
 func (f *fakeTransport) Notify(method string, params any) error { return nil }
-func (f *fakeTransport) Respond(id RPCID, result any) error    { return nil }
+func (f *fakeTransport) Respond(id RPCID, result any) error     { return nil }
 func (f *fakeTransport) RespondError(id RPCID, rpcErr RPCError) error {
 	return nil
 }
@@ -164,6 +164,30 @@ func TestSetConfigOptionEmitsUpdateEvent(t *testing.T) {
 	ev := drainConfigEvent(t, b)
 	if len(ev.Options) != 1 || ev.Options[0].CurrentValue != "xhigh" {
 		t.Errorf("config event options = %#v", ev.Options)
+	}
+}
+
+// TestListSessionsPagePropagatesCursor verifies cursor request/response propagation.
+func TestListSessionsPagePropagatesCursor(t *testing.T) {
+	ft := &fakeTransport{}
+	ft.set(MethodSessionList, func(params, result any) error {
+		p := params.(SessionListParams)
+		if p.Cursor != "next-page" {
+			t.Fatalf("cursor = %q, want next-page", p.Cursor)
+		}
+		r := result.(*SessionListResult)
+		r.Sessions = []*SessionInfo{{SessionID: "s2"}}
+		r.NextCursor = "final-page"
+		return nil
+	})
+	b := probeClient(t, ft)
+	defer b.Close()
+	page, err := b.ListSessionsPage(context.Background(), "next-page")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Sessions) != 1 || page.Sessions[0].SessionID != "s2" || page.NextCursor != "final-page" {
+		t.Fatalf("page = %#v", page)
 	}
 }
 

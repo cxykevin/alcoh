@@ -8,11 +8,19 @@ import (
 // Backend 是 ACP 后端的抽象接口。
 // 真实实现（stdio JSON-RPC 客户端）与 demo（假 agent）都实现本接口，
 // 使 TUI 层不感知协议实现细节。
+// SessionPage 是 session/list 的一页结果。
+type SessionPage struct {
+	Sessions   []*SessionInfo
+	NextCursor string
+}
+
 type Backend interface {
 	// Initialize 建立连接并完成 initialize 握手。
 	Initialize(ctx context.Context) error
-	// ListSessions 列出可恢复的会话。
+	// ListSessions 列出第一页可恢复的会话。
 	ListSessions(ctx context.Context) ([]*SessionInfo, error)
+	// ListSessionsPage 按 cursor 获取一页可恢复的会话。空 cursor 从头开始。
+	ListSessionsPage(ctx context.Context, cursor string) (SessionPage, error)
 	// NewSession 在 cwd 创建新会话。
 	NewSession(ctx context.Context, cwd string) (Session, error)
 	// ResumeSession 恢复指定会话。

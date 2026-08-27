@@ -146,7 +146,7 @@ var en = map[string]string{
 
 	// ---- 首页 ----
 	"( 无会话 )": "( no sessions )",
-	"d 删除会话":  "d delete session",
+	"r 刷新  d 删除会话":  "r refresh  d delete session",
 	"← 恢复会话":  "← resume session",
 
 	// ---- 服务端配置编辑器 ----
