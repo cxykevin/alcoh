@@ -1101,7 +1101,9 @@ func TestServerConfigEditorDeleteModel(t *testing.T) {
 	ft.sendKey(input.SimpleKey(input.KeyEnter)) // 进入键 1 的模型子页
 	ft.sendKey(input.SimpleKey(input.KeyDown))  // ModelName（index1）
 	ft.sendKey(input.SimpleKey(input.KeyDown))  // TokenLimit（index2）
-	ft.sendKey(input.SimpleKey(input.KeyDown))  // (删除该项)（index3）
+	ft.sendKey(input.SimpleKey(input.KeyDown))  // (复制)
+	ft.sendKey(input.SimpleKey(input.KeyDown))  // (重命名键)
+	ft.sendKey(input.SimpleKey(input.KeyDown))  // (删除该项)
 	ft.sendKey(input.SimpleKey(input.KeyEnter)) // 删除模型 1
 
 	// SetConfig 应被调用一次，patch 为 {"Model":{"Models":{"1":null}}}。

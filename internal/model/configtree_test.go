@@ -623,14 +623,14 @@ func TestConfigEditorDeleteModelItem(t *testing.T) {
 	if ed.CanDelete() || ed.DelRowIndex() != -1 {
 		t.Fatalf("Models collection should not expose delete row: del=%d", ed.DelRowIndex())
 	}
-	ed.Enter() // 进入模型 1 子页：页面 [ModelName, TokenLimit, (删除该项)]
+	ed.Enter() // 进入模型 1 子页：字段与复制、重命名、删除操作行
 	if !ed.CanDelete() {
 		t.Fatal("model item page should allow delete")
 	}
-	if ed.DelRowIndex() != len(ed.CurrentChildren()) {
-		t.Fatalf("model item del row = %d, want %d", ed.DelRowIndex(), len(ed.CurrentChildren()))
+	if ed.DelRowIndex() != len(ed.CurrentChildren())+2 {
+		t.Fatalf("model item del row = %d, want %d", ed.DelRowIndex(), len(ed.CurrentChildren())+2)
 	}
-	ed.Move(2) // ModelName → TokenLimit → (删除该项)
+	ed.Move(ed.DelRowIndex()) // 跳到操作行 (删除该项)
 	if !ed.OnDeleteRow() {
 		t.Fatalf("selected = %d, want on delete row", ed.Selected)
 	}
@@ -664,9 +664,12 @@ func TestConfigEditorDeleteAgentItem(t *testing.T) {
 	if !ed.CanDelete() {
 		t.Fatal("agent item page should allow delete")
 	}
-	if ed.DelRowIndex() != 0 || !ed.OnDeleteRow() {
-		t.Fatalf("frontend page: del=%d selected=%d, want delete row as only row",
-			ed.DelRowIndex(), ed.Selected)
+	if ed.DelRowIndex() != 2 {
+		t.Fatalf("frontend page: del=%d, want delete row after copy and rename", ed.DelRowIndex())
+	}
+	ed.Move(ed.DelRowIndex())
+	if !ed.OnDeleteRow() {
+		t.Fatalf("selected = %d, want on delete row", ed.Selected)
 	}
 	patch, ok := ed.DeleteItem()
 	if !ok {
@@ -973,12 +976,11 @@ func TestConfigEditorDeleteRowWrap(t *testing.T) {
 	ed.Enter()
 	ed.Move(1) // Models
 	ed.Enter()
-	ed.Enter() // 模型 1 子页：[ModelName, TokenLimit, (删除该项)]
-	if ed.RowCount() != 3 {
-		t.Fatalf("model item row count = %d, want 3", ed.RowCount())
+	ed.Enter() // 模型 1 子页：[ModelName, TokenLimit, (复制), (重命名键), (删除该项)]
+	if ed.RowCount() != len(ed.CurrentChildren())+3 {
+		t.Fatalf("model item row count = %d, want %d", ed.RowCount(), len(ed.CurrentChildren())+3)
 	}
-	ed.Move(1) // TokenLimit
-	ed.Move(1) // (删除该项)
+	ed.Move(ed.DelRowIndex()) // 跳到 (删除该项)
 	if !ed.OnDeleteRow() {
 		t.Fatal("should be on delete row")
 	}

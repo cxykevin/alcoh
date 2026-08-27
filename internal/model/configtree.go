@@ -31,8 +31,7 @@ const (
 
 // configKeyLabels 是服务端配置字段名的中文显示名。键为 alkaid0 服务端 Go
 // 结构体硬编码的 JSON 字段名（见 alkaid0 README 配置示例）。编辑器用它作为
-// 显示键；未收录的键（如 map 的用户自定义键、数字模型 ID）直接显示原始名称。
-// 翻译只做展示，写回的 patch 始终使用原始字段名（Key）。
+// 显示键；翻译只做展示，写回的 patch 始终使用原始字段名（Key）。
 var configKeyLabels = map[string]string{
 	// Config 顶层。
 	"Version":       "配置版本",
@@ -80,14 +79,27 @@ var configKeyLabels = map[string]string{
 	"Type":                   "类型",
 	"ProviderSpecificConfig": "提供方专属配置",
 	// ProviderSpecificConfig。
-	"EnableDeepseekThinking": "Deepseek 思考",
-	"EnableReasoningEffort":  "推理强度",
-	"EnableTopP":             "Top-P",
-	"EnableTopK":             "Top-K",
-	"EnableTemperature":      "温度",
-	"EnableUsage":            "用量统计",
-	"Dimension":              "向量维度",
-	"ToolPromptEnhance":      "工具提示词增强",
+	"EnableDeepseekThinking":    "Deepseek 思考",
+	"EnableReasoningEffort":     "推理强度",
+	"EnableTopP":                "Top-P",
+	"EnableTopK":                "Top-K",
+	"EnableTemperature":         "温度",
+	"EnableUsage":               "用量统计",
+	"Dimension":                 "向量维度",
+	"ToolPromptEnhance":         "工具提示词增强",
+	"EnableToolCallingCompat":   "工具调用兼容",
+	"EnableTrailingUserMessage": "追加用户收尾消息",
+	"CachePriceMultiplier":      "缓存价格倍率",
+	"CacheRetentionMinutes":     "缓存保留时间",
+	"Fetch":                     "抓取配置",
+	"RewriteHeaders":            "重写请求头",
+	"dataMask":                  "数据掩码",
+	"mask_api_key":              "脱敏 API 密钥",
+	"mask_phone":                "脱敏手机号",
+	"mask_ip":                   "脱敏公网 IP",
+	"mask_ip_whitelist":         "公网 IP 白名单",
+	"mask_session_cookie":       "脱敏会话 Cookie",
+	"mask_jwt":                  "脱敏 JWT",
 	// Agent 与子代理。
 	"Agents":                  "子代理",
 	"IgnoreBuiltinAgents":     "忽略内置代理",
@@ -399,6 +411,13 @@ type ConfigEditor struct {
 	AddingKey bool
 	AddInput  *widget.InputBuffer
 
+	RenamingKey bool
+	RenameInput *widget.InputBuffer
+	RenameNode  *ConfigNode
+	CopyingKey  bool
+	CopyInput   *widget.InputBuffer
+	CopyNode    *ConfigNode
+
 	// Saving 表示配置写回（config/set）与随后的全量重载（config/get）进行中。
 	// 期间阻塞新的改动，界面底部显示"保存中…"，直到重载完成解除。
 	Saving bool
@@ -485,6 +504,14 @@ func (ed *ConfigEditor) CanAdd() bool {
 			return n.Parent != nil && n.Parent.Key == "Agent"
 		case "LanguageServers":
 			return n.Parent != nil && n.Parent.Key == "LSP"
+		case "TerminalEnvs":
+			return n.Parent != nil && n.Parent.Key == "Agent"
+		case "RewriteHeaders":
+			return n.Parent != nil && n.Parent.Key == "Fetch"
+		default:
+			// URL patterns and their nested header maps are both editable maps.
+			return n.Parent != nil && (n.Parent.Key == "RewriteHeaders" ||
+				(n.Parent.Parent != nil && n.Parent.Parent.Key == "RewriteHeaders"))
 		}
 	case ConfigArray:
 		return n.Key == "plugins" || (n.Key == "Phrases" && n.Parent != nil && n.Parent.Key == "Phrase")
@@ -515,7 +542,9 @@ func (ed *ConfigEditor) CanDelete() bool {
 		(p.Key == "Agents" && p.Parent != nil && p.Parent.Key == "Agent") ||
 		(p.Key == "LanguageServers" && p.Parent != nil && p.Parent.Key == "LSP") ||
 		(p.Key == "Phrases" && p.Kind == ConfigArray && p.Parent != nil && p.Parent.Key == "Phrase") ||
-		(p.Key == "plugins" && p.Kind == ConfigArray)
+		(p.Key == "plugins" && p.Kind == ConfigArray) ||
+		(p.Key == "RewriteHeaders") ||
+		(p.Parent != nil && p.Parent.Key == "RewriteHeaders")
 }
 
 // AddRowIndex 返回「(新增)」行的行索引；当前页面不允许新增时返回 -1。
@@ -536,19 +565,13 @@ func (ed *ConfigEditor) DelRowIndex() int {
 	if ed.CanAdd() {
 		idx++
 	}
+	if ed.CanCopy() {
+		idx++
+	}
+	if ed.CanRename() {
+		idx++
+	}
 	return idx
-}
-
-// RowCount 返回当前页面的总行数（含末尾「(新增)」/「(删除该项)」行，若存在）。
-func (ed *ConfigEditor) RowCount() int {
-	n := len(ed.CurrentChildren())
-	if ed.AddRowIndex() >= 0 {
-		n++
-	}
-	if ed.DelRowIndex() >= 0 {
-		n++
-	}
-	return n
 }
 
 // OnAddRow 报告选中行是否为末尾的「(新增)」行。
@@ -561,10 +584,179 @@ func (ed *ConfigEditor) OnDeleteRow() bool {
 	return ed.Selected == ed.DelRowIndex()
 }
 
+// CanRename reports whether the current child entry supports key renaming.
+func (ed *ConfigEditor) CanRename() bool {
+	n := ed.Current()
+	if n == nil || n.Parent == nil || n.Parent.Kind != ConfigObject {
+		return false
+	}
+	p := n.Parent
+	return (p.Key == "Models" && p.Parent != nil && p.Parent.Key == "Model") ||
+		(p.Key == "Agents" && p.Parent != nil && p.Parent.Key == "Agent") ||
+		p.Key == "TerminalEnvs" || p.Key == "RewriteHeaders" ||
+		(p.Parent != nil && p.Parent.Key == "RewriteHeaders")
+}
+
+func (ed *ConfigEditor) RenameRowIndex() int {
+	if !ed.CanRename() {
+		return -1
+	}
+	idx := len(ed.CurrentChildren())
+	if ed.CanAdd() {
+		idx++
+	}
+	if ed.CanCopy() {
+		idx++
+	}
+	return idx
+}
+
+func (ed *ConfigEditor) OnRenameRow() bool { return ed.Selected == ed.RenameRowIndex() }
+
+// BeginRenameKey starts editing the selected map key.
+func (ed *ConfigEditor) BeginRenameKey() bool {
+	if !ed.CanRename() {
+		return false
+	}
+	n := ed.Current()
+	ed.RenameNode = n
+	ed.RenamingKey = true
+	ed.RenameInput = inputFromString(n.Key)
+	return true
+}
+
+// CancelRenameKey cancels key editing.
+func (ed *ConfigEditor) CancelRenameKey() {
+	ed.RenamingKey = false
+	ed.RenameNode = nil
+}
+
+// ConfirmRenameKey returns a delete-old/add-new patch.
+func (ed *ConfigEditor) ConfirmRenameKey() (json.RawMessage, bool, string) {
+	if !ed.RenamingKey || ed.RenameNode == nil {
+		return nil, false, ""
+	}
+	key := ed.RenameInput.Text()
+	if key == "" {
+		return nil, false, i18n.T("键名不能为空")
+	}
+	n := ed.RenameNode
+	if key == n.Key {
+		ed.CancelRenameKey()
+		return nil, false, ""
+	}
+	for _, c := range n.Parent.Children {
+		if c != n && c.Key == key {
+			return nil, false, i18n.T("键名已存在")
+		}
+	}
+	value := n.AsValue()
+	deleteValue := map[string]any{n.Key: nil}
+	deleteValue[key] = value
+	n.Key = key
+	n.Path[len(n.Path)-1] = key
+	ed.CancelRenameKey()
+	return nodePatch(n.Parent.Path, deleteValue), true, ""
+}
+
+func (ed *ConfigEditor) CanCopy() bool {
+	n := ed.Current()
+	if n == nil || n.Parent == nil || n.Parent.Kind != ConfigObject {
+		return false
+	}
+	p := n.Parent
+	return (p.Key == "Models" && p.Parent != nil && p.Parent.Key == "Model") ||
+		(p.Key == "Agents" && p.Parent != nil && p.Parent.Key == "Agent") ||
+		p.Key == "TerminalEnvs" || p.Key == "RewriteHeaders" ||
+		(p.Parent != nil && p.Parent.Key == "RewriteHeaders")
+}
+
+// OnCopyRow reports whether the copy action row is selected.
+func (ed *ConfigEditor) OnCopyRow() bool {
+	return ed.Selected == ed.CopyRowIndex()
+}
+
+// CopyRowIndex 返回「(复制)」行索引。
+func (ed *ConfigEditor) CopyRowIndex() int {
+	if !ed.CanCopy() {
+		return -1
+	}
+	idx := len(ed.CurrentChildren())
+	if ed.CanAdd() {
+		idx++
+	}
+	return idx
+}
+
+// RowCount 返回当前页面的总行数（含新增、复制、删除操作行）。
+func (ed *ConfigEditor) RowCount() int {
+	n := len(ed.CurrentChildren())
+	if ed.AddRowIndex() >= 0 {
+		n++
+	}
+	if ed.CopyRowIndex() >= 0 {
+		n++
+	}
+	if ed.RenameRowIndex() >= 0 {
+		n++
+	}
+	if ed.DelRowIndex() >= 0 {
+		n++
+	}
+	return n
+}
+
+// BeginCopyKey starts copying the selected map entry and asks for its new key.
+func (ed *ConfigEditor) BeginCopyKey() bool {
+	if !ed.CanCopy() {
+		return false
+	}
+	n := ed.Current()
+	if n == nil || n.Parent == nil {
+		return false
+	}
+	ed.CopyNode = n
+	ed.CopyingKey = true
+	ed.CopyInput = widget.NewInputBuffer()
+	return true
+}
+
+func (ed *ConfigEditor) CancelCopyKey() {
+	ed.CopyingKey = false
+	ed.CopyNode = nil
+}
+
+// ConfirmCopyKey duplicates the selected entry under the user-provided key.
+func (ed *ConfigEditor) ConfirmCopyKey() (json.RawMessage, bool, string) {
+	if !ed.CopyingKey || ed.CopyNode == nil {
+		return nil, false, ""
+	}
+	key := ed.CopyInput.Text()
+	if key == "" {
+		return nil, false, i18n.T("键名不能为空")
+	}
+	n := ed.CopyNode
+	for _, c := range n.Parent.Children {
+		if c.Key == key {
+			return nil, false, i18n.T("键名已存在")
+		}
+	}
+	value := n.AsValue()
+	n.Parent.Children = append(n.Parent.Children, buildConfigNode(key, append(n.Parent.Path, key), n.Parent, value))
+	ed.CancelCopyKey()
+	return nodePatch(n.Parent.Path, map[string]any{key: value}), true, ""
+}
+
 // Enter 进入当前选中行（对象/数组）的子页面，返回是否进入。标量行不动作。
 func (ed *ConfigEditor) Enter() bool {
 	n := ed.SelectedNode()
-	if n == nil || (n.Kind != ConfigObject && n.Kind != ConfigArray) {
+	if n == nil {
+		return false
+	}
+	// Key actions live on the entry's own page. Scalar map entries need an
+	// empty page too, so copy/rename/delete remain available for env/header keys.
+	if n.Kind != ConfigObject && n.Kind != ConfigArray &&
+		!ed.CanCopy() && !ed.CanRename() && !ed.CanDelete() {
 		return false
 	}
 	ed.EntryIdx = append(ed.EntryIdx, ed.Selected)
@@ -707,6 +899,30 @@ func (ed *ConfigEditor) CancelEdit() {
 	ed.EditNode = nil
 }
 
+// isStringMapEntry reports whether an editable string is a value in a map.
+// Empty values in these maps are deletion requests, not persisted empty strings.
+func (ed *ConfigEditor) isStringMapEntry(n *ConfigNode) bool {
+	if n == nil || n.Parent == nil || n.Parent.Kind != ConfigObject {
+		return false
+	}
+	return n.Parent.Key == "TerminalEnvs" ||
+		(n.Parent.Parent != nil && n.Parent.Parent.Key == "RewriteHeaders")
+}
+
+// deleteMapEntry removes a string-valued map entry through the normal patch path.
+func (ed *ConfigEditor) deleteMapEntry(n *ConfigNode) (json.RawMessage, bool, string) {
+	parent := n.Parent
+	for i, child := range parent.Children {
+		if child == n {
+			parent.Children = append(parent.Children[:i], parent.Children[i+1:]...)
+			break
+		}
+	}
+	ed.Editing = false
+	ed.EditNode = nil
+	return nodePatch(parent.Path, map[string]any{n.Key: nil}), true, ""
+}
+
 // CommitEdit 解析编辑输入为对应类型的值并更新节点，返回写回 patch。
 // 成功时 ok=true；解析失败返回 errMsg（节点与树不变）。
 func (ed *ConfigEditor) CommitEdit() (patch json.RawMessage, ok bool, errMsg string) {
@@ -737,7 +953,10 @@ func (ed *ConfigEditor) CommitEdit() (patch json.RawMessage, ok bool, errMsg str
 			n.Str = text
 		}
 	default:
-		// 字符串：按字符串处理。
+		// 字符串：按字符串处理。地图中的空字符串表示删除该键。
+		if text == "" && ed.isStringMapEntry(n) {
+			return ed.deleteMapEntry(n)
+		}
 		n.Kind = ConfigString
 		n.Str = text
 	}
@@ -878,8 +1097,9 @@ func (ed *ConfigEditor) AddPluginsArray() bool {
 	return ed.AddPluginsItem()
 }
 
-// BeginAddKey 进入当前集合页（名称键的 map：Agent.Agents、Context.LSP.
-// LanguageServers）的新增键输入模式（「(新增)」行）。仅在 CanAdd 时由 app 调用。
+// BeginAddKey 进入当前集合页的新增键输入模式（「(新增)」行）。仅在 CanAdd
+// 时由 app 调用；支持 Agents、LanguageServers、TerminalEnvs、RewriteHeaders
+// 以及 RewriteHeaders 下的请求头 map。
 func (ed *ConfigEditor) BeginAddKey() bool {
 	n := ed.Current()
 	if n == nil || n.Kind != ConfigObject {
@@ -915,7 +1135,19 @@ func (ed *ConfigEditor) ConfirmAddKey() (json.RawMessage, bool, string) {
 	if key == "" {
 		return nil, false, i18n.T("键名不能为空")
 	}
-	var val map[string]any
+	var val any
+	// Reuse the same key-entry flow for nested maps while preserving the
+	// schema's value type: environment/header entries are strings, URL patterns
+	// contain header maps, and the collection itself is an object.
+	switch {
+	case n.Key == "TerminalEnvs":
+		val = ""
+	case n.Key == "RewriteHeaders":
+		val = map[string]any{}
+	case n.Parent != nil && n.Parent.Key == "RewriteHeaders":
+		// A header name under a URL pattern maps to a string value.
+		val = ""
+	}
 	switch n.Key {
 	case "Agents":
 		val = map[string]any{
@@ -934,7 +1166,8 @@ func (ed *ConfigEditor) ConfirmAddKey() (json.RawMessage, bool, string) {
 			"Command": "",
 			"Args":    []any{},
 		}
-	default:
+	}
+	if val == nil {
 		return nil, false, i18n.T("该集合不支持新增")
 	}
 	child := buildConfigNode(key, append(n.Path, key), n, val)
@@ -995,7 +1228,7 @@ func (ed *ConfigEditor) DeleteItem() (json.RawMessage, bool) {
 		}
 		return nodePatch(parent.Path, parent.AsValue()), true
 	}
-	// 对象：本地删除键，以 null 键写回（服务端 config/set 真正删除 map 键）。
+	// 对象：删除 map 键，以 null 写回服务端。
 	return nodePatch(parent.Path, map[string]any{n.Key: nil}), true
 }
 
@@ -1120,5 +1353,5 @@ func (ed *ConfigEditor) focusNode(path []string) {
 
 // IsEditing 报告当前是否处于值编辑或新增键输入模式（重载重建后不应被覆盖）。
 func (ed *ConfigEditor) IsEditing() bool {
-	return ed.Editing || ed.AddingKey
+	return ed.Editing || ed.AddingKey || ed.RenamingKey || ed.CopyingKey
 }

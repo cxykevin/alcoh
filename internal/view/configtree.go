@@ -44,6 +44,8 @@ func (ct *ConfigTree) draw(c *renderer.Canvas, r renderer.Rect, ed *model.Config
 	}
 	rows := ed.CurrentChildren()
 	addIdx := ed.AddRowIndex()
+	copyIdx := ed.CopyRowIndex()
+	renameIdx := ed.RenameRowIndex()
 	delIdx := ed.DelRowIndex()
 	count := ed.RowCount()
 	start := 0
@@ -81,6 +83,18 @@ func (ct *ConfigTree) draw(c *renderer.Canvas, r renderer.Rect, ed *model.Config
 			}
 		case i == addIdx:
 			line = marker + i18n.T("(新增)")
+			st = t.Style(t.TextMuted)
+			if selected {
+				st = st.WithBold(true)
+			}
+		case i == copyIdx:
+			line = marker + i18n.T("(复制)")
+			st = t.Style(t.TextMuted)
+			if selected {
+				st = st.WithBold(true)
+			}
+		case i == renameIdx:
+			line = marker + i18n.T("(重命名键)")
 			st = t.Style(t.TextMuted)
 			if selected {
 				st = st.WithBold(true)
@@ -130,12 +144,31 @@ func (ct *ConfigTree) draw(c *renderer.Canvas, r renderer.Rect, ed *model.Config
 		c.PutText(r.X, bottomY, i18n.T("Esc 取消    Enter 保存"), t.Style(t.TextMuted))
 		return
 	}
+	if ed.CopyingKey {
+		if inputY >= r.Y {
+			ib := &widget.InputBox{Buf: ed.CopyInput, Prompt: i18n.T("复制到键: "), Style: t.Style(t.Text), Cursor: t.StyleOn(t.Background, t.Primary), Focused: true}
+			ib.Draw(c, renderer.NewRect(r.X, inputY, r.W, 1))
+		}
+		c.PutText(r.X, bottomY, i18n.T("Esc 取消    Enter 复制"), t.Style(t.TextMuted))
+		return
+	}
+	if ed.RenamingKey {
+		if ed.RenameInput == nil {
+			ed.RenameInput = widget.NewInputBuffer()
+		}
+		if inputY >= r.Y {
+			ib := &widget.InputBox{Buf: ed.RenameInput, Prompt: i18n.T("新键名: "), Style: t.Style(t.Text), Cursor: t.StyleOn(t.Background, t.Primary), Focused: true}
+			ib.Draw(c, renderer.NewRect(r.X, inputY, r.W, 1))
+		}
+		c.PutText(r.X, bottomY, i18n.T("Esc 取消    Enter 重命名"), t.Style(t.TextMuted))
+		return
+	}
 	if ed.AddingKey {
 		if inputY >= r.Y {
 			ib := &widget.InputBox{Buf: ed.AddInput, Prompt: i18n.T("新键名: "), Style: t.Style(t.Text), Cursor: t.StyleOn(t.Background, t.Primary), Focused: true}
 			ib.Draw(c, renderer.NewRect(r.X, inputY, r.W, 1))
 		}
-		c.PutText(r.X, bottomY, i18n.T("Esc 取消    Enter 添加（map 键；对结构体字段无效会被服务端忽略）"), t.Style(t.TextMuted))
+		c.PutText(r.X, bottomY, i18n.T("Esc 取消    Enter 添加键"), t.Style(t.TextMuted))
 		return
 	}
 	c.PutText(r.X, bottomY, i18n.T("Esc 关闭   ↑↓ 选择   Enter 进入/编辑   ← 返回   r 刷新"), t.Style(t.TextMuted))
