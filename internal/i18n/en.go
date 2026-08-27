@@ -267,6 +267,8 @@ var en = map[string]string{
 	"使用的 Shell":   "Shell used",
 	"终端环境变量":      "Terminal env vars",
 	"(复制)":        "(Copy)",
+	"(重命名键)":      "(Rename key)",
+	"键名已存在":       "Key already exists",
 	"禁用沙箱":        "Disable sandbox",
 	"代理名称":        "Agent name",
 	"代理描述":        "Agent description",

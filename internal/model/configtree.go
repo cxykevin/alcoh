@@ -411,6 +411,10 @@ type ConfigEditor struct {
 	AddingKey bool
 	AddInput  *widget.InputBuffer
 
+	RenamingKey bool
+	RenameInput *widget.InputBuffer
+	RenameNode  *ConfigNode
+
 	// Saving 表示配置写回（config/set）与随后的全量重载（config/get）进行中。
 	// 期间阻塞新的改动，界面底部显示"保存中…"，直到重载完成解除。
 	Saving bool
@@ -561,6 +565,9 @@ func (ed *ConfigEditor) DelRowIndex() int {
 	if ed.CanCopy() {
 		idx++
 	}
+	if ed.CanRename() {
+		idx++
+	}
 	return idx
 }
 
@@ -575,6 +582,84 @@ func (ed *ConfigEditor) OnDeleteRow() bool {
 }
 
 // CanCopy 报告当前页面是否可以复制选中的集合条目。
+// CanRename reports whether the current collection supports key renaming.
+func (ed *ConfigEditor) CanRename() bool {
+	n := ed.Current()
+	if n == nil || len(n.Children) == 0 {
+		return false
+	}
+	return (n.Key == "Models" && n.Parent != nil && n.Parent.Key == "Model") ||
+		(n.Key == "Agents" && n.Parent != nil && n.Parent.Key == "Agent") ||
+		(n.Key == "TerminalEnvs") || n.Key == "RewriteHeaders" ||
+		(n.Parent != nil && n.Parent.Key == "RewriteHeaders") ||
+		(n.Parent != nil && n.Parent.Parent != nil && n.Parent.Parent.Key == "RewriteHeaders")
+}
+
+func (ed *ConfigEditor) RenameRowIndex() int {
+	if !ed.CanRename() {
+		return -1
+	}
+	idx := len(ed.CurrentChildren())
+	if ed.CanAdd() {
+		idx++
+	}
+	if ed.CanCopy() {
+		idx++
+	}
+	if ed.CanDelete() {
+		idx++
+	}
+	return idx
+}
+
+func (ed *ConfigEditor) OnRenameRow() bool { return ed.Selected == ed.RenameRowIndex() }
+
+// BeginRenameKey starts editing the selected map key.
+func (ed *ConfigEditor) BeginRenameKey() bool {
+	if !ed.CanRename() {
+		return false
+	}
+	n := ed.SelectedNode()
+	ed.RenameNode = n
+	ed.RenamingKey = true
+	ed.RenameInput = inputFromString(n.Key)
+	return true
+}
+
+// CancelRenameKey cancels key editing.
+func (ed *ConfigEditor) CancelRenameKey() {
+	ed.RenamingKey = false
+	ed.RenameNode = nil
+}
+
+// ConfirmRenameKey returns a delete-old/add-new patch.
+func (ed *ConfigEditor) ConfirmRenameKey() (json.RawMessage, bool, string) {
+	if !ed.RenamingKey || ed.RenameNode == nil {
+		return nil, false, ""
+	}
+	key := ed.RenameInput.Text()
+	if key == "" {
+		return nil, false, i18n.T("键名不能为空")
+	}
+	n := ed.RenameNode
+	if key == n.Key {
+		ed.CancelRenameKey()
+		return nil, false, ""
+	}
+	for _, c := range n.Parent.Children {
+		if c != n && c.Key == key {
+			return nil, false, i18n.T("键名已存在")
+		}
+	}
+	value := n.AsValue()
+	deleteValue := map[string]any{n.Key: nil}
+	deleteValue[key] = value
+	n.Key = key
+	n.Path[len(n.Path)-1] = key
+	ed.CancelRenameKey()
+	return nodePatch(n.Parent.Path, deleteValue), true, ""
+}
+
 func (ed *ConfigEditor) CanCopy() bool {
 	n := ed.Current()
 	if n == nil || len(n.Children) == 0 {

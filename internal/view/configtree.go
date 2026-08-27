@@ -45,6 +45,7 @@ func (ct *ConfigTree) draw(c *renderer.Canvas, r renderer.Rect, ed *model.Config
 	rows := ed.CurrentChildren()
 	addIdx := ed.AddRowIndex()
 	copyIdx := ed.CopyRowIndex()
+	renameIdx := ed.RenameRowIndex()
 	delIdx := ed.DelRowIndex()
 	count := ed.RowCount()
 	start := 0
@@ -92,6 +93,12 @@ func (ct *ConfigTree) draw(c *renderer.Canvas, r renderer.Rect, ed *model.Config
 			if selected {
 				st = st.WithBold(true)
 			}
+		case i == renameIdx:
+			line = marker + i18n.T("(重命名键)")
+			st = t.Style(t.TextMuted)
+			if selected {
+				st = st.WithBold(true)
+			}
 		case i == delIdx:
 			line = marker + i18n.T("(删除该项)")
 			st = t.Style(t.Error)
@@ -135,6 +142,17 @@ func (ct *ConfigTree) draw(c *renderer.Canvas, r renderer.Rect, ed *model.Config
 			ib.Draw(c, renderer.NewRect(r.X, inputY, r.W, 1))
 		}
 		c.PutText(r.X, bottomY, i18n.T("Esc 取消    Enter 保存"), t.Style(t.TextMuted))
+		return
+	}
+	if ed.RenamingKey {
+		if ed.RenameInput == nil {
+			ed.RenameInput = widget.NewInputBuffer()
+		}
+		if inputY >= r.Y {
+			ib := &widget.InputBox{Buf: ed.RenameInput, Prompt: i18n.T("新键名: "), Style: t.Style(t.Text), Cursor: t.StyleOn(t.Background, t.Primary), Focused: true}
+			ib.Draw(c, renderer.NewRect(r.X, inputY, r.W, 1))
+		}
+		c.PutText(r.X, bottomY, i18n.T("Esc 取消    Enter 重命名"), t.Style(t.TextMuted))
 		return
 	}
 	if ed.AddingKey {

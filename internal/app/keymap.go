@@ -643,6 +643,17 @@ func (a *App) pluginsConfigKey(ke input.KeyEvent) {
 // onRefresh 是 "r" 重新加载的钩子（服务端重新 config/get，本地重新读盘）。
 // 返回 true 表示按键已处理；Esc 关闭由调用方决定。
 func (a *App) configEditorKey(ke input.KeyEvent, ed *model.ConfigEditor, onRefresh func()) bool {
+	if ed.RenamingKey {
+		switch {
+		case ke.Type == input.KeyEsc:
+			ed.CancelRenameKey()
+		case ke.Type == input.KeyEnter:
+			a.confirmConfigRenameKey(ed)
+		default:
+			(&widget.InputBox{Buf: ed.RenameInput, Style: a.view.Theme.Style(a.view.Theme.Text)}).OnKey(ke)
+		}
+		return true
+	}
 	if ed.Editing {
 		switch {
 		case ke.Type == input.KeyEsc:
@@ -746,6 +757,10 @@ func (a *App) activateConfigRow(ed *model.ConfigEditor) {
 		a.activateAddRow(ed)
 		return
 	}
+	if ed.OnRenameRow() {
+		ed.BeginRenameKey()
+		return
+	}
 	if ed.OnDeleteRow() {
 		a.deleteConfigItem(ed)
 		return
@@ -818,6 +833,18 @@ func (a *App) commitConfigEdit(ed *model.ConfigEditor) {
 	patch, ok, errMsg := ed.CommitEdit()
 	if !ok {
 		a.model.ShowError(i18n.T("编辑失败: %s", errMsg))
+		return
+	}
+	a.applyEditorPatch(ed, patch)
+}
+
+// confirmConfigRenameKey confirms a key rename and writes the replacement patch.
+func (a *App) confirmConfigRenameKey(ed *model.ConfigEditor) {
+	patch, ok, errMsg := ed.ConfirmRenameKey()
+	if !ok {
+		if errMsg != "" {
+			a.model.ShowError(i18n.T("重命名失败: %s", errMsg))
+		}
 		return
 	}
 	a.applyEditorPatch(ed, patch)
