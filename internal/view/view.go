@@ -649,7 +649,7 @@ func (sl *SessionList) Draw(c *renderer.Canvas, r renderer.Rect, m *model.AppMod
 	// 先尝试居中，越界时收拢到边界，实现选中项超出屏幕时列表自动滚动。
 	const itemRows = 3
 	headerRows := 2 // "sessions" 标题 + 间隔行
-	hintRows := 1   // 底部 i18n.T("d 删除会话") 提示行
+	hintRows := 1   // 底部 i18n.T("r 刷新  d 删除会话") 提示行
 	visible := (inner.H - headerRows - hintRows - 1) / itemRows
 	if visible < 1 {
 		visible = 1
@@ -702,11 +702,11 @@ func (sl *SessionList) Draw(c *renderer.Canvas, r renderer.Rect, m *model.AppMod
 	sl.drawHint(c, inner, t)
 }
 
-// drawHint 在列表底部绘制 i18n.T("d 删除会话") 快捷键提示。
+// drawHint 在列表底部绘制 i18n.T("r 刷新  d 删除会话") 快捷键提示。
 func (sl *SessionList) drawHint(c *renderer.Canvas, inner renderer.Rect, t renderer.Theme) {
 	hintY := inner.Y + inner.H - 1
 	if hintY >= inner.Y {
-		c.PutText(inner.X, hintY, i18n.T("d 删除会话"), t.Style(t.TextMuted))
+		c.PutText(inner.X, hintY, i18n.T("r 刷新  d 删除会话"), t.Style(t.TextMuted))
 	}
 }
 

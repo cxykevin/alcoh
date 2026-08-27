@@ -220,22 +220,26 @@ func (b *ClientBackend) readyTransport() (Transport, error) {
 	return b.transport, nil
 }
 
-// ListSessions 调用 session/list。
+// ListSessions 调用 session/list 获取第一页，保留历史兼容接口。
 func (b *ClientBackend) ListSessions(ctx context.Context) ([]*SessionInfo, error) {
+	page, err := b.ListSessionsPage(ctx, "")
+	return page.Sessions, err
+}
+
+// ListSessionsPage 调用 session/list 获取指定 cursor 的一页。
+func (b *ClientBackend) ListSessionsPage(ctx context.Context, cursor string) (SessionPage, error) {
 	t, err := b.readyTransport()
 	if err != nil {
-		return nil, err
+		return SessionPage{}, err
 	}
 	var result SessionListResult
-	if err := t.Request(ctx, MethodSessionList, SessionListParams{CWD: b.config.CWD}, &result); err != nil {
+	if err := t.Request(ctx, MethodSessionList, SessionListParams{CWD: b.config.CWD, Cursor: cursor}, &result); err != nil {
 		if isCWDNotInitError(err) {
-			// 工作目录尚未初始化（无 .alkaid0）时 agent 没有可恢复会话，
-			// 按空列表处理，避免首页因 -32099 报错而无法进入。
-			return nil, nil
+			return SessionPage{}, nil
 		}
-		return nil, err
+		return SessionPage{}, err
 	}
-	return result.Sessions, nil
+	return SessionPage{Sessions: result.Sessions, NextCursor: result.NextCursor}, nil
 }
 
 // isCWDNotInitError 判断 JSON-RPC error 是否为 alkaid0 在 cwd 未初始化
