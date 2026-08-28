@@ -275,14 +275,7 @@ func (a *App) sessionKey(ke input.KeyEvent) {
 			return
 		}
 	}
-	// 按 Esc 打断正在进行的 AI 响应。无论焦点在输入框还是消息区都生效；
-	// 会话空闲时不动作（避免误触清空输入或误退出）。
-	if ke.Type == input.KeyEsc {
-		if m.HasActive() && m.Active.Running() {
-			a.cancelCurrent()
-		}
-		return
-	}
+	// Shell panel owns Esc: fullscreen -> split panel -> session.
 	if m.ShellPanel {
 		switch ke.Type {
 		case input.KeyEsc:
@@ -306,10 +299,18 @@ func (a *App) sessionKey(ke input.KeyEvent) {
 			}
 			return
 		case input.KeyRune:
-			if ke.Rune == 'x' {
+			if ke.Rune == 'x' && !ke.IsCtrl() && !ke.IsAlt() {
 				a.killSelectedShell()
 				return
 			}
+		}
+		return
+	}
+	// 按 Esc 打断正在进行的 AI 响应。无论焦点在输入框还是消息区都生效；
+	// 会话空闲时不动作（避免误触清空输入或误退出）。
+	if ke.Type == input.KeyEsc {
+		if m.HasActive() && m.Active.Running() {
+			a.cancelCurrent()
 		}
 		return
 	}
