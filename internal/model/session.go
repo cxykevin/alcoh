@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/cxykevin/alcoh/internal/acp"
+	"github.com/cxykevin/alcoh/internal/term"
 )
 
 // MessageKind 是消息的类型。
@@ -93,11 +94,19 @@ func (tc *ToolCall) Running() bool {
 // TerminalState 保存 agent 广播的终端内容。输出有界，避免流式日志无限占用内存。
 type TerminalState struct {
 	ID         string
+	SessionID  string
+	Kind       string
 	Title      string
+	Command    string
 	Status     string
+	Reason     string
+	AgentID    string
+	ToolID     string
+	CreatedAt  string
 	Transcript string
 	Truncated  bool
 	Expanded   bool
+	Screen     *term.VTScreen
 }
 
 const maxTerminalTranscriptBytes = 32 << 10
@@ -120,8 +129,8 @@ type SessionState struct {
 	State      acp.SessionState
 	StopReason *acp.StopReason
 
-	Messages      []*Message
-	msgIndex      map[string]*Message
+	Messages []*Message
+	msgIndex map[string]*Message
 
 	ToolCalls map[string]*ToolCall
 	ToolOrder []string // 兼容旧逻辑；正文顺序改由 Timeline 决定。
@@ -138,6 +147,7 @@ type SessionState struct {
 	Timeline      []*TimelineItem
 	timelineIndex map[string]*TimelineItem
 	terminals     map[string]*TerminalState
+	terminalOrder []string
 
 	ProtocolUpdates []json.RawMessage
 	Scroll          int
@@ -415,26 +425,111 @@ func (s *SessionState) ApplyPlan(ev *acp.PlanUpdateEvent) {
 	item.Plan = s.Plan
 }
 
-// ApplyTerminal 添加或更新一个 agent 终端条目。
-func (s *SessionState) ApplyTerminal(id, title, status, output string) {
+// ApplyTerminal adds or updates a terminal using flat compatibility fields.
+func (s *SessionState) ApplyTerminal(id, title, command, status, output string) {
+	s.ApplyTerminalInfo(acp.TerminalInfo{TerminalID: id, Title: title, Command: command, Status: status, Content: output})
+}
+
+// ApplyTerminalInfo upserts metadata without erasing omitted fields.
+func (s *SessionState) ApplyTerminalInfo(info acp.TerminalInfo) {
+	id := info.TerminalID
 	if id == "" {
 		id = "session"
+		info.TerminalID = id
 	}
 	terminal, ok := s.terminals[id]
 	if !ok {
-		terminal = &TerminalState{ID: id, Title: title, Status: status, Expanded: true}
+		terminal = &TerminalState{ID: id, Expanded: true, Screen: term.NewVTScreen(80, 24)}
 		s.terminals[id] = terminal
+		s.terminalOrder = append(s.terminalOrder, id)
 		item := s.appendTimeline("terminal:"+id, TimelineTerminal)
 		item.Terminal = terminal
 	}
-	if title != "" {
-		terminal.Title = title
+	if info.SessionID != "" {
+		terminal.SessionID = info.SessionID
 	}
-	if status != "" {
-		terminal.Status = status
+	if info.Kind != "" {
+		terminal.Kind = info.Kind
 	}
-	terminal.Append(output)
+	if info.Title != "" {
+		terminal.Title = info.Title
+	}
+	if info.Command != "" {
+		terminal.Command = info.Command
+	}
+	if info.Status != "" {
+		terminal.Status = info.Status
+	}
+	if info.Reason != "" {
+		terminal.Reason = info.Reason
+	}
+	if info.AgentID != "" {
+		terminal.AgentID = info.AgentID
+	}
+	if info.ToolID != "" {
+		terminal.ToolID = info.ToolID
+	}
+	if info.CreatedAt != "" {
+		terminal.CreatedAt = info.CreatedAt
+	}
+	if info.Content != "" {
+		terminal.Transcript = info.Content
+		terminal.Truncated = false
+		if terminal.Screen != nil {
+			terminal.Screen.Reset()
+			terminal.Screen.Feed(info.Content)
+		}
+	}
 }
+
+// ReplaceTerminals applies the v0.5 full snapshot.
+func (s *SessionState) ReplaceTerminals(infos []acp.TerminalInfo) {
+	seen := make(map[string]bool, len(infos))
+	for _, info := range infos {
+		if info.TerminalID != "" {
+			seen[info.TerminalID] = true
+			old := s.terminals[info.TerminalID]
+			s.ApplyTerminalInfo(info)
+			if old != nil { /* snapshot content replaces prior transcript */
+			}
+		}
+	}
+	for id := range s.terminals {
+		if !seen[id] {
+			s.RemoveTerminal(id)
+		}
+	}
+}
+
+func (s *SessionState) RemoveTerminal(id string) {
+	delete(s.terminals, id)
+	for i, v := range s.terminalOrder {
+		if v == id {
+			s.terminalOrder = append(s.terminalOrder[:i], s.terminalOrder[i+1:]...)
+			break
+		}
+	}
+	delete(s.timelineIndex, "terminal:"+id)
+	for i, item := range s.Timeline {
+		if item.Key == "terminal:"+id {
+			s.Timeline = append(s.Timeline[:i], s.Timeline[i+1:]...)
+			break
+		}
+	}
+}
+
+// Terminals returns shells in stable creation order.
+func (s *SessionState) Terminals() []*TerminalState {
+	out := make([]*TerminalState, 0, len(s.terminalOrder))
+	for _, id := range s.terminalOrder {
+		if t := s.terminals[id]; t != nil {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+func (s *SessionState) Terminal(id string) *TerminalState { return s.terminals[id] }
 
 func (s *SessionState) Running() bool {
 	return s.State == acp.StateRunning || s.State == acp.StateRequiresAction

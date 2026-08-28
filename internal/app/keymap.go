@@ -228,6 +228,22 @@ func (a *App) homeKey(ke input.KeyEvent) {
 	}
 }
 
+func (a *App) killSelectedShell() {
+	s := a.model.SelectedShell()
+	if s == nil || a.sess == nil {
+		return
+	}
+	control, ok := a.sess.(acp.TerminalControl)
+	if !ok {
+		a.model.ShowError("alkaid0 v0.5 terminal control unavailable")
+		return
+	}
+	id := s.ID
+	a.startCommand(commandResult{kind: commandTerminalStop, sessionID: a.sess.ID(), terminalID: id}, func(ctx context.Context) (acp.Session, error) {
+		return nil, control.StopTerminal(ctx, id)
+	})
+}
+
 func (a *App) sessionKey(ke input.KeyEvent) {
 	m := a.model
 	if m.SlashOpen {
@@ -267,6 +283,36 @@ func (a *App) sessionKey(ke input.KeyEvent) {
 		}
 		return
 	}
+	if m.ShellPanel {
+		switch ke.Type {
+		case input.KeyEsc:
+			if m.ShellFullscreen {
+				m.ShellFullscreen = false
+			} else {
+				m.CloseShellPanel()
+			}
+			return
+		case input.KeyEnter:
+			m.ShellFullscreen = true
+			return
+		case input.KeyUp:
+			if m.ShellSelected > 0 {
+				m.ShellSelected--
+			}
+			return
+		case input.KeyDown:
+			if m.ShellSelected < len(m.Shells())-1 {
+				m.ShellSelected++
+			}
+			return
+		case input.KeyRune:
+			if ke.Rune == 'x' {
+				a.killSelectedShell()
+				return
+			}
+		}
+		return
+	}
 	if ke.Type == input.KeyTab {
 		m.Focus = model.FocusMessage - m.Focus
 		return
@@ -284,6 +330,10 @@ func (a *App) sessionKey(ke input.KeyEvent) {
 		} else {
 			m.ScrollDown(page)
 		}
+		return
+	}
+	if ke.Type == input.KeyDown && m.Input.HistPos < 0 && len(m.Shells()) > 0 {
+		m.OpenShellPanel()
 		return
 	}
 	if m.Focus == model.FocusMessage {

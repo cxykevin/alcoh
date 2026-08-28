@@ -78,4 +78,3 @@ func TestStatusBarModelShowsConfigFallback(t *testing.T) {
 		t.Errorf("status bar = %q, should not show placeholder 'model —' when config present", got)
 	}
 }
-

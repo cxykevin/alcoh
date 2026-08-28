@@ -3,8 +3,8 @@ package view
 import (
 	"strings"
 
-	"github.com/cxykevin/alcoh/internal/i18n"
 	"github.com/cxykevin/alcoh/internal/acp"
+	"github.com/cxykevin/alcoh/internal/i18n"
 	"github.com/cxykevin/alcoh/internal/model"
 	"github.com/cxykevin/alcoh/internal/renderer"
 	"github.com/cxykevin/alcoh/internal/widget"
@@ -34,8 +34,8 @@ type ToggleRef struct {
 
 type block struct {
 	lines    [][]Span
-	raw      string    // 块级原始内容（工具/终端/思考等，复制用，无渲染前缀）
-	srcLines []SrcLine // 行级插针：每渲染行对应的原始逻辑行文本（消息块）
+	raw      string     // 块级原始内容（工具/终端/思考等，复制用，无渲染前缀）
+	srcLines []SrcLine  // 行级插针：每渲染行对应的原始逻辑行文本（消息块）
 	toggle   *ToggleRef // 非 nil 时顶行可点击切换展开/折叠（思考/工具）
 }
 

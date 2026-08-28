@@ -344,6 +344,7 @@ func (a *App) applyCompressForModel(ctx context.Context, modelID string, compres
 	}
 	return a.backend.SetConfig(ctx, b)
 }
+
 // 模型键，再 config/set 写入并设为默认（后台 goroutine，结果经
 // applyCommandResult 的 commandConnectSubmit 回填）。
 func (a *App) submitConnectModel(picked provider.Model, tokenLimit, compressSize int) {

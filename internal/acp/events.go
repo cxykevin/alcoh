@@ -97,7 +97,12 @@ type TerminalUpdateEvent struct {
 	Title      string
 	Status     string
 	Output     string
-	Raw        json.RawMessage
+	UpdateType string
+	Terminals  []TerminalInfo
+	// Terminal carries metadata supplied by an incremental update.
+	Terminal TerminalInfo
+	Command  string
+	Raw      json.RawMessage
 }
 
 // AvailableCommand 是 agent 公布的 slash 命令。未识别字段保留在 Raw。

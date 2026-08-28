@@ -34,16 +34,16 @@ func TestConnectContentDraw(t *testing.T) {
 	}{
 		{"provider", &model.ConnectState{Step: model.ConnectStepProvider, ProviderSel: 1}, []string{"连接模型服务商", "OpenAI"}},
 		{"form-masked", &model.ConnectState{
-			Step:     model.ConnectStepForm,
-			BaseURL:  "https://api.deepseek.com/v1",
-			Key:      "sk-very-secret-key",
+			Step:      model.ConnectStepForm,
+			BaseURL:   "https://api.deepseek.com/v1",
+			Key:       "sk-very-secret-key",
 			FormFocus: 1,
 		}, []string{"base_url", "sk-v**************"}},
 		{"form-fetching", &model.ConnectState{Step: model.ConnectStepForm, Fetching: true}, []string{"正在获取模型列表"}},
 		{"select", &model.ConnectState{
-			Step:    model.ConnectStepSelect,
+			Step:     model.ConnectStepSelect,
 			ModelSel: 1,
-			Models:  []provider.Model{{ID: "deepseek-chat"}, {ID: "deepseek-reasoner", Name: "DeepSeek Reasoner", TokenLimit: 65536}},
+			Models:   []provider.Model{{ID: "deepseek-chat"}, {ID: "deepseek-reasoner", Name: "DeepSeek Reasoner", TokenLimit: 65536}},
 		}, []string{"deepseek-reasoner", "65536"}},
 		{"done", &model.ConnectState{Step: model.ConnectStepDone, Result: "模型已添加并设为默认模型"}, []string{"模型已添加并设为默认模型", "Enter / Esc 关闭"}},
 	}

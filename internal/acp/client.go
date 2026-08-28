@@ -547,6 +547,48 @@ func (s *clientSession) Cancel(ctx context.Context) error {
 // Close 只丢弃 UI 侧句柄。ACP v2 目前没有对应的 session-close RPC，因此不发任何请求。
 func (s *clientSession) Close(context.Context) error { return nil }
 
+func (s *clientSession) ListTerminals(ctx context.Context) ([]TerminalInfo, error) {
+	if !s.backend.AgentCapabilities().Has(Alkaid0CapabilityV05) {
+		return nil, errors.New("alkaid0 v0.5 terminal protocol is not supported")
+	}
+	t, err := s.backend.readyTransport()
+	if err != nil {
+		return nil, err
+	}
+	var result TerminalListResult
+	if err := t.Request(ctx, MethodTerminalList, TerminalListParams{SessionID: s.id}, &result); err != nil {
+		return nil, err
+	}
+	return result.Terminals, nil
+}
+
+func (s *clientSession) TerminalStatus(ctx context.Context, id string) (TerminalInfo, error) {
+	if !s.backend.AgentCapabilities().Has(Alkaid0CapabilityV05) {
+		return TerminalInfo{}, errors.New("alkaid0 v0.5 terminal protocol is not supported")
+	}
+	t, err := s.backend.readyTransport()
+	if err != nil {
+		return TerminalInfo{}, err
+	}
+	var result TerminalStatusResult
+	if err := t.Request(ctx, MethodTerminalStatus, TerminalStatusParams{SessionID: s.id, TerminalID: id}, &result); err != nil {
+		return TerminalInfo{}, err
+	}
+	return result.Terminal, nil
+}
+
+func (s *clientSession) StopTerminal(ctx context.Context, id string) error {
+	if !s.backend.AgentCapabilities().Has(Alkaid0CapabilityV05) {
+		return errors.New("alkaid0 v0.5 terminal protocol is not supported")
+	}
+	t, err := s.backend.readyTransport()
+	if err != nil {
+		return err
+	}
+	var result TerminalStopResult
+	return t.Request(ctx, MethodTerminalStop, TerminalStopParams{SessionID: s.id, TerminalID: id}, &result)
+}
+
 func (s *clientSession) SetConfigOption(ctx context.Context, configID, configType, value string) error {
 	if configID == "" || value == "" {
 		return errors.New("ACP set config option requires configId and value")

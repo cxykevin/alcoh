@@ -6,31 +6,36 @@ import (
 )
 
 const (
-	MethodInitialize           = "initialize"
-	MethodInitialized          = "initialized"
-	MethodSessionList          = "session/list"
-	MethodSessionNew           = "session/new"
-	MethodSessionResume        = "session/resume"
-	MethodSessionPrompt        = "session/prompt"
-	MethodSessionCancel        = "session/cancel"
-	MethodSessionUpdate        = "session/update"
-	MethodSessionSetConfig     = "session/set_config_option"
-	MethodSessionDelete        = "session/delete"
-	MethodRequestPermission    = "session/request_permission"
-	MethodElicitationCreate    = "elicitation/create"
-	MethodElicitationComplete  = "elicitation/complete"
+	MethodInitialize          = "initialize"
+	MethodInitialized         = "initialized"
+	MethodSessionList         = "session/list"
+	MethodSessionNew          = "session/new"
+	MethodSessionResume       = "session/resume"
+	MethodSessionPrompt       = "session/prompt"
+	MethodSessionCancel       = "session/cancel"
+	MethodSessionUpdate       = "session/update"
+	MethodSessionSetConfig    = "session/set_config_option"
+	MethodSessionDelete       = "session/delete"
+	MethodRequestPermission   = "session/request_permission"
+	MethodElicitationCreate   = "elicitation/create"
+	MethodElicitationComplete = "elicitation/complete"
 
 	// Alkaid0CapabilityV04 是 alkaid0 扩展协议版本能力标记。服务端在 initialize
 	// 的 capabilities 中声明该键才表示支持 alkaid0 扩展方法（如 config/get、config/set）。
 	// 见 docs/acp/extension.md。
 	Alkaid0CapabilityV04 = "alk.cxykevin.top/alkaid0/v0.4"
+	// Alkaid0CapabilityV05 gates the private terminal protocol.
+	Alkaid0CapabilityV05 = "alk.cxykevin.top/alkaid0/v0.5"
 
 	// MethodConfigGet 是 alkaid0 扩展方法：获取完整服务端配置。见 docs/acp/extension.md。
 	MethodConfigGet = "alk.cxykevin.top/config/get"
 
 	// MethodConfigSet 是 alkaid0 扩展方法：部分更新服务端配置并自动持久化。
 	// 见 docs/acp/extension.md。
-	MethodConfigSet = "alk.cxykevin.top/config/set"
+	MethodConfigSet      = "alk.cxykevin.top/config/set"
+	MethodTerminalList   = "alk.cxykevin.top/session/terminal/list"
+	MethodTerminalStatus = "alk.cxykevin.top/session/terminal/status"
+	MethodTerminalStop   = "alk.cxykevin.top/session/terminal/stop"
 )
 
 // ConfigGetResult 是 alk.cxykevin.top/config/get 的响应。Config 为完整的
@@ -60,10 +65,10 @@ type AgentInfo struct {
 
 // ClientCapabilities 表示本客户端实际实现的可选能力。保留 Raw 供 schema 升级。
 type ClientCapabilities struct {
-	FileSystem  *json.RawMessage     `json:"fs,omitempty"`
-	Terminal    *json.RawMessage     `json:"terminal,omitempty"`
+	FileSystem  *json.RawMessage       `json:"fs,omitempty"`
+	Terminal    *json.RawMessage       `json:"terminal,omitempty"`
 	Elicitation *ElicitationCapability `json:"elicitation,omitempty"`
-	Raw         json.RawMessage      `json:"-"`
+	Raw         json.RawMessage        `json:"-"`
 }
 
 // ElicitationCapability 表示客户端支持的 elicitation 模式。
@@ -268,6 +273,39 @@ type SessionDeleteParams struct {
 	SessionID string `json:"sessionId"`
 }
 
+// TerminalListParams 是 alkaid0 v0.5 terminal/list request 参数。
+type TerminalListParams struct {
+	SessionID string `json:"sessionId"`
+}
+
+// TerminalListResult 是 terminal/list response。
+type TerminalListResult struct {
+	Terminals []TerminalInfo `json:"terminals"`
+}
+
+// TerminalStatusParams 是 alkaid0 v0.5 terminal/status request 参数。
+type TerminalStatusParams struct {
+	SessionID  string `json:"sessionId"`
+	TerminalID string `json:"terminalId"`
+}
+
+// TerminalStatusResult 是 terminal/status response。
+type TerminalStatusResult struct {
+	Terminal TerminalInfo `json:"terminal"`
+}
+
+// TerminalStopParams 是 alkaid0 v0.5 terminal/stop request 参数。
+type TerminalStopParams struct {
+	SessionID  string `json:"sessionId"`
+	TerminalID string `json:"terminalId"`
+}
+
+// TerminalStopResult 是 terminal/stop response。
+type TerminalStopResult struct {
+	TerminalID string `json:"terminalId,omitempty"`
+	Status     string `json:"status,omitempty"`
+}
+
 // ElicitationMode 是 elicitation 的模式。
 type ElicitationMode string
 
@@ -292,8 +330,8 @@ type ElicitationCreateParams struct {
 	RequestID     *int            `json:"requestId,omitempty"`
 	Mode          ElicitationMode `json:"mode"`
 	Message       string          `json:"message"`
-	ElicitationID string          `json:"elicitationId,omitempty"` // URL 模式必需
-	URL           string          `json:"url,omitempty"`            // URL 模式必需
+	ElicitationID string          `json:"elicitationId,omitempty"`   // URL 模式必需
+	URL           string          `json:"url,omitempty"`             // URL 模式必需
 	Schema        json.RawMessage `json:"requestedSchema,omitempty"` // Form 模式必需
 }
 

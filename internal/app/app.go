@@ -105,18 +105,20 @@ const (
 	commandConfigSet
 	commandConnectFetch
 	commandConnectSubmit
+	commandTerminalStop
 )
 
 type commandResult struct {
-	kind      commandKind
-	session   acp.Session
-	sessionID string
-	opID      uint64
-	config    json.RawMessage
-	page      *sessionPageResult
-	cfgSeq    uint64 // config/get 请求序号，用于丢弃乱序晚回的旧结果
-	models    []provider.Model
-	err       error
+	kind       commandKind
+	session    acp.Session
+	sessionID  string
+	opID       uint64
+	config     json.RawMessage
+	page       *sessionPageResult
+	cfgSeq     uint64 // config/get 请求序号，用于丢弃乱序晚回的旧结果
+	models     []provider.Model
+	terminalID string
+	err        error
 }
 
 type sessionPageResult struct {
@@ -664,6 +666,14 @@ func (a *App) applyCommandResult(result commandResult) {
 		if p.appendPage {
 			a.maybeLoadMoreSessions()
 		}
+		return
+	}
+	if result.kind == commandTerminalStop {
+		if result.err != nil {
+			a.model.ShowError(i18n.T("终端停止失败: %s", result.err.Error()))
+			return
+		}
+		a.model.ShowInfo("终端停止请求已发送")
 		return
 	}
 	if result.kind == commandSessionDelete {
