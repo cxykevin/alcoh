@@ -21,7 +21,11 @@ func (p *ShellPanel) Draw(c *renderer.Canvas, r renderer.Rect, m *model.AppModel
 		m.ShellSelected = len(xs) - 1
 	}
 	if m.ShellFullscreen {
-		p.preview(c, r, xs[m.ShellSelected])
+		box := r
+		if box.H > 0 {
+			box.H-- // Keep the footer outside the preview border.
+		}
+		p.drawPreviewBox(c, box, xs[m.ShellSelected])
 		p.footer(c, r)
 		return
 	}
@@ -66,13 +70,34 @@ func (p *ShellPanel) Draw(c *renderer.Canvas, r renderer.Rect, m *model.AppModel
 		c.PutText(r.X+1, y, prefix+renderer.Truncate(title, maxTitle), st)
 	}
 	if showPreview && right > 1 {
-		for y := r.Y; y < r.Y+r.H; y++ {
-			c.Put(r.X+left, y, renderer.CellRune('│', p.Theme.Style(p.Theme.BorderSubtle)))
+		previewBox := renderer.NewRect(r.X+left+1, r.Y, right-1, r.H)
+		if previewBox.H > 0 {
+			previewBox.H-- // Keep the footer outside the preview border.
 		}
-		p.preview(c, renderer.NewRect(r.X+left+1, r.Y, right-1, r.H), xs[m.ShellSelected])
+		p.drawPreviewBox(c, previewBox, xs[m.ShellSelected])
 	}
 	p.footer(c, r)
 }
+func (p *ShellPanel) drawPreviewBox(c *renderer.Canvas, r renderer.Rect, s *model.TerminalState) {
+	if r.W < 2 || r.H < 2 {
+		return
+	}
+	style := p.Theme.Style(p.Theme.BorderSubtle)
+	for x := r.X + 1; x < r.X+r.W-1; x++ {
+		c.Put(x, r.Y, renderer.CellRune('─', style))
+		c.Put(x, r.Y+r.H-1, renderer.CellRune('─', style))
+	}
+	c.Put(r.X, r.Y, renderer.CellRune('┌', style))
+	c.Put(r.X+r.W-1, r.Y, renderer.CellRune('┐', style))
+	c.Put(r.X, r.Y+r.H-1, renderer.CellRune('└', style))
+	c.Put(r.X+r.W-1, r.Y+r.H-1, renderer.CellRune('┘', style))
+	for y := r.Y + 1; y < r.Y+r.H-1; y++ {
+		c.Put(r.X, y, renderer.CellRune('│', style))
+		c.Put(r.X+r.W-1, y, renderer.CellRune('│', style))
+	}
+	p.preview(c, renderer.NewRect(r.X+1, r.Y+1, r.W-2, r.H-2), s)
+}
+
 func (p *ShellPanel) preview(c *renderer.Canvas, r renderer.Rect, s *model.TerminalState) {
 	if s == nil {
 		return
