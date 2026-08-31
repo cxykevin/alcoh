@@ -139,7 +139,8 @@ type AppModel struct {
 	// Connect 是 /connect 向导状态（见 connect.go）。nil 表示不在向导中。
 	Connect *ConnectState
 
-	Selection *Selection
+	Selection      *Selection
+	ShellSelection *Selection
 
 	// pendingSessionEvents 缓存会话未激活时到达的初始事件。agent（如 alkaid0）在
 	// session/new 响应返回前就会广播 available_commands_update / config_option_update

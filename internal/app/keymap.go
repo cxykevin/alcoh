@@ -989,6 +989,12 @@ func (a *App) messageKey(ke input.KeyEvent) {
 //   - 左键：按下/拖拽/释放，维护框选（非模态时），Ctrl+C 复制；
 //   - 滚轮：会话视图滚动消息区，首页滚动会话列表，权限/设置模态切换选项。
 func (a *App) dispatchMouse(me input.MouseEvent) {
+	// Shell preview uses the same drag-selection and Ctrl+C clipboard path as
+	// the message body, but stores its own selection and screen coordinates.
+	if me.Button == input.MouseLeft && a.model.ShellPanel && a.model.Modal == model.NoModal && a.view.ShellPreviewRect.W > 0 {
+		a.handleShellSelect(me)
+		return
+	}
 	// 左键用于文本选择；选择不依赖鼠标位置（所见即所得整屏框选）。
 	if me.Button == input.MouseLeft {
 		a.handleSelect(me)
@@ -1176,6 +1182,18 @@ func (a *App) clickBodyToggle(x, y int, rect renderer.Rect) bool {
 // 无选择或提取为空时返回空串（调用方继续其它 Ctrl+C 语义）。
 func (a *App) copySelection() string {
 	m := a.model
+	if m.ShellSelection != nil {
+		text := a.shellSelectionText(m.ShellSelection)
+		m.ShellSelection = nil
+		if text != "" {
+			if err := a.term.CopyToClipboard(text); err != nil {
+				m.ShowError(i18n.T("复制失败: %s", err.Error()))
+			} else {
+				m.ShowInfo(i18n.T("已复制 %d 个字符", len([]rune(text))))
+			}
+		}
+		return text
+	}
 	if m.Selection == nil {
 		return ""
 	}
@@ -1191,6 +1209,67 @@ func (a *App) copySelection() string {
 	}
 	m.ShowInfo(i18n.T("已复制 %d 个字符", len([]rune(text))))
 	return text
+}
+
+func (a *App) handleShellSelect(me input.MouseEvent) {
+	m := a.model
+	r := a.view.ShellPreviewRect
+	if me.Action == input.MousePress {
+		if me.X >= r.X && me.X < r.X+r.W && me.Y >= r.Y && me.Y < r.Y+r.H {
+			m.ShellSelection = &model.Selection{AnchorX: me.X, AnchorY: me.Y, CurX: me.X, CurY: me.Y}
+		} else {
+			m.ShellSelection = nil
+		}
+	} else if me.Action == input.MouseMove && m.ShellSelection != nil {
+		m.ShellSelection.CurX, m.ShellSelection.CurY = me.X, me.Y
+	} else if me.Action == input.MouseRelease && m.ShellSelection != nil && m.ShellSelection.AnchorX == m.ShellSelection.CurX && m.ShellSelection.AnchorY == m.ShellSelection.CurY {
+		m.ShellSelection = nil
+	}
+}
+
+func (a *App) shellSelectionText(sel *model.Selection) string {
+	s := a.model.SelectedShell()
+	if s == nil {
+		return ""
+	}
+	lines := []string{s.Transcript}
+	if s.Screen != nil {
+		lines = s.Screen.Lines()
+	}
+	r := a.view.ShellPreviewRect
+	y1, y2 := sel.AnchorY, sel.CurY
+	if y1 > y2 {
+		y1, y2 = y2, y1
+	}
+	var out strings.Builder
+	for y := y1; y <= y2; y++ {
+		idx := y - r.Y - 1
+		if idx < 0 || idx >= len(lines) {
+			continue
+		}
+		line := lines[idx]
+		if y == sel.AnchorY && y == sel.CurY {
+			lo, hi := sel.AnchorX-r.X-1, sel.CurX-r.X-1
+			if lo > hi {
+				lo, hi = hi, lo
+			}
+			runes := []rune(line)
+			if lo < 0 {
+				lo = 0
+			}
+			if hi >= len(runes) {
+				hi = len(runes) - 1
+			}
+			if lo <= hi {
+				line = string(runes[lo : hi+1])
+			}
+		}
+		if out.Len() > 0 {
+			out.WriteByte('\n')
+		}
+		out.WriteString(strings.TrimRight(line, " "))
+	}
+	return out.String()
 }
 
 // lineSelectionBounds 计算行选择下第 y 行覆盖的列区间 [lo, hi]。

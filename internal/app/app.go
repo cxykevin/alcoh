@@ -796,6 +796,7 @@ func (a *App) render() {
 	a.view.SpinFrame = a.spinFrame
 	a.view.Draw(canvas, renderer.NewRect(0, 0, w, h), a.model)
 	a.applySelection(a.back)
+	a.applyShellSelection(a.back)
 
 	// 统一 diff：首帧时 front 是哨兵，等价于"从全空屏幕"开始 → 整屏输出；
 	// 之后 front 是上一帧，增量输出。
@@ -836,6 +837,51 @@ func (a *App) applySelection(buf *renderer.Buffer) {
 		lo, hi := lineSelectionBounds(buf, sel, y)
 		if lo > hi {
 			continue
+		}
+		for x := lo; x <= hi; x++ {
+			if i := buf.Index(x, y); i >= 0 {
+				buf.Cells[i].Style = buf.Cells[i].Style.WithReverse(true)
+			}
+		}
+	}
+}
+
+// applyShellSelection highlights the VT preview selection independently from message selection.
+func (a *App) applyShellSelection(buf *renderer.Buffer) {
+	sel := a.model.ShellSelection
+	if sel == nil {
+		return
+	}
+	r := a.view.ShellPreviewRect
+	y1, y2 := sel.AnchorY, sel.CurY
+	if y1 > y2 {
+		y1, y2 = y2, y1
+	}
+	for y := y1; y <= y2; y++ {
+		lo, hi := 0, buf.W-1
+		if y == sel.AnchorY && y == sel.CurY {
+			lo, hi = sel.AnchorX, sel.CurX
+			if lo > hi {
+				lo, hi = hi, lo
+			}
+		}
+		if y == y1 && y1 != y2 {
+			lo = sel.AnchorX
+			if sel.AnchorY > sel.CurY {
+				lo = 0
+			}
+		}
+		if y == y2 && y1 != y2 {
+			hi = sel.CurX
+			if sel.AnchorY > sel.CurY {
+				hi = buf.W - 1
+			}
+		}
+		if lo < r.X {
+			lo = r.X
+		}
+		if hi >= r.X+r.W {
+			hi = r.X + r.W - 1
 		}
 		for x := lo; x <= hi; x++ {
 			if i := buf.Index(x, y); i >= 0 {

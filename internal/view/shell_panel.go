@@ -7,7 +7,10 @@ import (
 )
 
 // ShellPanel renders the live shell list and selected VT preview.
-type ShellPanel struct{ Theme renderer.Theme }
+type ShellPanel struct {
+	Theme       renderer.Theme
+	PreviewRect renderer.Rect
+}
 
 func (p *ShellPanel) Draw(c *renderer.Canvas, r renderer.Rect, m *model.AppModel) {
 	xs := m.Shells()
@@ -25,6 +28,7 @@ func (p *ShellPanel) Draw(c *renderer.Canvas, r renderer.Rect, m *model.AppModel
 		if box.H > 0 {
 			box.H-- // Keep the footer outside the preview border.
 		}
+		p.PreviewRect = box
 		p.drawPreviewBox(c, box, xs[m.ShellSelected])
 		p.footer(c, r)
 		return
@@ -74,6 +78,7 @@ func (p *ShellPanel) Draw(c *renderer.Canvas, r renderer.Rect, m *model.AppModel
 		if previewBox.H > 0 {
 			previewBox.H-- // Keep the footer outside the preview border.
 		}
+		p.PreviewRect = previewBox
 		p.drawPreviewBox(c, previewBox, xs[m.ShellSelected])
 	}
 	p.footer(c, r)

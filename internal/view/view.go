@@ -25,6 +25,8 @@ type AppView struct {
 	// BodyToggles 记录最近一帧可点击切换展开/折叠的正文行（contentY → 目标，
 	// 思考/工具标题行）。鼠标左键命中时展开/折叠对应单项。
 	BodyToggles map[int]ToggleRef
+	// ShellPreviewRect records the screen area containing the terminal preview.
+	ShellPreviewRect renderer.Rect
 }
 
 // NewAppView 创建视图。
@@ -355,7 +357,9 @@ func (v *AppView) drawSession(c *renderer.Canvas, r renderer.Rect, m *model.AppM
 
 	// 弹窗接管输入框和状态栏；主体只绘制消息与固定计划面板。
 	if m.ShellPanel && m.Modal == model.NoModal {
-		(&ShellPanel{Theme: v.Theme}).Draw(c, r, m)
+		p := &ShellPanel{Theme: v.Theme}
+		p.Draw(c, r, m)
+		v.ShellPreviewRect = p.PreviewRect
 		return
 	}
 	if m.Modal != model.NoModal {
