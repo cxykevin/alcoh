@@ -25,11 +25,17 @@ func (p *ShellPanel) Draw(c *renderer.Canvas, r renderer.Rect, m *model.AppModel
 		p.footer(c, r)
 		return
 	}
+	// A narrow terminal cannot present a useful 40% preview; give the
+	// command list the full width instead.
+	showPreview := r.W >= 60
 	left := r.W * 3 / 5
+	if !showPreview {
+		left = r.W
+	}
 	if left < 1 {
 		left = 1
 	}
-	if left >= r.W {
+	if left >= r.W && r.W > 1 {
 		left = r.W - 1
 	}
 	right := r.W - left
@@ -53,12 +59,18 @@ func (p *ShellPanel) Draw(c *renderer.Canvas, r renderer.Rect, m *model.AppModel
 		if s.Command != "" {
 			title = s.Command
 		}
-		c.PutText(r.X+1, y, prefix+renderer.Truncate(title, left-3), st)
+		maxTitle := left - 3
+		if maxTitle < 1 {
+			maxTitle = 1
+		}
+		c.PutText(r.X+1, y, prefix+renderer.Truncate(title, maxTitle), st)
 	}
-	for y := r.Y; y < r.Y+r.H; y++ {
-		c.Put(r.X+left, y, renderer.CellRune('│', p.Theme.Style(p.Theme.BorderSubtle)))
+	if showPreview && right > 1 {
+		for y := r.Y; y < r.Y+r.H; y++ {
+			c.Put(r.X+left, y, renderer.CellRune('│', p.Theme.Style(p.Theme.BorderSubtle)))
+		}
+		p.preview(c, renderer.NewRect(r.X+left+1, r.Y, right-1, r.H), xs[m.ShellSelected])
 	}
-	p.preview(c, renderer.NewRect(r.X+left+1, r.Y, right-1, r.H), xs[m.ShellSelected])
 	p.footer(c, r)
 }
 func (p *ShellPanel) preview(c *renderer.Canvas, r renderer.Rect, s *model.TerminalState) {
