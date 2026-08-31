@@ -952,6 +952,12 @@ func (m *AppModel) ApplyEvent(ev acp.Event) {
 			m.Active.applyAgentConfig(e.Options)
 			m.Active.ProtocolUpdates = appendProtocolUpdate(m.Active.ProtocolUpdates, e.Raw)
 		}
+	case *acp.ShellStopEvent:
+		if m.SupportsAlkaid0V05() && m.HasActive() && e.SessionID == m.Active.ID {
+			if e.TerminalID != "" {
+				m.Active.RemoveTerminal(e.TerminalID)
+			}
+		}
 	case *acp.TerminalUpdateEvent:
 		if m.SupportsAlkaid0V05() && m.HasActive() && e.SessionID == m.Active.ID {
 			if e.UpdateType == "full" || e.UpdateType == "snapshot" {
@@ -1087,6 +1093,8 @@ func eventSessionID(ev acp.Event) string {
 	case *acp.ConfigOptionUpdateEvent:
 		return e.SessionID
 	case *acp.TerminalUpdateEvent:
+		return e.SessionID
+	case *acp.ShellStopEvent:
 		return e.SessionID
 	case *acp.UnknownSessionUpdateEvent:
 		return e.SessionID

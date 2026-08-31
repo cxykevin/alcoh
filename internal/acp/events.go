@@ -105,6 +105,19 @@ type TerminalUpdateEvent struct {
 	Raw      json.RawMessage
 }
 
+// ShellStopEvent is the alkaid0 v0.5 notification emitted when a background shell exits.
+// It is metadata only and must not become a user-visible conversation message.
+type ShellStopEvent struct {
+	SessionID  string
+	RunID      string
+	TerminalID string
+	Command    string
+	Status     string
+	Success    bool
+	Killed     bool
+	Raw        json.RawMessage
+}
+
 // AvailableCommand 是 agent 公布的 slash 命令。未识别字段保留在 Raw。
 type AvailableCommand struct {
 	Name        string          `json:"name"`
@@ -166,6 +179,7 @@ type ElicitationRequestEvent struct {
 
 func (*UnknownSessionUpdateEvent) isEvent() {}
 func (*TerminalUpdateEvent) isEvent()       {}
+func (*ShellStopEvent) isEvent()            {}
 func (*CommandsUpdateEvent) isEvent()       {}
 func (*ConfigOptionUpdateEvent) isEvent()   {}
 func (*SessionInfoUpdateEvent) isEvent()    {}

@@ -121,6 +121,19 @@ func DecodeSessionUpdatePayload(sessionID string, raw json.RawMessage) (Event, e
 			return nil, err
 		}
 		return &UsageUpdateEvent{SessionID: sessionID, Used: update.Used, Size: update.Size, Cost: update.Cost}, nil
+	case "alk.cxykevin.top/shell_stop":
+		var update struct {
+			RunID      string `json:"runId"`
+			TerminalID string `json:"terminalId"`
+			Command    string `json:"command"`
+			Status     string `json:"status"`
+			Success    bool   `json:"success"`
+			Killed     bool   `json:"killed"`
+		}
+		if err := json.Unmarshal(raw, &update); err != nil {
+			return nil, err
+		}
+		return &ShellStopEvent{SessionID: sessionID, RunID: update.RunID, TerminalID: update.TerminalID, Command: update.Command, Status: update.Status, Success: update.Success, Killed: update.Killed, Raw: append(json.RawMessage(nil), raw...)}, nil
 	case "alk.cxykevin.top/terminal_update":
 		var update struct {
 			UpdateType string         `json:"updateType"`

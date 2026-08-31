@@ -215,6 +215,17 @@ func TestAlkaid0V05TerminalUpdateDecodesOnlyNamespacedVariant(t *testing.T) {
 	}
 }
 
+func TestAlkaid0V05ShellStopDecodes(t *testing.T) {
+	ev, err := DecodeSessionUpdatePayload("s1", json.RawMessage(`{"sessionUpdate":"alk.cxykevin.top/shell_stop","runId":"r1","terminalId":"t1","command":"npm test","status":"stop","success":true,"killed":false}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stop, ok := ev.(*ShellStopEvent)
+	if !ok || stop.RunID != "r1" || stop.TerminalID != "t1" || stop.Command != "npm test" || stop.Status != "stop" || !stop.Success || stop.Killed {
+		t.Fatalf("shell stop event = %#v", ev)
+	}
+}
+
 func TestAlkaid0V05TerminalRPCParamsMarshal(t *testing.T) {
 	b, err := json.Marshal(TerminalStatusParams{SessionID: "s1", TerminalID: "t1"})
 	if err != nil {
