@@ -121,15 +121,33 @@ func DecodeSessionUpdatePayload(sessionID string, raw json.RawMessage) (Event, e
 			return nil, err
 		}
 		return &UsageUpdateEvent{SessionID: sessionID, Used: update.Used, Size: update.Size, Cost: update.Cost}, nil
-	case "terminal_update", "terminal_output_chunk":
+	case "alk.cxykevin.top/shell_stop":
 		var update struct {
+			RunID      string `json:"runId"`
 			TerminalID string `json:"terminalId"`
-			ID         string `json:"id"`
-			Title      string `json:"title"`
+			Command    string `json:"command"`
 			Status     string `json:"status"`
-			Output     string `json:"output"`
-			Chunk      string `json:"chunk"`
-			Text       string `json:"text"`
+			Success    bool   `json:"success"`
+			Killed     bool   `json:"killed"`
+		}
+		if err := json.Unmarshal(raw, &update); err != nil {
+			return nil, err
+		}
+		return &ShellStopEvent{SessionID: sessionID, RunID: update.RunID, TerminalID: update.TerminalID, Command: update.Command, Status: update.Status, Success: update.Success, Killed: update.Killed, Raw: append(json.RawMessage(nil), raw...)}, nil
+	case "alk.cxykevin.top/terminal_update":
+		var update struct {
+			UpdateType string         `json:"updateType"`
+			Terminals  []TerminalInfo `json:"terminals"`
+			Terminal   TerminalInfo   `json:"terminal"`
+			TerminalID string         `json:"terminalId"`
+			ID         string         `json:"id"`
+			Title      string         `json:"title"`
+			Command    string         `json:"command"`
+			Status     string         `json:"status"`
+			Content    string         `json:"content"`
+			Output     string         `json:"output"`
+			Chunk      string         `json:"chunk"`
+			Text       string         `json:"text"`
 		}
 		if err := json.Unmarshal(raw, &update); err != nil {
 			return nil, err
@@ -137,14 +155,35 @@ func DecodeSessionUpdatePayload(sessionID string, raw json.RawMessage) (Event, e
 		if update.TerminalID == "" {
 			update.TerminalID = update.ID
 		}
-		output := update.Output
+		output := update.Content
+		if output == "" {
+			output = update.Output
+		}
 		if output == "" {
 			output = update.Chunk
 		}
 		if output == "" {
 			output = update.Text
 		}
-		return &TerminalUpdateEvent{SessionID: sessionID, TerminalID: update.TerminalID, Title: update.Title, Status: update.Status, Output: output, Raw: append(json.RawMessage(nil), raw...)}, nil
+		if update.Terminal.TerminalID == "" {
+			update.Terminal.TerminalID = update.TerminalID
+		}
+		if update.Terminal.TerminalID == "" {
+			update.Terminal.TerminalID = update.ID
+		}
+		if update.TerminalID == "" {
+			update.TerminalID = update.Terminal.TerminalID
+		}
+		if update.TerminalID == "" {
+			update.TerminalID = update.ID
+		}
+		if update.Terminal.Command == "" {
+			update.Terminal.Command = update.Command
+		}
+		if update.Terminal.Status == "" {
+			update.Terminal.Status = update.Status
+		}
+		return &TerminalUpdateEvent{SessionID: sessionID, TerminalID: update.TerminalID, Title: update.Title, Command: update.Command, Status: update.Status, Output: output, UpdateType: update.UpdateType, Terminals: update.Terminals, Terminal: update.Terminal, Raw: append(json.RawMessage(nil), raw...)}, nil
 	case "available_commands_update":
 		var update struct {
 			AvailableCommands json.RawMessage `json:"availableCommands"`

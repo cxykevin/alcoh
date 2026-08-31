@@ -67,18 +67,18 @@ func TestElicitationQueue(t *testing.T) {
 	m.Active = NewSession("sess1", "测试会话")
 
 	req1 := acp.ElicitationCreateParams{
-		SessionID: "sess1",
-		Mode:      acp.ElicitationModeURL,
-		Message:   "请求1",
-		URL:       "https://example.com",
+		SessionID:     "sess1",
+		Mode:          acp.ElicitationModeURL,
+		Message:       "请求1",
+		URL:           "https://example.com",
 		ElicitationID: "elicit1",
 	}
 
 	req2 := acp.ElicitationCreateParams{
-		SessionID: "sess1",
-		Mode:      acp.ElicitationModeURL,
-		Message:   "请求2",
-		URL:       "https://example.com/2",
+		SessionID:     "sess1",
+		Mode:          acp.ElicitationModeURL,
+		Message:       "请求2",
+		URL:           "https://example.com/2",
 		ElicitationID: "elicit2",
 	}
 
@@ -114,10 +114,10 @@ func TestElicitationStateIdle(t *testing.T) {
 	m.View = ViewSession // 确保在会话视图
 
 	req := acp.ElicitationCreateParams{
-		SessionID: "sess1",
-		Mode:      acp.ElicitationModeURL,
-		Message:   "请求",
-		URL:       "https://example.com",
+		SessionID:     "sess1",
+		Mode:          acp.ElicitationModeURL,
+		Message:       "请求",
+		URL:           "https://example.com",
 		ElicitationID: "elicit1",
 	}
 

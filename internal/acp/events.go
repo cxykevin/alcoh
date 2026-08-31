@@ -97,6 +97,24 @@ type TerminalUpdateEvent struct {
 	Title      string
 	Status     string
 	Output     string
+	UpdateType string
+	Terminals  []TerminalInfo
+	// Terminal carries metadata supplied by an incremental update.
+	Terminal TerminalInfo
+	Command  string
+	Raw      json.RawMessage
+}
+
+// ShellStopEvent is the alkaid0 v0.5 notification emitted when a background shell exits.
+// It is metadata only and must not become a user-visible conversation message.
+type ShellStopEvent struct {
+	SessionID  string
+	RunID      string
+	TerminalID string
+	Command    string
+	Status     string
+	Success    bool
+	Killed     bool
 	Raw        json.RawMessage
 }
 
@@ -161,6 +179,7 @@ type ElicitationRequestEvent struct {
 
 func (*UnknownSessionUpdateEvent) isEvent() {}
 func (*TerminalUpdateEvent) isEvent()       {}
+func (*ShellStopEvent) isEvent()            {}
 func (*CommandsUpdateEvent) isEvent()       {}
 func (*ConfigOptionUpdateEvent) isEvent()   {}
 func (*SessionInfoUpdateEvent) isEvent()    {}

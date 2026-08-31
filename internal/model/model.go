@@ -68,8 +68,8 @@ const (
 
 // AppModel 是 TUI 的顶层状态。纯状态机：只通过 ApplyEvent 与领域方法改变。
 type AppModel struct {
-	View     ViewMode
-	Active   *SessionState
+	View   ViewMode
+	Active *SessionState
 	// PreSession 是进入主页时预创建的会话（未激活）。它不进入会话视图，只承载
 	// agent 在 session/new 后广播的 config（thought_level / model），使 /effort 与
 	// /model 在主页命令面板可用。用户恢复旧会话、新建会话或程序退出时，由 app
@@ -82,6 +82,9 @@ type AppModel struct {
 	// 按左键时置为 true（列表全屏显示并聚焦）。宽度不足时列表隐藏。
 	HomeListFocused bool
 	Focus           Focus
+	ShellPanel      bool
+	ShellFullscreen bool
+	ShellSelected   int
 
 	Modal           ModalKind
 	Permission      *acp.PermissionRequest
@@ -136,7 +139,8 @@ type AppModel struct {
 	// Connect 是 /connect 向导状态（见 connect.go）。nil 表示不在向导中。
 	Connect *ConnectState
 
-	Selection *Selection
+	Selection      *Selection
+	ShellSelection *Selection
 
 	// pendingSessionEvents 缓存会话未激活时到达的初始事件。agent（如 alkaid0）在
 	// session/new 响应返回前就会广播 available_commands_update / config_option_update
@@ -557,6 +561,11 @@ func (m *AppModel) SupportsAlkaid0() bool {
 	return m.AgentCaps.Has(acp.Alkaid0CapabilityV04)
 }
 
+// SupportsAlkaid0V05 reports whether the private shell protocol is advertised.
+func (m *AppModel) SupportsAlkaid0V05() bool {
+	return m.AgentCaps.Has(acp.Alkaid0CapabilityV05)
+}
+
 // SupportsSessionDelete 报告服务端是否声明 session/delete 能力；仅当为 true
 // 时首页按 d 删除会话可用。
 func (m *AppModel) SupportsSessionDelete() bool {
@@ -620,6 +629,33 @@ func (m *AppModel) CycleLanguage(delta int) bool {
 }
 
 func (m *AppModel) ActiveSession() *SessionState { return m.Active }
+
+func (m *AppModel) Shells() []*TerminalState {
+	if !m.SupportsAlkaid0V05() || m.Active == nil {
+		return nil
+	}
+	return m.Active.Terminals()
+}
+func (m *AppModel) OpenShellPanel() {
+	if len(m.Shells()) > 0 {
+		m.ShellPanel = true
+		m.ShellFullscreen = false
+		if m.ShellSelected < 0 {
+			m.ShellSelected = 0
+		}
+		if m.ShellSelected >= len(m.Shells()) {
+			m.ShellSelected = len(m.Shells()) - 1
+		}
+	}
+}
+func (m *AppModel) CloseShellPanel() { m.ShellPanel = false; m.ShellFullscreen = false }
+func (m *AppModel) SelectedShell() *TerminalState {
+	xs := m.Shells()
+	if m.ShellSelected < 0 || m.ShellSelected >= len(xs) {
+		return nil
+	}
+	return xs[m.ShellSelected]
+}
 
 // HasActive 报告是否在会话视图且有活动会话。
 func (m *AppModel) HasActive() bool { return m.Active != nil && m.View == ViewSession }
@@ -917,9 +953,37 @@ func (m *AppModel) ApplyEvent(ev acp.Event) {
 			m.Active.applyAgentConfig(e.Options)
 			m.Active.ProtocolUpdates = appendProtocolUpdate(m.Active.ProtocolUpdates, e.Raw)
 		}
+	case *acp.ShellStopEvent:
+		if m.SupportsAlkaid0V05() && m.HasActive() && e.SessionID == m.Active.ID {
+			if e.TerminalID != "" {
+				m.Active.RemoveTerminal(e.TerminalID)
+			}
+		}
 	case *acp.TerminalUpdateEvent:
-		if m.HasActive() && e.SessionID == m.Active.ID {
-			m.Active.ApplyTerminal(e.TerminalID, e.Title, e.Status, e.Output)
+		if m.SupportsAlkaid0V05() && m.HasActive() && e.SessionID == m.Active.ID {
+			if e.UpdateType == "full" || e.UpdateType == "snapshot" {
+				m.Active.ReplaceTerminals(e.Terminals)
+			} else if e.Status == "stop" || e.Status == "stopped" || e.Status == "exited" {
+				m.Active.RemoveTerminal(e.TerminalID)
+			} else {
+				info := e.Terminal
+				if info.TerminalID == "" {
+					info.TerminalID = e.TerminalID
+				}
+				if info.Title == "" {
+					info.Title = e.Title
+				}
+				if info.Command == "" {
+					info.Command = e.Command
+				}
+				if info.Status == "" {
+					info.Status = e.Status
+				}
+				if info.Content == "" {
+					info.Content = e.Output
+				}
+				m.Active.ApplyTerminalInfo(info)
+			}
 		}
 	case *acp.UnknownSessionUpdateEvent:
 		if m.HasActive() && e.SessionID == m.Active.ID {
@@ -1031,6 +1095,8 @@ func eventSessionID(ev acp.Event) string {
 		return e.SessionID
 	case *acp.TerminalUpdateEvent:
 		return e.SessionID
+	case *acp.ShellStopEvent:
+		return e.SessionID
 	case *acp.UnknownSessionUpdateEvent:
 		return e.SessionID
 	}
@@ -1094,6 +1160,7 @@ func (m *AppModel) GoHome() {
 	m.HomeSelected = -1
 	m.HomeListFocused = false
 	m.ClearSelection()
+	m.CloseShellPanel()
 }
 
 // RemoveSession 从首页会话列表移除指定会话并调整选中索引。删除的会话同时

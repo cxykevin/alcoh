@@ -196,6 +196,46 @@ func TestDecodeSessionUpdateConfigOptionSingularShape(t *testing.T) {
 	}
 }
 
+func TestAlkaid0V05TerminalUpdateDecodesOnlyNamespacedVariant(t *testing.T) {
+	raw := json.RawMessage(`{"sessionId":"s1","update":{"sessionUpdate":"alk.cxykevin.top/terminal_update","updateType":"output","terminalId":"t1","command":"go test","content":"ok\n","terminals":[{"terminalId":"t1","status":"running"}]}}`)
+	ev, err := DecodeSessionUpdate(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	terminal, ok := ev.(*TerminalUpdateEvent)
+	if !ok || terminal.TerminalID != "t1" || terminal.Output != "ok\n" || terminal.UpdateType != "output" || terminal.Command != "go test" || len(terminal.Terminals) != 1 {
+		t.Fatalf("terminal event = %#v", ev)
+	}
+	legacy, err := DecodeSessionUpdatePayload("s1", json.RawMessage(`{"sessionUpdate":"terminal_update","terminalId":"t1","output":"must not decode"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := legacy.(*UnknownSessionUpdateEvent); !ok {
+		t.Fatalf("legacy event = %#v", legacy)
+	}
+}
+
+func TestAlkaid0V05ShellStopDecodes(t *testing.T) {
+	ev, err := DecodeSessionUpdatePayload("s1", json.RawMessage(`{"sessionUpdate":"alk.cxykevin.top/shell_stop","runId":"r1","terminalId":"t1","command":"npm test","status":"stop","success":true,"killed":false}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stop, ok := ev.(*ShellStopEvent)
+	if !ok || stop.RunID != "r1" || stop.TerminalID != "t1" || stop.Command != "npm test" || stop.Status != "stop" || !stop.Success || stop.Killed {
+		t.Fatalf("shell stop event = %#v", ev)
+	}
+}
+
+func TestAlkaid0V05TerminalRPCParamsMarshal(t *testing.T) {
+	b, err := json.Marshal(TerminalStatusParams{SessionID: "s1", TerminalID: "t1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != `{"sessionId":"s1","terminalId":"t1"}` {
+		t.Fatalf("params = %s", b)
+	}
+}
+
 func TestAgentCapabilitiesHas(t *testing.T) {
 	caps := AgentCapabilities{Raw: json.RawMessage(`{"session":{"delete":{}},"alk.cxykevin.top/alkaid0/v0.4":{}}`)}
 	if !caps.Has(Alkaid0CapabilityV04) {

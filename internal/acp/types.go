@@ -4,6 +4,7 @@
 package acp
 
 import (
+	"context"
 	"encoding/json"
 )
 
@@ -241,6 +242,28 @@ type PermissionOption struct {
 type PermissionResponse struct {
 	Outcome  PermissionOutcome `json:"outcome"`
 	OptionID *string           `json:"optionId,omitempty"`
+}
+
+// TerminalInfo is a private alkaid0 v0.5 terminal snapshot.
+type TerminalInfo struct {
+	TerminalID string `json:"terminalId"`
+	SessionID  string `json:"sessionId"`
+	Kind       string `json:"kind"`
+	Title      string `json:"title,omitempty"`
+	Status     string `json:"status"`
+	Command    string `json:"command"`
+	Reason     string `json:"reason"`
+	AgentID    string `json:"agentId"`
+	ToolID     string `json:"toolId"`
+	Content    string `json:"content"`
+	CreatedAt  string `json:"createdAt"`
+}
+
+// TerminalControl exposes the private v0.5 terminal RPCs.
+type TerminalControl interface {
+	ListTerminals(context.Context) ([]TerminalInfo, error)
+	TerminalStatus(context.Context, string) (TerminalInfo, error)
+	StopTerminal(context.Context, string) error
 }
 
 // ---- 会话 ----

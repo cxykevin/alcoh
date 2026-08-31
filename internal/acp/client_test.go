@@ -167,6 +167,81 @@ func TestSetConfigOptionEmitsUpdateEvent(t *testing.T) {
 	}
 }
 
+func enableV05(b *ClientBackend) {
+	b.mu.Lock()
+	b.agentCaps = AgentCapabilities{Raw: json.RawMessage(`{"alk.cxykevin.top/alkaid0/v0.5":{}}`)}
+	b.mu.Unlock()
+}
+
+func TestTerminalRPCsAreCapabilityGated(t *testing.T) {
+	ft := &fakeTransport{}
+	ft.set(MethodSessionNew, func(params, result any) error { result.(*SessionResult).SessionID = "s1"; return nil })
+	b := probeClient(t, ft)
+	defer b.Close()
+	s, err := b.NewSession(context.Background(), "/tmp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	control, ok := s.(TerminalControl)
+	if !ok {
+		t.Fatalf("session does not implement TerminalControl: %T", s)
+	}
+	if _, err := control.ListTerminals(context.Background()); err == nil {
+		t.Fatal("expected v0.5 capability error")
+	}
+	for _, method := range []string{MethodTerminalList, MethodTerminalStatus, MethodTerminalStop} {
+		for _, got := range ft.requests {
+			if got == method {
+				t.Errorf("unsupported method %s was sent", method)
+			}
+		}
+	}
+}
+
+func TestTerminalRPCsUseTypedMethodsAndParams(t *testing.T) {
+	ft := &fakeTransport{}
+	ft.set(MethodSessionNew, func(params, result any) error { result.(*SessionResult).SessionID = "s1"; return nil })
+	ft.set(MethodTerminalList, func(params, result any) error {
+		if p, ok := params.(TerminalListParams); !ok || p.SessionID != "s1" {
+			t.Fatalf("list params = %#v", params)
+		}
+		result.(*TerminalListResult).Terminals = []TerminalInfo{{TerminalID: "t1"}}
+		return nil
+	})
+	ft.set(MethodTerminalStatus, func(params, result any) error {
+		if p, ok := params.(TerminalStatusParams); !ok || p.SessionID != "s1" || p.TerminalID != "t1" {
+			t.Fatalf("status params = %#v", params)
+		}
+		result.(*TerminalStatusResult).Terminal = TerminalInfo{TerminalID: "t1", Status: "running"}
+		return nil
+	})
+	ft.set(MethodTerminalStop, func(params, result any) error {
+		if p, ok := params.(TerminalStopParams); !ok || p.SessionID != "s1" || p.TerminalID != "t1" {
+			t.Fatalf("stop params = %#v", params)
+		}
+		return nil
+	})
+	b := probeClient(t, ft)
+	defer b.Close()
+	enableV05(b)
+	s, err := b.NewSession(context.Background(), "/tmp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	control := s.(TerminalControl)
+	terminals, err := control.ListTerminals(context.Background())
+	if err != nil || len(terminals) != 1 {
+		t.Fatalf("list = %#v, err=%v", terminals, err)
+	}
+	status, err := control.TerminalStatus(context.Background(), "t1")
+	if err != nil || status.Status != "running" {
+		t.Fatalf("status = %#v, err=%v", status, err)
+	}
+	if err := control.StopTerminal(context.Background(), "t1"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestListSessionsPagePropagatesCursor verifies cursor request/response propagation.
 func TestListSessionsPagePropagatesCursor(t *testing.T) {
 	ft := &fakeTransport{}

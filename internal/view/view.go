@@ -3,8 +3,8 @@ package view
 import (
 	"time"
 
-	"github.com/cxykevin/alcoh/internal/i18n"
 	"github.com/cxykevin/alcoh/internal/acp"
+	"github.com/cxykevin/alcoh/internal/i18n"
 	"github.com/cxykevin/alcoh/internal/model"
 	"github.com/cxykevin/alcoh/internal/renderer"
 	"github.com/cxykevin/alcoh/internal/widget"
@@ -25,6 +25,8 @@ type AppView struct {
 	// BodyToggles 记录最近一帧可点击切换展开/折叠的正文行（contentY → 目标，
 	// 思考/工具标题行）。鼠标左键命中时展开/折叠对应单项。
 	BodyToggles map[int]ToggleRef
+	// ShellPreviewRect records the screen area containing the terminal preview.
+	ShellPreviewRect renderer.Rect
 }
 
 // NewAppView 创建视图。
@@ -354,15 +356,21 @@ func (v *AppView) drawSession(c *renderer.Canvas, r renderer.Rect, m *model.AppM
 	}
 
 	// 弹窗接管输入框和状态栏；主体只绘制消息与固定计划面板。
+	if m.ShellPanel && m.Modal == model.NoModal {
+		p := &ShellPanel{Theme: v.Theme}
+		p.Draw(c, r, m)
+		v.ShellPreviewRect = p.PreviewRect
+		return
+	}
 	if m.Modal != model.NoModal {
 		msgH := r.H - planH
 		if msgH > 0 {
-		ml := &MessageList{Theme: v.Theme, SpinFrame: v.SpinFrame}
-		ml.Draw(c, renderer.NewRect(r.X, r.Y, r.W, msgH), s)
-		v.Body = ml.Body
-		v.BodyRect = renderer.NewRect(r.X, r.Y, r.W, msgH)
-		v.BodyScroll = ml.Scroll
-		v.BodyToggles = ml.Toggles
+			ml := &MessageList{Theme: v.Theme, SpinFrame: v.SpinFrame}
+			ml.Draw(c, renderer.NewRect(r.X, r.Y, r.W, msgH), s)
+			v.Body = ml.Body
+			v.BodyRect = renderer.NewRect(r.X, r.Y, r.W, msgH)
+			v.BodyScroll = ml.Scroll
+			v.BodyToggles = ml.Toggles
 		}
 		if planH > 0 {
 			pp.Draw(c, renderer.NewRect(r.X, r.Y+msgH, r.W, planH), s)
@@ -459,8 +467,15 @@ func (v *AppView) drawSession(c *renderer.Canvas, r renderer.Rect, m *model.AppM
 	}
 	ib.Draw(c, inputRect)
 
-	// 输入框下方横线
+	// 输入框下方横线；覆盖左侧显示活动 shell 数量。
 	sep(y)
+	if n := len(m.Shells()); n > 0 {
+		badge := itoa(n) + " shell"
+		if renderer.StringWidth(badge)+2 < r.W {
+			badgeStyle := v.Theme.StyleOn(renderer.RGB(255, 255, 255), renderer.RGB(0, 190, 200)).WithBold(true)
+			c.PutText(r.X+1, y, " "+badge+" ", badgeStyle)
+		}
+	}
 	y++
 
 	// 状态栏

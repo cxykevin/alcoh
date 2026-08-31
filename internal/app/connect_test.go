@@ -15,7 +15,7 @@ import (
 
 // TestConnectCommandFlow 验证 /connect 完整流程：打开向导 → 选择服务商模板
 // → 填 base_url/key → 拉取模型列表 → 选择模型 → config/set 写入服务端配置
-//（模型键为下一个数字、设为默认）。alcohol 端到端使用 httptest 模拟服务商
+// （模型键为下一个数字、设为默认）。alcohol 端到端使用 httptest 模拟服务商
 // /models 接口。
 func TestConnectCommandFlow(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -338,10 +338,10 @@ func TestEnsureCompressForModel(t *testing.T) {
 // 上下文 >=1M 且不含 claude 取 200000；1M 的 claude 走 80%；其余取 80%。
 func TestConnectCompressForLimit(t *testing.T) {
 	cases := []struct {
-		name      string
-		p         provider.Model
+		name       string
+		p          provider.Model
 		tokenLimit int
-		want      int
+		want       int
 	}{
 		{"deepseek fixed", provider.Model{ID: "deepseek-v4-flash"}, 2000000, 140000},
 		{"gemini low ctx", provider.Model{ID: "gemini-2.5-flash"}, 500000, 80000},

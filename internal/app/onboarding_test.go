@@ -245,7 +245,7 @@ func TestOnboardingNotTriggeredWhenHasModels(t *testing.T) {
 
 // TestOnboardingFullFlow 验证引导与 /connect 向导同义的完整流程：触发 → 向导
 // 选自定义服务商 → 填 base_url/key → 拉取模型 → 选择模型 → 写入服务端配置
-//（键 0 + 设为默认）→ 完成步骤 Enter → 选 effort(high) → 教学 → 完成进主页。
+// （键 0 + 设为默认）→ 完成步骤 Enter → 选 effort(high) → 教学 → 完成进主页。
 // 最后验证 effort 写入本地 config、第一个会话应用 effort。
 func TestOnboardingFullFlow(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

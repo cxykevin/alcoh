@@ -101,7 +101,7 @@ func (cs *ConnectState) ConnectMarkResult(msg string) {
 }
 
 // ConnectModelPatch 从 config/get 的完整配置中计算 Model.Models 的下一个数字键
-//（现有最大数字键 + 1，首个为 "0"），并构造把选中模型写入服务端配置的
+// （现有最大数字键 + 1，首个为 "0"），并构造把选中模型写入服务端配置的
 // config/set patch（含设为默认模型 DefaultModelID，该字段为数值类型）。
 // tokenLimit/compressSize 由调用方决定（压缩阈值规则见 app.connectCompressForLimit）；
 // tokenLimit<=0 时兜底 128000、compressSize<=0 时兜底取其 80%。
@@ -142,11 +142,11 @@ func ConnectModelPatch(cfg json.RawMessage, p provider.Model, baseURL, key strin
 		"Model": map[string]any{
 			"Models": map[string]any{
 				keyStr: map[string]any{
-					"ProviderURL": strings.TrimSpace(baseURL),
-					"ProviderKey": strings.TrimSpace(key),
-					"ModelName":   name,
-					"ModelID":     p.ID,
-					"TokenLimit":  tokenLimit,
+					"ProviderURL":  strings.TrimSpace(baseURL),
+					"ProviderKey":  strings.TrimSpace(key),
+					"ModelName":    name,
+					"ModelID":      p.ID,
+					"TokenLimit":   tokenLimit,
 					"CompressSize": compressSize,
 				},
 			},
