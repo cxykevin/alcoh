@@ -124,7 +124,13 @@ func (p *ShellPanel) preview(c *renderer.Canvas, r renderer.Rect, s *model.Termi
 			break
 		}
 		for _, part := range strings.Split(line, "\n") {
-			c.PutText(r.X+1, r.Y+i+1, renderer.Truncate(part, r.W-2), p.Theme.Style(p.Theme.MDCode))
+			// VT screens are fixed-width and pad short/empty output with spaces.
+			// Trim that padding before truncating, otherwise Truncate interprets
+			// the padding as overflow and adds a misleading ellipsis.
+			part = strings.TrimRight(part, " ")
+			if part != "" && r.W > 2 {
+				c.PutText(r.X+1, r.Y+i+1, renderer.Truncate(part, r.W-2), p.Theme.Style(p.Theme.MDCode))
+			}
 			i++
 		}
 	}
