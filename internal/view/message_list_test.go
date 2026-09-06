@@ -16,11 +16,11 @@ func TestMessageListToggles(t *testing.T) {
 	s.ApplyMessage(&acp.MessageUpdateEvent{
 		SessionID: "s1", IsThought: true,
 		Message: acp.Message{MessageID: "t1", ContentSet: true,
-			Content: []acp.ContentBlock{{Type: "text", Text: strPtr("想 1")}}},
+			Content: []acp.ContentBlock{{Type: "text", Text: new("想 1")}}},
 	})
 	status := acp.ToolCompleted
 	s.ApplyToolCall(&acp.ToolCallUpdateEvent{
-		SessionID: "s1", ToolCallID: "c1", Status: &status, Title: strPtr("read_file"),
+		SessionID: "s1", ToolCallID: "c1", Status: &status, Title: new("read_file"),
 		RawOutput: []byte("out1"),
 	})
 
@@ -57,4 +57,5 @@ func TestMessageListToggles(t *testing.T) {
 	}
 }
 
-func strPtr(s string) *string { return &s }
+//go:fix inline
+func strPtr(s string) *string { return new(s) }

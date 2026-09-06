@@ -71,7 +71,7 @@ func TestModelContentScroll(t *testing.T) {
 	m := &model.AppModel{}
 	m.ActivateSession("s1", "")
 	var options []acp.ConfigOptionValue
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		options = append(options, acp.ConfigOptionValue{Value: "m/" + string(rune('a'+i)), Name: "Model " + string(rune('A'+i))})
 	}
 	m.ApplyEvent(&acp.ConfigOptionUpdateEvent{

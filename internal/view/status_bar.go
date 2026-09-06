@@ -29,10 +29,7 @@ func (sb *StatusBar) Draw(c *renderer.Canvas, r renderer.Rect, m *model.AppModel
 	}
 	ctxTxt := ""
 	if s := m.ActiveSession(); s != nil && s.Usage.Size > 0 {
-		pct := int(float64(s.Usage.Used) / float64(s.Usage.Size) * 100)
-		if pct > 100 {
-			pct = 100
-		}
+		pct := min(int(float64(s.Usage.Used)/float64(s.Usage.Size)*100), 100)
 		ctxTxt = "  ctx " + itoa(pct) + "% (" + itoa(s.Usage.Used) + "/" + itoa(s.Usage.Size) + ")"
 	} else if s := m.ActiveSession(); s != nil && s.Usage.Used > 0 {
 		ctxTxt = "  ctx " + itoa(s.Usage.Used)
@@ -82,10 +79,7 @@ func (sb *StatusBar) Draw(c *renderer.Canvas, r renderer.Rect, m *model.AppModel
 	for _, line := range m.PluginStatusLines() {
 		left += "  [" + line + "]"
 	}
-	maxLeft := r.W - rightW - 4
-	if maxLeft < 1 {
-		maxLeft = 1
-	}
+	maxLeft := max(r.W-rightW-4, 1)
 	c.PutText(r.X+1, r.Y, renderer.Truncate(left, maxLeft), st)
 	c.PutText(r.X+r.W-rightW-2, r.Y, right, st)
 }

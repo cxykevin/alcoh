@@ -38,15 +38,15 @@ func Markdown(text string, t renderer.Theme) []StyledLine {
 		codeLines = nil
 		codeLang = ""
 	}
-	for _, raw := range strings.Split(text, "\n") {
+	for raw := range strings.SplitSeq(text, "\n") {
 		trimmed := strings.TrimRight(raw, " \t")
-		if strings.HasPrefix(trimmed, "```") {
+		if after, ok := strings.CutPrefix(trimmed, "```"); ok {
 			if inCode {
 				inCode = false
 				flushCode()
 			} else {
 				inCode = true
-				codeLang = strings.TrimSpace(strings.TrimPrefix(trimmed, "```"))
+				codeLang = strings.TrimSpace(after)
 			}
 			continue
 		}

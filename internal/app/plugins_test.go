@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -176,12 +177,7 @@ func TestPluginPromptRewriteIntegration(t *testing.T) {
 }
 
 func containsStr(list []string, want string) bool {
-	for _, s := range list {
-		if s == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(list, want)
 }
 
 // TestPluginPromptBlockIntegration 验证插件拦截 prompt 时不发送且展示原因。

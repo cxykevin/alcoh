@@ -41,17 +41,11 @@ func (m *Modal) DrawBottom(c *renderer.Canvas, r renderer.Rect, bottomMargin int
 	if w > r.W {
 		w = r.W
 	}
-	bottom := r.Y + r.H - bottomMargin
-	if bottom > r.Y+r.H {
-		bottom = r.Y + r.H
-	}
+	bottom := min(r.Y+r.H-bottomMargin, r.Y+r.H)
 	if bottom <= r.Y {
 		return
 	}
-	h := m.Height
-	if h < 1 {
-		h = 1
-	}
+	h := max(m.Height, 1)
 	if h > bottom-r.Y {
 		h = bottom - r.Y
 	}
@@ -69,10 +63,7 @@ func (m *Modal) DrawSheet(c *renderer.Canvas, r renderer.Rect) {
 	if r.W <= 0 || r.H <= 0 {
 		return
 	}
-	h := m.Height
-	if h < 1 {
-		h = 1
-	}
+	h := max(m.Height, 1)
 	if h > r.H {
 		h = r.H
 	}

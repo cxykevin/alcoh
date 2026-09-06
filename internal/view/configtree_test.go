@@ -29,7 +29,7 @@ func drawConfigTree(ed *model.ConfigEditor, w, h int) []string {
 	ct := &ConfigTree{Theme: renderer.DefaultTheme(), Tree: ed}
 	ct.Draw(canv, renderer.NewRect(0, 0, w, h))
 	rows := make([]string, h)
-	for y := 0; y < h; y++ {
+	for y := range h {
 		rows[y] = effortRowText(b, y, w)
 	}
 	return rows

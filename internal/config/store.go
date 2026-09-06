@@ -31,8 +31,8 @@ type PluginConfig struct {
 
 // Values 是项目本地 TUI 配置。ACP agent 配置不写入此文件。
 type Values struct {
-	Version             int    `json:"version"`
-	ColorMode           string `json:"colorMode,omitempty"`
+	Version   int    `json:"version"`
+	ColorMode string `json:"colorMode,omitempty"`
 	// Language 是界面语言（"zh"/"en"）；空表示未显式设置，
 	// 启动时按 配置 → ALCOH_LANG → 系统 locale 检测（见 i18n.Detect）。
 	Language            string `json:"language,omitempty"`

@@ -28,10 +28,7 @@ func (s *Scrollbar) Draw(c *renderer.Canvas, r renderer.Rect) {
 		return
 	}
 	// 计算 thumb 位置
-	thumbH := s.View * s.View / s.Total
-	if thumbH < 1 {
-		thumbH = 1
-	}
+	thumbH := max(s.View*s.View/s.Total, 1)
 	if thumbH > s.View {
 		thumbH = s.View
 	}

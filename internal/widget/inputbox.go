@@ -481,10 +481,7 @@ func (b *InputBuffer) VisualHeight(width, promptW int) int {
 			if used > 0 && used+rw > available {
 				rows++
 				used = 0
-				available = width
-				if available < 1 {
-					available = 1
-				}
+				available = max(width, 1)
 			}
 			used += rw
 		}
@@ -673,10 +670,7 @@ func (ib *InputBox) Draw(c *renderer.Canvas, r renderer.Rect) {
 				visualRows = append(visualRows, row)
 				row = visualInputRow{start: runeIndex}
 				used = 0
-				available = r.W
-				if available < 1 {
-					available = 1
-				}
+				available = max(r.W, 1)
 			}
 			row.runes = append(row.runes, rr)
 			used += rw

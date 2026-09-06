@@ -36,7 +36,7 @@ func TestScreenSGRAndErase(t *testing.T) {
 	}
 	s.Feed([]byte("\x1b[1;2H"))
 	s.Feed([]byte("\x1b[2K"))
-	for x := 0; x < 8; x++ {
+	for x := range 8 {
 		if s.Buffer().Get(x, 0).R != ' ' {
 			t.Fatal("erase failed")
 		}

@@ -34,7 +34,7 @@ func main() {
 	req := &pluginpb.CodeGeneratorRequest{
 		FileToGenerate: []string{protoFile},
 		// module 参数使输出文件路径映射到 pb/plugin/v1/plugin.pb.go。
-		Parameter: proto.String("module=github.com/cxykevin/alcoh"),
+		Parameter: new("module=github.com/cxykevin/alcoh"),
 	}
 	for _, fd := range fds {
 		req.ProtoFile = append(req.ProtoFile, fd.AsFileDescriptorProto())

@@ -44,17 +44,3 @@ func (r Rect) Intersect(o Rect) Rect {
 	y2 := min(r.Y+r.H, o.Y+o.H)
 	return NewRect(x1, y1, x2-x1, y2-y1)
 }
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

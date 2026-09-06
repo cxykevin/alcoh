@@ -74,8 +74,8 @@ func TestModalDrawBottomRejectsFullHeightMargin(t *testing.T) {
 	canvas := renderer.NewCanvas(renderer.NewBuffer(8, 4))
 	modal := &Modal{Width: 8, Height: 2, Style: renderer.DefaultStyle()}
 	modal.DrawBottom(canvas, renderer.NewRect(0, 0, 8, 4), 4)
-	for y := 0; y < 4; y++ {
-		for x := 0; x < 8; x++ {
+	for y := range 4 {
+		for x := range 8 {
 			if got := canvas.B.Get(x, y).R; got != ' ' {
 				t.Fatalf("full bottom margin was overwritten at (%d,%d): %q", x, y, got)
 			}

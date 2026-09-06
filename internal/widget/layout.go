@@ -32,10 +32,7 @@ func (v *VBox) Draw(c *renderer.Canvas, r renderer.Rect) {
 			flexCount++
 		}
 	}
-	remaining := r.H - fixed
-	if remaining < 0 {
-		remaining = 0
-	}
+	remaining := max(r.H-fixed, 0)
 	flexH := 0
 	if flexCount > 0 {
 		flexH = remaining / flexCount
@@ -89,10 +86,7 @@ func (h *HBox) Draw(c *renderer.Canvas, r renderer.Rect) {
 			flexCount++
 		}
 	}
-	remaining := r.W - fixed
-	if remaining < 0 {
-		remaining = 0
-	}
+	remaining := max(r.W-fixed, 0)
 	flexW := 0
 	if flexCount > 0 {
 		flexW = remaining / flexCount
@@ -195,15 +189,9 @@ func (t *Text) Draw(c *renderer.Canvas, r renderer.Rect) {
 	x := r.X
 	switch t.Align {
 	case AlignCenter:
-		x = r.X + (r.W-w)/2
-		if x < r.X {
-			x = r.X
-		}
+		x = max(r.X+(r.W-w)/2, r.X)
 	case AlignRight:
-		x = r.X + r.W - w
-		if x < r.X {
-			x = r.X
-		}
+		x = max(r.X+r.W-w, r.X)
 	}
 	c.PutText(x, r.Y, t.Content, t.Style)
 }

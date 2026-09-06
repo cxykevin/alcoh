@@ -26,10 +26,7 @@ func (p *PlanPanel) Height(s *model.SessionState) int {
 	if s.Plan == nil || len(s.Plan.Entries) == 0 {
 		return 0
 	}
-	h := 1 + minInt(len(s.Plan.Entries), planMaxTasks)
-	if h > planMaxH {
-		h = planMaxH
-	}
+	h := min(1+minInt(len(s.Plan.Entries), planMaxTasks), planMaxH)
 	return h
 }
 
@@ -103,7 +100,7 @@ func planDisplay(entries []acp.PlanEntry, maxTasks int) []acp.PlanEntry {
 		// 退化：全部按未完成显示，从上到下填充
 		n := minInt(maxTasks, len(entries))
 		out := make([]acp.PlanEntry, 0, n)
-		for i := 0; i < n; i++ {
+		for i := range n {
 			e := entries[i]
 			e.Status = acp.PlanPending // 强制未完成样式
 			out = append(out, e)

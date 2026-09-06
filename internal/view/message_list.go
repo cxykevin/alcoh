@@ -76,10 +76,7 @@ func (ml *MessageList) Draw(c *renderer.Canvas, r renderer.Rect, s *model.Sessio
 		total += len(blk.lines)
 	}
 	viewH := r.H
-	maxScroll := total - viewH
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
+	maxScroll := max(total-viewH, 0)
 	scroll := s.Scroll
 	if s.FollowBottom {
 		scroll = maxScroll
@@ -274,7 +271,7 @@ func (ml *MessageList) toolBlock(tc *model.ToolCall, width int) *block {
 		blk.lines = append(blk.lines, []Span{{Text: "  in: " + truncateRune(tc.RawInput, width-8), Style: t.Style(t.MDCode)}})
 	}
 	if tc.RawOutput != "" {
-		for _, ln := range strings.Split(tc.RawOutput, "\n") {
+		for ln := range strings.SplitSeq(tc.RawOutput, "\n") {
 			for _, wl := range renderer.Wrap(ln, width-8) {
 				blk.lines = append(blk.lines, []Span{{Text: "  out: " + wl, Style: t.Style(t.MDCode)}})
 			}
@@ -306,7 +303,7 @@ func (ml *MessageList) toolBlock(tc *model.ToolCall, width int) *block {
 			if ct.Text != nil {
 				text = *ct.Text
 			}
-			for _, ln := range strings.Split(text, "\n") {
+			for ln := range strings.SplitSeq(text, "\n") {
 				st := t.Style(t.TextMuted)
 				switch {
 				case strings.HasPrefix(ln, "+++") || strings.HasPrefix(ln, "---"):
@@ -327,7 +324,7 @@ func (ml *MessageList) toolBlock(tc *model.ToolCall, width int) *block {
 			if ct.Text != nil {
 				text = *ct.Text
 			}
-			for _, ln := range strings.Split(text, "\n") {
+			for ln := range strings.SplitSeq(text, "\n") {
 				for _, wl := range renderer.Wrap(ln, width-8) {
 					blk.lines = append(blk.lines, []Span{{Text: "  " + wl, Style: t.Style(t.MDCode)}})
 				}
@@ -424,7 +421,7 @@ func (ml *MessageList) terminalBlock(terminal *model.TerminalState, width int) *
 	if terminal.Truncated {
 		blk.lines = append(blk.lines, []Span{{Text: "  … earlier terminal output truncated", Style: t.Style(t.TextMuted).WithDim(true)}})
 	}
-	for _, ln := range strings.Split(terminal.Transcript, "\n") {
+	for ln := range strings.SplitSeq(terminal.Transcript, "\n") {
 		for _, wl := range renderer.Wrap(ln, width-6) {
 			blk.lines = append(blk.lines, []Span{{Text: "  " + wl, Style: t.Style(t.MDCode)}})
 		}

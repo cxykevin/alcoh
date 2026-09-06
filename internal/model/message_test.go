@@ -6,6 +6,36 @@ import (
 	"github.com/cxykevin/alcoh/internal/acp"
 )
 
+func TestAlkaid0MessageOrdering(t *testing.T) {
+	s := NewSession("s1", "test")
+	s.SetAlkaid0MessageOrdering(true)
+	for _, id := range []string{"msg_12", "msg_2", "msg_10"} {
+		s.AppendChunk(&acp.MessageChunkEvent{SessionID: "s1", MessageID: id, Text: id})
+	}
+	got := []string{s.Messages[0].MessageID, s.Messages[1].MessageID, s.Messages[2].MessageID}
+	want := []string{"msg_2", "msg_10", "msg_12"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("messages = %v, want %v", got, want)
+		}
+	}
+	for i, item := range s.Timeline {
+		if item.Message != nil && item.Message.MessageID != want[i] {
+			t.Fatalf("timeline = %v, want message %s at %d", s.Timeline, want[i], i)
+		}
+	}
+}
+
+func TestMessageOrderingDisabledByDefault(t *testing.T) {
+	s := NewSession("s1", "test")
+	for _, id := range []string{"msg_12", "msg_2"} {
+		s.AppendChunk(&acp.MessageChunkEvent{SessionID: "s1", MessageID: id})
+	}
+	if s.Messages[0].MessageID != "msg_12" {
+		t.Fatalf("default order changed: %#v", s.Messages)
+	}
+}
+
 func TestChunkAppend(t *testing.T) {
 	s := NewSession("s1", "test")
 	s.AppendChunk(&acp.MessageChunkEvent{SessionID: "s1", MessageID: "m1", Text: "Hello "})
@@ -29,7 +59,7 @@ func TestMessageUpdateReplace(t *testing.T) {
 			MessageID:  "m1",
 			ContentSet: true,
 			Content: []acp.ContentBlock{
-				{Type: "text", Text: strPtr("full")},
+				{Type: "text", Text: new("full")},
 			},
 		},
 	})
@@ -57,7 +87,7 @@ func TestThoughtAutoCollapse(t *testing.T) {
 		Message: acp.Message{
 			MessageID:  "t1",
 			ContentSet: true,
-			Content:    []acp.ContentBlock{{Type: "text", Text: strPtr("done")}},
+			Content:    []acp.ContentBlock{{Type: "text", Text: new("done")}},
 		},
 		IsThought: true,
 	})
@@ -85,13 +115,13 @@ func TestExpandAll(t *testing.T) {
 		s.ApplyMessage(&acp.MessageUpdateEvent{
 			SessionID: "s1", IsThought: true,
 			Message: acp.Message{MessageID: id, ContentSet: true,
-				Content: []acp.ContentBlock{{Type: "text", Text: strPtr("想")}}},
+				Content: []acp.ContentBlock{{Type: "text", Text: new("想")}}},
 		})
 	}
 	s.CollapseThoughts()
 	// 一条展开、一条折叠的工具调用。
-	s.ApplyToolCall(&acp.ToolCallUpdateEvent{SessionID: "s1", ToolCallID: "tc1", Title: strPtr("tool 1")})
-	s.ApplyToolCall(&acp.ToolCallUpdateEvent{SessionID: "s1", ToolCallID: "tc2", Title: strPtr("tool 2")})
+	s.ApplyToolCall(&acp.ToolCallUpdateEvent{SessionID: "s1", ToolCallID: "tc1", Title: new("tool 1")})
+	s.ApplyToolCall(&acp.ToolCallUpdateEvent{SessionID: "s1", ToolCallID: "tc2", Title: new("tool 2")})
 	s.ToggleToolCall("tc2")
 	for _, m := range s.Messages {
 		if m.Kind != MsgThought || !m.Collapsed() {
@@ -164,7 +194,7 @@ func TestThoughtCollapsesWhenBodyStarts(t *testing.T) {
 	s2.ApplyMessage(&acp.MessageUpdateEvent{
 		SessionID: "s2", IsThought: false,
 		Message: acp.Message{MessageID: "x", ContentSet: true,
-			Content: []acp.ContentBlock{{Type: "text", Text: strPtr("正文")}}},
+			Content: []acp.ContentBlock{{Type: "text", Text: new("正文")}}},
 	})
 	if !s2.Messages[0].Done || !s2.Messages[0].Collapsed() {
 		t.Errorf("thought should collapse when full body arrives, done=%v collapsed=%v",
@@ -199,12 +229,12 @@ func TestSharedMessageIDThoughtAndBodyStaySeparate(t *testing.T) {
 	s.ApplyMessage(&acp.MessageUpdateEvent{
 		SessionID: "s1", IsThought: true,
 		Message: acp.Message{MessageID: "msg_21", ContentSet: true,
-			Content: []acp.ContentBlock{{Type: "text", Text: strPtr("完整思考")}}},
+			Content: []acp.ContentBlock{{Type: "text", Text: new("完整思考")}}},
 	})
 	s.ApplyMessage(&acp.MessageUpdateEvent{
 		SessionID: "s1", IsThought: false,
 		Message: acp.Message{MessageID: "msg_21", ContentSet: true,
-			Content: []acp.ContentBlock{{Type: "text", Text: strPtr("完整正文")}}},
+			Content: []acp.ContentBlock{{Type: "text", Text: new("完整正文")}}},
 	})
 	if len(s.Messages) != 4 {
 		t.Fatalf("expected 4 messages after full blocks, got %d", len(s.Messages))
@@ -233,7 +263,7 @@ func TestToolCallUpsert(t *testing.T) {
 	kind := acp.KindWrite
 	s.ApplyToolCall(&acp.ToolCallUpdateEvent{
 		SessionID: "s1", ToolCallID: "c1", Status: &status, Kind: &kind,
-		Title: strPtr("write_file"),
+		Title: new("write_file"),
 	})
 	if len(s.ToolOrder) != 1 {
 		t.Fatalf("expected 1 tool call, got %d", len(s.ToolOrder))
@@ -326,4 +356,5 @@ func TestMarkStreamingDoneOnIdle(t *testing.T) {
 	}
 }
 
-func strPtr(s string) *string { return &s }
+//go:fix inline
+func strPtr(s string) *string { return new(s) }

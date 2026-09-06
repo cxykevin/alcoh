@@ -12,17 +12,17 @@ func TestElicitationEnqueue(t *testing.T) {
 	m.Active = NewSession("sess1", "测试会话")
 
 	// 创建表单模式的 elicitation 请求
-	schema := map[string]interface{}{
+	schema := map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"name": map[string]interface{}{
+		"properties": map[string]any{
+			"name": map[string]any{
 				"type": "string",
 			},
-			"age": map[string]interface{}{
+			"age": map[string]any{
 				"type": "number",
 			},
 		},
-		"required": []interface{}{"name"},
+		"required": []any{"name"},
 	}
 	schemaJSON, _ := json.Marshal(schema)
 

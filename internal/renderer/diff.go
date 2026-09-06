@@ -12,7 +12,7 @@ func Diff(back, front *Buffer, aw *AnsiWriter) {
 	if front.W != W || front.H != H {
 		return // 尺寸不匹配由调用方负责 resize
 	}
-	for y := 0; y < H; y++ {
+	for y := range H {
 		x := 0
 		for x < W {
 			b := back.Get(x, y)

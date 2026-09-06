@@ -15,7 +15,7 @@ func drawOnboarding(ob *model.OnboardingState, w, h int) []string {
 	oc := &OnboardingContent{Theme: renderer.DefaultTheme(), Ob: ob}
 	oc.Draw(canv, renderer.NewRect(0, 0, w, h))
 	rows := make([]string, h)
-	for y := 0; y < h; y++ {
+	for y := range h {
 		rows[y] = effortRowText(b, y, w)
 	}
 	return rows

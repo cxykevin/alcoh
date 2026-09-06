@@ -2,6 +2,8 @@ package model
 
 import (
 	"encoding/json"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -167,10 +169,10 @@ type Selection struct {
 // ElicitationState 保存当前 elicitation 请求的状态。
 type ElicitationState struct {
 	Request      acp.ElicitationCreateParams
-	Schema       map[string]interface{} // 解析后的 JSON Schema
-	FieldOrder   []string               // 字段顺序
-	FieldIndex   int                    // 当前选中的字段索引
-	ErrorMessage string                 // 验证错误消息
+	Schema       map[string]any // 解析后的 JSON Schema
+	FieldOrder   []string       // 字段顺序
+	FieldIndex   int            // 当前选中的字段索引
+	ErrorMessage string         // 验证错误消息
 }
 
 // ClearSelection 清除当前选择。
@@ -197,9 +199,7 @@ func (m *AppModel) SetPluginCommands(commands []string) {
 // SetPluginCommandInfo 设置插件命令的说明与参数提示。
 func (m *AppModel) SetPluginCommandInfo(info map[string]SlashCommandInfo) {
 	m.PluginCommandInfo = make(map[string]SlashCommandInfo, len(info))
-	for k, v := range info {
-		m.PluginCommandInfo[k] = v
-	}
+	maps.Copy(m.PluginCommandInfo, info)
 }
 
 // SetPluginStatus 设置插件在状态栏左侧的文本；text 为空时清除。
@@ -364,13 +364,7 @@ func (m *AppModel) SlashCommands() []string {
 			if name[0] != '/' {
 				name = "/" + name
 			}
-			duplicate := false
-			for _, existing := range out {
-				if existing == name {
-					duplicate = true
-					break
-				}
-			}
+			duplicate := slices.Contains(out, name)
 			if !duplicate {
 				out = append(out, name)
 			}
@@ -378,13 +372,7 @@ func (m *AppModel) SlashCommands() []string {
 	}
 	// 插件命令：与本地/agent 命令去重后追加。
 	for _, name := range m.PluginCommands {
-		duplicate := false
-		for _, existing := range out {
-			if existing == name {
-				duplicate = true
-				break
-			}
-		}
+		duplicate := slices.Contains(out, name)
 		if !duplicate {
 			out = append(out, name)
 		}
@@ -439,10 +427,8 @@ func (m *AppModel) UpdateSlashState() {
 		m.SlashSelected = 0
 		return
 	}
-	for _, index := range indices {
-		if index == m.SlashSelected {
-			return
-		}
+	if slices.Contains(indices, m.SlashSelected) {
+		return
 	}
 	m.SlashSelected = indices[0]
 }
@@ -553,6 +539,13 @@ func (m *AppModel) ClosePlugins() {
 func (m *AppModel) SetAgentInfo(info acp.AgentInfo, caps acp.AgentCapabilities) {
 	m.AgentInfo = info
 	m.AgentCaps = caps
+	ordering := caps.Has(acp.Alkaid0CapabilityV04)
+	if m.Active != nil {
+		m.Active.SetAlkaid0MessageOrdering(ordering)
+	}
+	if m.PreSession != nil {
+		m.PreSession.SetAlkaid0MessageOrdering(ordering)
+	}
 }
 
 // SupportsAlkaid0 报告服务端是否声明 alkaid0 扩展协议能力
@@ -690,12 +683,7 @@ func (m *AppModel) ActiveConfigOption(configID string) *acp.ConfigOption {
 
 // ValidEffortValue 判断给定值是否为客户端硬编码的合法推理强度。
 func (m *AppModel) ValidEffortValue(value string) bool {
-	for _, v := range effortLevels {
-		if v == value {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(effortLevels, value)
 }
 
 // OpenEffortModal 打开推理强度滑条，选中项初始化为服务端当前值。
@@ -1133,9 +1121,11 @@ func (m *AppModel) ActivateSession(id, title string) {
 		// 复用其状态对象，保留已应用的 config / commands，避免重建空状态丢失
 		// agent 在 session/new 响应前广播的初始元数据。
 		m.Active = m.PreSession
+		m.Active.SetAlkaid0MessageOrdering(m.SupportsAlkaid0())
 		m.PreSession = nil
 	} else {
 		m.Active = NewSession(id, title)
+		m.Active.SetAlkaid0MessageOrdering(m.SupportsAlkaid0())
 	}
 	m.View = ViewSession
 	m.Modal = NoModal
@@ -1267,13 +1257,6 @@ func (m *AppModel) SubmitInput() string {
 	return text
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // EnqueuePermission 追加一个权限请求；若当前无活动请求则立即打开。
 func (m *AppModel) EnqueuePermission(req acp.PermissionRequest) {
 	if m.Permission == nil {
@@ -1321,11 +1304,11 @@ func (m *AppModel) showElicitation(rpcID acp.RPCID, req acp.ElicitationCreatePar
 	}
 	// 解析表单模式的 schema
 	if req.Mode == acp.ElicitationModeForm && len(req.Schema) > 0 {
-		var schema map[string]interface{}
+		var schema map[string]any
 		if err := json.Unmarshal(req.Schema, &schema); err == nil {
 			state.Schema = schema
 			// 提取字段顺序
-			if props, ok := schema["properties"].(map[string]interface{}); ok {
+			if props, ok := schema["properties"].(map[string]any); ok {
 				for field := range props {
 					state.FieldOrder = append(state.FieldOrder, field)
 				}
@@ -1395,8 +1378,8 @@ func (m *AppModel) ToggleFocusItem() bool {
 	}
 	s := m.Active
 	// 优先最后一个未完成的思考或工具
-	for i := len(s.Messages) - 1; i >= 0; i-- {
-		msg := s.Messages[i]
+	for _, msg := range slices.Backward(s.Messages) {
+
 		if msg.Kind == MsgThought {
 			msg.Expanded = !msg.Expanded
 			return true
@@ -1490,10 +1473,5 @@ func (m *AppModel) SelectPermissionByKind(kind acp.PermissionOptionKind) bool {
 }
 
 func containsString(xs []string, v string) bool {
-	for _, x := range xs {
-		if x == v {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(xs, v)
 }

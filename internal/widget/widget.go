@@ -19,4 +19,4 @@ type Focusable interface {
 }
 
 // Mouseable 预留：鼠标交互（本轮暂不实现）。
-type Mouseable interface{}
+type Mouseable any

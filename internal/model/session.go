@@ -2,6 +2,9 @@ package model
 
 import (
 	"encoding/json"
+	"slices"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/cxykevin/alcoh/internal/acp"
@@ -129,8 +132,9 @@ type SessionState struct {
 	State      acp.SessionState
 	StopReason *acp.StopReason
 
-	Messages []*Message
-	msgIndex map[string]*Message
+	Messages        []*Message
+	receiveMessages []*Message
+	msgIndex        map[string]*Message
 
 	ToolCalls map[string]*ToolCall
 	ToolOrder []string // 兼容旧逻辑；正文顺序改由 Timeline 决定。
@@ -154,6 +158,8 @@ type SessionState struct {
 	// FollowBottom 为 true 时消息区锁定底部：新内容到达自动跟随，
 	// Scroll 由渲染层同步为当前最大滚动偏移。用户一旦手动滚动即解除。
 	FollowBottom bool
+
+	Alkaid0MessageOrdering bool
 }
 
 func NewSession(id, title string) *SessionState {
@@ -229,8 +235,8 @@ func (s *SessionState) ApplyMessage(ev *acp.MessageUpdateEvent) {
 // 真实 wire 中 thought 与正文共享 messageId，chunk 流没有显式"思考结束"信号；
 // 正文内容开始到达即视为思考流结束，立即折叠而不是等整个 turn 的 idle。
 func (s *SessionState) finishLatestThought() {
-	for i := len(s.Messages) - 1; i >= 0; i-- {
-		m := s.Messages[i]
+	for _, m := range slices.Backward(s.Messages) {
+
 		if m.Kind == MsgThought && !m.Done {
 			m.Done = true
 			m.Expanded = false
@@ -277,11 +283,73 @@ func (s *SessionState) message(id string, thought, user bool) *Message {
 		kind = MsgUser
 	}
 	m := &Message{MessageID: id, Kind: kind, Expanded: thought}
+	s.receiveMessages = append(s.receiveMessages, m)
 	s.Messages = append(s.Messages, m)
 	s.msgIndex[key] = m
 	item := s.appendTimeline(messageTimelineKey(id, kind), messageTimelineKind(kind))
 	item.Message = m
+	if s.Alkaid0MessageOrdering {
+		s.sortMessagesByID()
+	}
 	return m
+}
+
+func (s *SessionState) SetAlkaid0MessageOrdering(enabled bool) {
+	s.Alkaid0MessageOrdering = enabled
+	s.sortMessagesByID()
+}
+
+func (s *SessionState) sortMessagesByID() {
+	s.Messages = append(s.Messages[:0], s.receiveMessages...)
+	if s.Alkaid0MessageOrdering {
+		sort.SliceStable(s.Messages, func(i, j int) bool {
+			return compareAlkaid0MessageID(s.Messages[i].MessageID, s.Messages[j].MessageID) < 0
+		})
+	}
+	ordered := make([]*TimelineItem, 0, len(s.receiveMessages))
+	for _, message := range s.receiveMessages {
+		if item := s.timelineIndex[messageTimelineKey(message.MessageID, message.Kind)]; item != nil {
+			ordered = append(ordered, item)
+		}
+	}
+	if s.Alkaid0MessageOrdering {
+		sort.SliceStable(ordered, func(i, j int) bool {
+			return compareAlkaid0MessageID(ordered[i].Message.MessageID, ordered[j].Message.MessageID) < 0
+		})
+	}
+	pos := 0
+	for i, item := range s.Timeline {
+		if item.Message != nil {
+			s.Timeline[i] = ordered[pos]
+			pos++
+		}
+	}
+}
+
+func compareAlkaid0MessageID(a, b string) int {
+	ra, oka := alkaid0MessageIDNumber(a)
+	rb, okb := alkaid0MessageIDNumber(b)
+	if oka && okb && ra != rb {
+		if ra < rb {
+			return -1
+		}
+		return 1
+	}
+	if oka != okb {
+		if oka {
+			return -1
+		}
+		return 1
+	}
+	return strings.Compare(a, b)
+}
+
+func alkaid0MessageIDNumber(id string) (uint64, bool) {
+	if !strings.HasPrefix(id, "msg_") {
+		return 0, false
+	}
+	n, err := strconv.ParseUint(strings.TrimPrefix(id, "msg_"), 10, 64)
+	return n, err == nil
 }
 
 // messageKey 生成消息索引键：thought 与 user/assistant 分开，避免共享 messageId 冲突。

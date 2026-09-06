@@ -166,17 +166,11 @@ func (cc *ConnectContent) drawSelect(d *connDrawer) {
 		return
 	}
 	// 模型列表按选中项滚动，底部保留一行操作提示。
-	maxRows := d.r.Y + d.r.H - d.y - 1
-	if maxRows < 1 {
-		maxRows = 1
-	}
+	maxRows := max(d.r.Y+d.r.H-d.y-1, 1)
 	if maxRows > len(models) {
 		maxRows = len(models)
 	}
-	start := cc.Cs.ModelSel - maxRows/2
-	if start < 0 {
-		start = 0
-	}
+	start := max(cc.Cs.ModelSel-maxRows/2, 0)
 	if maxStart := len(models) - maxRows; start > maxStart {
 		start = maxStart
 	}

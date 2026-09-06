@@ -2,6 +2,7 @@ package model
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -158,13 +159,7 @@ func TestOpenPlugins(t *testing.T) {
 // TestPluginsCommandInPanel 验证 /plugins 出现在本地命令面板。
 func TestPluginsCommandInPanel(t *testing.T) {
 	m := New()
-	found := false
-	for _, c := range m.SlashCommands() {
-		if c == "/plugins" {
-			found = true
-			break
-		}
-	}
+	found := slices.Contains(m.SlashCommands(), "/plugins")
 	if !found {
 		t.Fatalf("SlashCommands = %v, want include /plugins", m.SlashCommands())
 	}

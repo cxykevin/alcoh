@@ -114,10 +114,7 @@ func (a *App) homeKey(ke input.KeyEvent) {
 		case ke.Type == input.KeyEnter:
 			m.HomeListFocused = false
 			if len(m.Sessions) > 0 {
-				sel := m.HomeSelected
-				if sel < 0 {
-					sel = 0
-				}
+				sel := max(m.HomeSelected, 0)
 				if sel < len(m.Sessions) {
 					a.resumeSession(m.Sessions[sel].SessionID)
 				}
@@ -215,10 +212,7 @@ func (a *App) homeKey(ke input.KeyEvent) {
 			return
 		}
 		if len(m.Sessions) > 0 {
-			sel := m.HomeSelected
-			if sel < 0 {
-				sel = 0
-			}
+			sel := max(m.HomeSelected, 0)
 			if sel < len(m.Sessions) {
 				a.resumeSession(m.Sessions[sel].SessionID)
 			}
@@ -322,10 +316,7 @@ func (a *App) sessionKey(ke input.KeyEvent) {
 	// 输入框内的 MoveBufferStart/End 由 Ctrl+Home/End 或滚轮补齐。
 	if ke.Type == input.KeyPageUp || ke.Type == input.KeyPageDown {
 		_, h := a.term.Size()
-		page := h / 2
-		if page < 1 {
-			page = 1
-		}
+		page := max(h/2, 1)
 		if ke.Type == input.KeyPageUp {
 			m.ScrollUp(page)
 		} else {
@@ -589,15 +580,13 @@ func (a *App) startConfigGet() {
 	a.cfgGetSeq++
 	seq := a.cfgGetSeq
 	ctx := a.runCtx
-	a.commandWG.Add(1)
-	go func() {
-		defer a.commandWG.Done()
+	a.commandWG.Go(func() {
 		cfg, err := a.backend.GetConfig(ctx)
 		select {
 		case a.commands <- commandResult{kind: commandConfigGet, cfgSeq: seq, config: cfg, err: err}:
 		case <-ctx.Done():
 		}
-	}()
+	})
 }
 
 // applyConfigSet 通过 alk.cxykevin.top/config/set 部分更新服务端配置并持久化。
@@ -963,10 +952,7 @@ func (a *App) saveSettings() {
 func (a *App) messageKey(ke input.KeyEvent) {
 	m := a.model
 	_, h := a.term.Size()
-	page := h / 2
-	if page < 1 {
-		page = 1
-	}
+	page := max(h/2, 1)
 	switch {
 	case ke.Type == input.KeyUp:
 		m.ScrollUp(1)
@@ -1011,10 +997,7 @@ func (a *App) dispatchMouse(me input.MouseEvent) {
 	if me.Mod&input.ModShift != 0 {
 		// Shift+wheel 大步滚动（近似 PgUp/PgDn 的一页）。
 		_, h := a.term.Size()
-		step = h / 2
-		if step < 1 {
-			step = 1
-		}
+		step = max(h/2, 1)
 	}
 	switch m.Modal {
 	case model.ModalPermission:
@@ -1134,10 +1117,7 @@ func (a *App) handleSelect(me input.MouseEvent) {
 		m.Selection = &model.Selection{AnchorX: x, AnchorY: y, CurX: x, CurY: y}
 	case input.MouseMove:
 		if m.Selection != nil {
-			cy := y
-			if cy < rect.Y {
-				cy = rect.Y
-			}
+			cy := max(y, rect.Y)
 			if cy >= rect.Y+rect.H {
 				cy = rect.Y + rect.H - 1
 			}
@@ -1640,7 +1620,7 @@ func (a *App) validateAndSubmitElicitation() error {
 	}
 
 	// 简单验证：检查必需字段
-	if required, ok := m.Elicitation.Schema["required"].([]interface{}); ok {
+	if required, ok := m.Elicitation.Schema["required"].([]any); ok {
 		for _, r := range required {
 			if fieldName, ok := r.(string); ok {
 				if val, exists := m.ElicitationFormData[fieldName]; !exists || val == "" {
@@ -1651,10 +1631,10 @@ func (a *App) validateAndSubmitElicitation() error {
 	}
 
 	// 验证枚举值
-	if props, ok := m.Elicitation.Schema["properties"].(map[string]interface{}); ok {
+	if props, ok := m.Elicitation.Schema["properties"].(map[string]any); ok {
 		for field, value := range m.ElicitationFormData {
-			if propSchema, ok := props[field].(map[string]interface{}); ok {
-				if enum, ok := propSchema["enum"].([]interface{}); ok && len(enum) > 0 {
+			if propSchema, ok := props[field].(map[string]any); ok {
+				if enum, ok := propSchema["enum"].([]any); ok && len(enum) > 0 {
 					valid := false
 					for _, e := range enum {
 						if str, ok := e.(string); ok && str == value {

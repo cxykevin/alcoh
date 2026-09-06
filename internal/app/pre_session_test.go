@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -61,12 +62,7 @@ func (b *preSessionTrackingBackend) deletedIDs() []string {
 }
 
 func contains(id string, ids []string) bool {
-	for _, v := range ids {
-		if v == id {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(ids, id)
 }
 
 // waitCondition 轮询直到条件满足或超时。

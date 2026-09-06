@@ -1,6 +1,7 @@
 package view
 
 import (
+	"strings"
 	"time"
 
 	"github.com/cxykevin/alcoh/internal/acp"
@@ -38,10 +39,7 @@ func NewAppView(theme renderer.Theme) *AppView {
 func (v *AppView) Draw(c *renderer.Canvas, r renderer.Rect, m *model.AppModel) {
 	contentRect := r
 	if m.Modal != model.NoModal {
-		modalH := v.modalHeight(m)
-		if modalH > contentRect.H {
-			modalH = contentRect.H
-		}
+		modalH := min(v.modalHeight(m), contentRect.H)
 		contentRect.H -= modalH
 	}
 	switch m.View {
@@ -92,10 +90,7 @@ func (v *AppView) modalHeight(m *model.AppModel) int {
 		h = 8
 	case model.ModalModel:
 		// 顶部"当前"行 + 空行 + 选项列表 + 空行 + 操作提示，再加标题横线 1 行。
-		h = 3 + len(m.ModelOptions()) + 2
-		if h < 6 {
-			h = 6
-		}
+		h = max(3+len(m.ModelOptions())+2, 6)
 	case model.ModalExitConfirm:
 		h = 5
 	case model.ModalServer, model.ModalPlugins:
@@ -148,10 +143,7 @@ func (v *AppView) drawModalAtInput(c *renderer.Canvas, r renderer.Rect, m *model
 		title = i18n.T("推理强度 (thought_level)")
 		content = effortContent(v.Theme, m)
 	case model.ModalModel:
-		h = 3 + len(m.ModelOptions()) + 2
-		if h < 6 {
-			h = 6
-		}
+		h = max(3+len(m.ModelOptions())+2, 6)
 		title = i18n.T("模型选择 (model)")
 		content = modelContent(v.Theme, m)
 	case model.ModalServer:
@@ -287,18 +279,19 @@ func elicitationContent(t renderer.Theme, m *model.AppModel) widget.Widget {
 			prefix = "> "
 		}
 
-		fieldLabel := field
+		var fieldLabel strings.Builder
+		fieldLabel.WriteString(field)
 		// 检查是否必需
-		if required, ok := e.Schema["required"].([]interface{}); ok {
+		if required, ok := e.Schema["required"].([]any); ok {
 			for _, r := range required {
 				if str, ok := r.(string); ok && str == field {
-					fieldLabel += " *"
+					fieldLabel.WriteString(" *")
 					break
 				}
 			}
 		}
 
-		lines = append(lines, prefix+fieldLabel+":")
+		lines = append(lines, prefix+fieldLabel.String()+":")
 
 		// 字段值
 		value := ""
@@ -350,10 +343,7 @@ func (v *AppView) drawSession(c *renderer.Canvas, r renderer.Rect, m *model.AppM
 		return
 	}
 	pp := &PlanPanel{Theme: v.Theme, SpinFrame: v.SpinFrame}
-	planH := pp.Height(s)
-	if planH > r.H {
-		planH = r.H
-	}
+	planH := min(pp.Height(s), r.H)
 
 	// 弹窗接管输入框和状态栏；主体只绘制消息与固定计划面板。
 	if m.ShellPanel && m.Modal == model.NoModal {
@@ -384,10 +374,7 @@ func (v *AppView) drawSession(c *renderer.Canvas, r renderer.Rect, m *model.AppM
 	sep2H := 1 // 输入栏上方横线
 	inputH := 1
 	if m.Input != nil {
-		inputH = m.Input.VisualHeight(r.W, renderer.StringWidth("> "))
-		if inputH > 6 {
-			inputH = 6
-		}
+		inputH = min(m.Input.VisualHeight(r.W, renderer.StringWidth("> ")), 6)
 		maxIn := r.H / 3
 		if inputH > maxIn {
 			inputH = maxIn
@@ -398,16 +385,10 @@ func (v *AppView) drawSession(c *renderer.Canvas, r renderer.Rect, m *model.AppM
 	}
 	slashH := 0
 	if m.SlashOpen {
-		slashH = 8
-		if slashH > r.H/3 {
-			slashH = r.H / 3
-		}
+		slashH = min(8, r.H/3)
 	}
 
-	msgH := r.H - spacerH - statusH - sepH - sep2H - inputH - planH - slashH
-	if msgH < 1 {
-		msgH = 1
-	}
+	msgH := max(r.H-spacerH-statusH-sepH-sep2H-inputH-planH-slashH, 1)
 
 	y := r.Y
 	msgRect := renderer.NewRect(r.X, y, r.W, msgH)
@@ -537,10 +518,7 @@ func (v *AppView) drawHome(c *renderer.Canvas, r renderer.Rect, m *model.AppMode
 		return
 	}
 
-	inputH := m.Input.VisualHeight(right.W, renderer.StringWidth("> "))
-	if inputH > 6 {
-		inputH = 6
-	}
+	inputH := min(m.Input.VisualHeight(right.W, renderer.StringWidth("> ")), 6)
 	if max := right.H - 8; inputH > max {
 		inputH = max
 	}
@@ -550,15 +528,9 @@ func (v *AppView) drawHome(c *renderer.Canvas, r renderer.Rect, m *model.AppMode
 	// 命令输入面板：输入 / 时在输入框上方弹出命令建议列表。
 	slashH := 0
 	if m.SlashOpen {
-		slashH = 8
-		if slashH > right.H/3 {
-			slashH = right.H / 3
-		}
+		slashH = min(8, right.H/3)
 	}
-	y := right.Y + right.H - inputH - 2 - slashH
-	if y < right.Y+6 {
-		y = right.Y + 6
-	}
+	y := max(right.Y+right.H-inputH-2-slashH, right.Y+6)
 	// 极矮终端：输入框不能越过终端底部，且需让出底部错误提示行（contentRect.H-2），
 	// 避免输入框/提示行与底部提示重叠。
 	if y+inputH > right.Y+right.H-2 {
@@ -665,10 +637,7 @@ func (sl *SessionList) Draw(c *renderer.Canvas, r renderer.Rect, m *model.AppMod
 	const itemRows = 3
 	headerRows := 2 // "sessions" 标题 + 间隔行
 	hintRows := 1   // 底部 i18n.T("r 刷新  d 删除会话") 提示行
-	visible := (inner.H - headerRows - hintRows - 1) / itemRows
-	if visible < 1 {
-		visible = 1
-	}
+	visible := max((inner.H-headerRows-hintRows-1)/itemRows, 1)
 	if visible > len(m.Sessions) {
 		visible = len(m.Sessions)
 	}
@@ -676,10 +645,7 @@ func (sl *SessionList) Draw(c *renderer.Canvas, r renderer.Rect, m *model.AppMod
 	if m.HomeListFocused && m.HomeSelected >= 0 {
 		selIdx = m.HomeSelected
 	}
-	start := selIdx - visible/2
-	if start < 0 {
-		start = 0
-	}
+	start := max(selIdx-visible/2, 0)
 	if maxStart := len(m.Sessions) - visible; start > maxStart {
 		start = maxStart
 	}

@@ -733,9 +733,7 @@ func (a *App) startCommand(result commandResult, fn func(context.Context) (acp.S
 		return
 	}
 	ctx := a.runCtx
-	a.commandWG.Add(1)
-	go func() {
-		defer a.commandWG.Done()
+	a.commandWG.Go(func() {
 		session, err := fn(ctx)
 		result.session = session
 		result.err = err
@@ -743,7 +741,7 @@ func (a *App) startCommand(result commandResult, fn func(context.Context) (acp.S
 		case a.commands <- result:
 		case <-ctx.Done():
 		}
-	}()
+	})
 }
 
 // drain 非阻塞清空事件通道。
@@ -936,15 +934,13 @@ func (a *App) refreshSessionsLocked() {
 }
 
 func (a *App) startSessionPage(generation uint64, cursor string, appendPage bool) {
-	a.commandWG.Add(1)
-	go func() {
-		defer a.commandWG.Done()
+	a.commandWG.Go(func() {
 		page, err := a.backend.ListSessionsPage(a.runCtx, cursor)
 		select {
 		case a.commands <- commandResult{kind: commandSession, opID: generation, sessionID: cursor, page: &sessionPageResult{page: page, appendPage: appendPage}, err: err}:
 		case <-a.runCtx.Done():
 		}
-	}()
+	})
 }
 
 // loadMoreSessions fetches the next page when selection nears the list bottom.
@@ -1000,7 +996,7 @@ func (a *App) RunDump(prompt string, frames int) error {
 	a.resetBuffers(w, h)
 
 	eventsCh := a.backend.Events()
-	for i := 0; i < frames; i++ {
+	for i := range frames {
 		// drain 全部积压事件
 		a.drain(eventsCh)
 		a.spinFrame = i

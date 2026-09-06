@@ -67,10 +67,7 @@ func (p *ShellPanel) Draw(c *renderer.Canvas, r renderer.Rect, m *model.AppModel
 		if s.Command != "" {
 			title = s.Command
 		}
-		maxTitle := left - 3
-		if maxTitle < 1 {
-			maxTitle = 1
-		}
+		maxTitle := max(left-3, 1)
 		c.PutText(r.X+1, y, prefix+renderer.Truncate(title, maxTitle), st)
 	}
 	if showPreview && right > 1 {
@@ -123,7 +120,7 @@ func (p *ShellPanel) preview(c *renderer.Canvas, r renderer.Rect, s *model.Termi
 		if i+2 >= r.H-1 {
 			break
 		}
-		for _, part := range strings.Split(line, "\n") {
+		for part := range strings.SplitSeq(line, "\n") {
 			// VT screens are fixed-width and pad short/empty output with spaces.
 			// Trim that padding before truncating, otherwise Truncate interprets
 			// the padding as overflow and adds a misleading ellipsis.

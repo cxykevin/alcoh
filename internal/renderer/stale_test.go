@@ -148,8 +148,8 @@ func TestDiffClearsStaleWideChars(t *testing.T) {
 	st := newSim(W, H)
 	st.apply(old, new)
 	// 期望：终端内容与新帧完全一致（无残留）
-	for y := 0; y < H; y++ {
-		for x := 0; x < W; x++ {
+	for y := range H {
+		for x := range W {
 			tc, wc := st.grid[y*W+x], new.Get(x, y)
 			if tc.R != wc.R || tc.Width != wc.Width {
 				t.Errorf("stale cell at (%d,%d): terminal=%q(%d) want=%q(%d)",
@@ -173,8 +173,8 @@ func TestDiffNarrowOverWideWithAdjacentWide(t *testing.T) {
 
 	st := newSim(W, H)
 	st.apply(old, new)
-	for y := 0; y < H; y++ {
-		for x := 0; x < W; x++ {
+	for y := range H {
+		for x := range W {
 			tc, wc := st.grid[y*W+x], new.Get(x, y)
 			if tc.R != wc.R || tc.Width != wc.Width {
 				t.Errorf("stale cell at (%d,%d): terminal=%q(%d) want=%q(%d)",
@@ -195,8 +195,8 @@ func TestDiffShiftLeftClearsTail(t *testing.T) {
 
 	st := newSim(W, H)
 	st.apply(old, new)
-	for y := 0; y < H; y++ {
-		for x := 0; x < W; x++ {
+	for y := range H {
+		for x := range W {
 			tc, wc := st.grid[y*W+x], new.Get(x, y)
 			if tc.R != wc.R || tc.Width != wc.Width {
 				t.Errorf("stale cell at (%d,%d): terminal=%q(%d) want=%q(%d)",
@@ -217,8 +217,8 @@ func TestDiffWideToNarrowClearsContinuation(t *testing.T) {
 
 	st := newSim(W, H)
 	st.apply(old, new)
-	for y := 0; y < H; y++ {
-		for x := 0; x < W; x++ {
+	for y := range H {
+		for x := range W {
 			tc, wc := st.grid[y*W+x], new.Get(x, y)
 			if tc.R != wc.R || tc.Width != wc.Width {
 				t.Errorf("stale cell at (%d,%d): terminal=%q(%d) want=%q(%d)",

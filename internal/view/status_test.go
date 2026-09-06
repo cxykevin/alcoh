@@ -29,7 +29,7 @@ func TestStatusBarStates(t *testing.T) {
 		sb := &StatusBar{Theme: theme, SpinFrame: 0}
 		sb.Draw(canv, renderer.NewRect(0, 0, 40, 1), m)
 		var txt []rune
-		for x := 0; x < 40; x++ {
+		for x := range 40 {
 			cell := b.Get(x, 0)
 			if cell.Width == 0 {
 				continue
@@ -63,7 +63,7 @@ func TestStatusBarModelShowsConfigFallback(t *testing.T) {
 	sb := &StatusBar{Theme: theme, SpinFrame: 0}
 	sb.Draw(renderer.NewCanvas(b), renderer.NewRect(0, 0, 50, 1), m)
 	var txt []rune
-	for x := 0; x < 50; x++ {
+	for x := range 50 {
 		cell := b.Get(x, 0)
 		if cell.Width == 0 {
 			continue

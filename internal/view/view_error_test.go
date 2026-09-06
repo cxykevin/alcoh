@@ -90,10 +90,7 @@ func TestHomeSlashPanelCoversBackground(t *testing.T) {
 
 	// 面板在输入框上方，高度 slashH（主页固定 8 行，右侧面板 1/3 封顶）。
 	rightX := 32
-	slashH := 8
-	if slashH > h/3 {
-		slashH = h / 3
-	}
+	slashH := min(8, h/3)
 	// 面板区域内应为默认背景空格：既不是主题 PanelBg，也不是下方 logo 的白底。
 	y := h - slashH - 3 // 面板中某一行（输入框上方）
 	foundDefault := false
@@ -181,7 +178,7 @@ func TestDrawBottomPromptStyle(t *testing.T) {
 
 			y := h - 2
 			var txt []rune
-			for x := 0; x < w; x++ {
+			for x := range w {
 				cell := b.Get(x, y)
 				if cell.Width == 0 {
 					continue

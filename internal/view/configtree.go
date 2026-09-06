@@ -38,10 +38,7 @@ func (ct *ConfigTree) draw(c *renderer.Canvas, r renderer.Rect, ed *model.Config
 
 	// 当前页面列表：底部保留两行（编辑输入框 + 操作提示）。选中项保持可见：
 	// 先尝试居中，越界时收拢到边界。可新增的集合页末尾有「(新增)」行。
-	visible := r.H - (y - r.Y) - 2
-	if visible < 1 {
-		visible = 1
-	}
+	visible := max(r.H-(y-r.Y)-2, 1)
 	rows := ed.CurrentChildren()
 	addIdx := ed.AddRowIndex()
 	copyIdx := ed.CopyRowIndex()
@@ -50,10 +47,7 @@ func (ct *ConfigTree) draw(c *renderer.Canvas, r renderer.Rect, ed *model.Config
 	count := ed.RowCount()
 	start := 0
 	if count > 0 {
-		start = ed.Selected - visible/2
-		if start < 0 {
-			start = 0
-		}
+		start = max(ed.Selected-visible/2, 0)
 		if maxStart := count - visible; start > maxStart {
 			start = maxStart
 		}

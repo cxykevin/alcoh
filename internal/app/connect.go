@@ -153,15 +153,13 @@ func (a *App) submitConnectForm() {
 		return
 	}
 	ctx := a.runCtx
-	a.commandWG.Add(1)
-	go func() {
-		defer a.commandWG.Done()
+	a.commandWG.Go(func() {
 		models, err := provider.FetchModels(ctx, baseURL, key)
 		select {
 		case a.commands <- commandResult{kind: commandConnectFetch, models: models, err: err}:
 		case <-ctx.Done():
 		}
-	}()
+	})
 }
 
 // connectSelectKey 模型选择步骤：↑↓ 选择、Enter 确认写入（所选模型按规则自动
@@ -313,11 +311,9 @@ func (a *App) ensureCompressForModel(modelID string) {
 		return
 	}
 	ctx := a.runCtx
-	a.commandWG.Add(1)
-	go func() {
-		defer a.commandWG.Done()
+	a.commandWG.Go(func() {
 		_ = a.applyCompressForModel(ctx, modelID, 140000)
-	}()
+	})
 }
 
 // applyCompressForModel 定位服务端配置中 ModelID 匹配的模型并写回其

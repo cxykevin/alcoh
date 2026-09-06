@@ -145,9 +145,9 @@ var en = map[string]string{
 	"↑↓ 选择    Enter 确认    Esc 取消": "↑↓ select    Enter confirm    Esc cancel",
 
 	// ---- 首页 ----
-	"( 无会话 )": "( no sessions )",
-	"r 刷新  d 删除会话":  "r refresh  d delete session",
-	"← 恢复会话":  "← resume session",
+	"( 无会话 )":      "( no sessions )",
+	"r 刷新  d 删除会话": "r refresh  d delete session",
+	"← 恢复会话":       "← resume session",
 
 	// ---- 服务端配置编辑器 ----
 	"服务端配置 (alk.cxykevin.top/config)": "Server config (alk.cxykevin.top/config)",

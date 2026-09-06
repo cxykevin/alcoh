@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -276,10 +277,10 @@ func (s *session) start() {
 	// 已重放的初始元数据（config / commands）被重建会话清空。
 	s.backend.push(&acp.SessionInfoUpdateEvent{
 		SessionID: s.id,
-		Title:     strPtr(s.title),
-		Model:     strPtr("demo-go-1"),
-		CWD:       strPtr("."),
-		UpdatedAt: strPtr("2026-08-06T00:00:00Z"),
+		Title:     new(s.title),
+		Model:     new("demo-go-1"),
+		CWD:       new("."),
+		UpdatedAt: new("2026-08-06T00:00:00Z"),
 	})
 	s.backend.push(&acp.CommandsUpdateEvent{SessionID: s.id, Commands: []acp.AvailableCommand{
 		{Name: "explain", Description: "解释当前实现"},
@@ -310,7 +311,7 @@ func (s *session) start() {
 		IsUser:    true,
 		IsThought: true,
 		Message: acp.Message{MessageID: "user-thought-0", ContentSet: true,
-			Content: []acp.ContentBlock{{Type: "text", Text: strPtr("（用户初始想法：先做一个最小可用版本，再叠加错误处理）")}}},
+			Content: []acp.ContentBlock{{Type: "text", Text: new("（用户初始想法：先做一个最小可用版本，再叠加错误处理）")}}},
 	})
 	// 推送一条欢迎助手消息（附带非文本 ContentBlock 占位）
 	imgMime := "image/png"
@@ -325,7 +326,7 @@ func (s *session) start() {
 		SessionID: s.id,
 		Message: acp.Message{MessageID: "welcome", ContentSet: true,
 			Content: []acp.ContentBlock{
-				{Type: "text", Text: strPtr("演示 agent 已就绪。输入提示词试试（如：帮我实现一个 TCP 服务器）。")},
+				{Type: "text", Text: new("演示 agent 已就绪。输入提示词试试（如：帮我实现一个 TCP 服务器）。")},
 				{Type: "image", MimeType: &imgMime, URI: &imgURI, Name: &imgName},
 			}},
 	})
@@ -374,7 +375,7 @@ func (s *session) runScript(prompt string, done <-chan struct{}) {
 	}
 	b.push(&acp.MessageUpdateEvent{
 		SessionID: s.id,
-		Message:   acp.Message{MessageID: "thought-1", ContentSet: true, Content: []acp.ContentBlock{{Type: "text", Text: strPtr(joinLines(thoughts))}}},
+		Message:   acp.Message{MessageID: "thought-1", ContentSet: true, Content: []acp.ContentBlock{{Type: "text", Text: new(joinLines(thoughts))}}},
 	})
 
 	// 2. 工具调用序列
@@ -436,7 +437,7 @@ func (s *session) runScript(prompt string, done <-chan struct{}) {
 					ToolCallID: "perm-cmd-0",
 					Title:      "run_command",
 					Kind:       acp.KindExecute,
-					Content:    []acp.ToolCallContent{{Type: "text", Text: strPtr("command: go run .")}},
+					Content:    []acp.ToolCallContent{{Type: "text", Text: new("command: go run .")}},
 				},
 			},
 			Options: []acp.PermissionOption{
@@ -510,14 +511,15 @@ func (s *session) resumeStream() {
 }
 
 func joinLines(lines []string) string {
-	out := ""
+	var out strings.Builder
 	for i, l := range lines {
 		if i > 0 {
-			out += "\n"
+			out.WriteString("\n")
 		}
-		out += l
+		out.WriteString(l)
 	}
-	return out
+	return out.String()
 }
 
-func strPtr(s string) *string { return &s }
+//go:fix inline
+func strPtr(s string) *string { return new(s) }

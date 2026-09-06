@@ -1,6 +1,7 @@
 package view
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/cxykevin/alcoh/internal/acp"
@@ -343,18 +344,14 @@ func (mc *ModelContent) Draw(c *renderer.Canvas, r renderer.Rect) {
 	y++
 
 	// 可用列表高度：当前行之后为选项区域，底部至少保留一行操作提示。
-	available := r.H - (y - r.Y) - 1 // 保留底部提示行
-	if available < 1 {
-		available = 1
-	}
+	available := max(
+		// 保留底部提示行
+		r.H-(y-r.Y)-1, 1)
 	if available > len(mc.Options) {
 		available = len(mc.Options)
 	}
 	// 选中项保持可见：先尝试居中，越界时收拢到边界。
-	start := mc.Selected - available/2
-	if start < 0 {
-		start = 0
-	}
+	start := max(mc.Selected-available/2, 0)
 	if maxStart := len(mc.Options) - available; start > maxStart {
 		start = maxStart
 	}
@@ -451,7 +448,7 @@ func wrapText(text string, width int) []string {
 		return nil
 	}
 	var lines []string
-	for _, paragraph := range strings.Split(text, "\n") {
+	for paragraph := range strings.SplitSeq(text, "\n") {
 		if paragraph == "" {
 			lines = append(lines, "")
 			continue
@@ -506,10 +503,5 @@ func (tl *TextLines) Draw(c *renderer.Canvas, r renderer.Rect) {
 }
 
 func contains(xs []int, v int) bool {
-	for _, x := range xs {
-		if x == v {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(xs, v)
 }

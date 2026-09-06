@@ -13,7 +13,7 @@ import (
 // effortRowText 提取缓冲区第 y 行的文本（跳过宽字符续列）。
 func effortRowText(b *renderer.Buffer, y, w int) string {
 	var txt []rune
-	for x := 0; x < w; x++ {
+	for x := range w {
 		cell := b.Get(x, y)
 		if cell.Width == 0 {
 			continue
@@ -162,7 +162,7 @@ func TestEffortTopRightIndicator(t *testing.T) {
 
 	// unset → 不显示，横线完整贯穿。
 	b = draw("unset")
-	for x := 0; x < w; x++ {
+	for x := range w {
 		if c := b.Get(x, sepY); c.R != '─' {
 			t.Errorf("unset row x=%d = %q, want horizontal line ─", x, c.R)
 		}
