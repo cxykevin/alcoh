@@ -5,20 +5,34 @@ import (
 	"bufio"
 	"errors"
 	"io"
+	"time"
 	"unicode/utf8"
 )
 
 // ErrClosed 表示输入流已关闭。
 var ErrClosed = errors.New("input closed")
 
+// escapeWindow 是 ESC 之后等待序列后续字节的最长等待窗口。
+// 终端把 Alt+X 等组合键编码为 ESC 前缀，而独立的 Esc 键后面不跟任何字节，
+// 两者只能靠时限区分：窗口内没有后续字节即判定为独立 Esc 键
+// （与 readline/vim 的 keyseq-timeout 同一思路）。测试可临时放宽该窗口。
+var escapeWindow = 50 * time.Millisecond
+
+// deadlineReader 是支持读超时的输入源（终端、管道等 *os.File）。
+// 不支持时解析器退回"缓冲区为空即独立 Esc"的即时判定，保持既有语义。
+type deadlineReader interface {
+	SetReadDeadline(t time.Time) error
+}
+
 // Parser 把字节流解析为 KeyEvent。
 type Parser struct {
-	rd *bufio.Reader
+	rd  *bufio.Reader
+	src io.Reader
 }
 
 // NewParser 创建从 r 读取的解析器。
 func NewParser(r io.Reader) *Parser {
-	return &Parser{rd: bufio.NewReaderSize(r, 256)}
+	return &Parser{rd: bufio.NewReaderSize(r, 256), src: r}
 }
 
 // Next 阻塞返回下一个输入事件（按键或鼠标）。输入流关闭时返回 ErrClosed。
@@ -53,9 +67,10 @@ func (p *Parser) Next() (Event, error) {
 }
 
 // handleEscape 处理 ESC 前缀后的字节。
-// 这是原始的无超时行为：缓冲中没有后续字节时，立即视为独立 Esc。
+// 独立的 Esc 键与"Esc 前缀的序列/Alt 组合键"共享同一个 0x1b 字节，只能靠
+// 后续字节是否在 escapeWindow 内到达来区分：超时则判定为独立 Esc 键。
 func (p *Parser) handleEscape() (Event, error) {
-	if p.rd.Buffered() == 0 {
+	if !p.escapeHasContinuation() {
 		return KeyEventOf(SimpleKey(KeyEsc)), nil
 	}
 	b, err := p.rd.ReadByte()
@@ -71,6 +86,14 @@ func (p *Parser) handleEscape() (Event, error) {
 	case 'O':
 		ke, err := p.parseSS3()
 		return KeyEventOf(ke), err
+	case 0x1b:
+		// 连续的 Esc 字节：终端会把快速连按合并进同一读批次。第一个字节按
+		// 独立 Esc 键处理，第二个退回缓冲，由下一次 Next 解析成第二次 Esc，
+		// 避免整批被当成一次 Alt+Esc 而丢失（打断快捷键必须逐次生效）。
+		if err := p.rd.UnreadByte(); err != nil {
+			return Event{}, err
+		}
+		return KeyEventOf(SimpleKey(KeyEsc)), nil
 	default:
 		r, err := p.readRune(b)
 		if err != nil {
@@ -78,6 +101,28 @@ func (p *Parser) handleEscape() (Event, error) {
 		}
 		return KeyEventOf(RuneKey(r, ModAlt)), nil
 	}
+}
+
+// escapeHasContinuation 报告 ESC 字节之后是否还有后续字节。缓冲区中已有字节
+// 时立即返回；否则最多等待 escapeWindow，让被终端拆包送达的序列/组合键字节
+// 赶上。输入源不支持读超时（如测试中的 bytes.Reader）时按无后续字节处理。
+func (p *Parser) escapeHasContinuation() bool {
+	if p.rd.Buffered() > 0 {
+		return true
+	}
+	src, ok := p.src.(deadlineReader)
+	if !ok {
+		return false
+	}
+	if err := src.SetReadDeadline(time.Now().Add(escapeWindow)); err != nil {
+		return false
+	}
+	defer func() { _ = src.SetReadDeadline(time.Time{}) }()
+	if _, err := p.rd.Peek(1); err != nil {
+		// 超时或读错误：没有后续字节，按独立 Esc 键处理。
+		return false
+	}
+	return p.rd.Buffered() > 0
 }
 
 // ctrlKey 把控制字节映射为 Ctrl 组合键。
