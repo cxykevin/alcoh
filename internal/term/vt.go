@@ -1,13 +1,37 @@
 package term
 
+import "github.com/cxykevin/alcoh/internal/renderer"
+
 // VTScreen is a small, dependency-free VT100/xterm screen model for terminal previews.
 type VTScreen struct {
 	Width, Height int
 	Cells         [][]rune
 	X, Y          int
-	state         vtState
-	params        []int
-	private       bool
+	// Scrolled 记录自上次 Reset 以来被顶出屏幕上沿的行数：内容总行数即
+	// Scrolled+Height（见 UsedRows），预览滚动条据此计算可回看的范围。
+	Scrolled int
+	// col 是当前行已占用的显示列数（宽字符按 2 列计）：换行按显示宽度而非
+	// rune 个数判断，避免 CJK 行末刚好放不下时整字被挤掉。
+	col     int
+	state   vtState
+	params  []int
+	private bool
+}
+
+// UsedRows 返回内容占用的行数（屏幕尚未滚动时即光标行 + 1）。
+func (s *VTScreen) UsedRows() int {
+	if s.Scrolled > 0 {
+		return s.Scrolled + s.Height
+	}
+	return s.Y + 1
+}
+
+// Line 返回指定行的文本（宽度不足或越界时返回空串）。
+func (s *VTScreen) Line(y int) string {
+	if y < 0 || y >= len(s.Cells) {
+		return ""
+	}
+	return string(s.Cells[y])
 }
 
 type vtState uint8
@@ -45,6 +69,20 @@ func (s *VTScreen) reset() {
 	}
 	s.X = 0
 	s.Y = 0
+	s.Scrolled = 0
+	s.col = 0
+}
+
+// rowWidth 返回当前行前 n 个 rune 占用的显示列数。
+func (s *VTScreen) rowWidth(n int) int {
+	if n > len(s.Cells[s.Y]) {
+		n = len(s.Cells[s.Y])
+	}
+	w := 0
+	for i := 0; i < n; i++ {
+		w += renderer.RuneWidth(s.Cells[s.Y][i])
+	}
+	return w
 }
 func (s *VTScreen) clearLine() {
 	for x := 0; x < s.Width; x++ {
@@ -64,6 +102,7 @@ func (s *VTScreen) clearBelow() {
 }
 func (s *VTScreen) newline() {
 	s.X = 0
+	s.col = 0
 	s.Y++
 	if s.Y >= s.Height {
 		copy(s.Cells, s.Cells[1:])
@@ -72,6 +111,7 @@ func (s *VTScreen) newline() {
 			s.Cells[s.Height-1][x] = ' '
 		}
 		s.Y = s.Height - 1
+		s.Scrolled++
 	}
 }
 func (s *VTScreen) put(r rune) {
@@ -81,26 +121,34 @@ func (s *VTScreen) put(r rune) {
 	}
 	if r == '\r' {
 		s.X = 0
+		s.col = 0
 		return
 	}
 	if r == '\b' {
 		if s.X > 0 {
 			s.X--
+			s.col = s.rowWidth(s.X)
 		}
 		return
 	}
 	if r == '\t' {
-		s.X = (s.X + 8) &^ 7
-		if s.X >= s.Width {
-			s.newline()
+		// 走到下一个 8 列制表位：按显示列推进（宽字符同样算 2 列）。
+		for {
+			s.put(' ')
+			if s.col%8 == 0 {
+				break
+			}
 		}
 		return
 	}
-	if s.X >= s.Width {
+	// 按显示宽度换行：宽度不足时先换行再写，CJK 不会被当成 1 列而挤出整字。
+	rw := renderer.RuneWidth(r)
+	if s.col+rw > s.Width {
 		s.newline()
 	}
 	s.Cells[s.Y][s.X] = r
 	s.X++
+	s.col += rw
 }
 func (s *VTScreen) Feed(input string) {
 	for _, r := range input {
@@ -192,6 +240,7 @@ func (s *VTScreen) csi(final rune) {
 	if s.Y >= s.Height {
 		s.Y = s.Height - 1
 	}
+	s.col = s.rowWidth(s.X)
 }
 func (s *VTScreen) Lines() []string {
 	out := make([]string, s.Height)

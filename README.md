@@ -24,6 +24,7 @@ alcoh 实现了大部分的 ACP v2 协议内容，因此可以通过命令行访
 - **命令面板**：`/` 打开本地与 agent 命令面板；`/settings` 打开本地设置；`/effort`、`/model` 调整推理强度与切换模型
 - **服务端配置编辑器**：`/server` 经 alkaid0 扩展 RPC 浏览/编辑服务端配置，编辑即自动保存（只适配 alkaid0 后端）
 - **新手引导**：启动进入引导（与 `/connect` 向导同义：选服务商 → 填 key → 拉取模型列表 → 选模型 → 推理强度 → 操作教学）（只适配 alkaid0 后端）
+- **Shells 面板**：实时查看 agent 启动的终端，活跃 shell 在上、历史 shell 与内容在下（alkaid0 v0.5+）
 - **跨平台**：Linux、macOS、Windows Terminal
 
 ## 安装
@@ -141,6 +142,39 @@ alcoh 以**本地子进程 + JSONLines JSON-RPC 2.0 + protobuf payload** 的方�
 - **主页预创建会话**：进入主页（启动或 `/clear` 返回）时，若服务端公布 `session.delete` 能力，客户端同步预创建一个空会话（不进入会话视图），用它承载 agent 在 `session/new` 后广播的 `config_option_update`，使 `/effort` 与 `/model` 在主页命令面板直接可用。主页直接输入 prompt 回车时复用该会话作为用户的新会话（不删除、不新建）；恢复旧会话、程序退出或预创建会话确无用途时才把它删除，不在服务端残留。
 - **会话恢复与删除**：首页选中会话按 `Enter` 恢复（`session/resume`），按 `d` 删除（`session/delete`，仅当 agent 声明对应能力时可用）。
 - **打断与退出**：会话内按 `Esc` 打断正在进行的 AI 响应（`session/cancel`）；输入框为空时 `Ctrl+C` 首次提示、2 秒内再次按下才退出。
+
+---
+
+## Shells 面板
+
+agent 经 `run` 工具启动的终端会实时推送到 shells 面板（仅当服务端声明 `alk.cxykevin.top/alkaid0/v0.5` 能力时可用）。输入框为空时按 `↓` 打开面板（服务端支持终端协议即可打开，即使暂时没有任何 shell）：`↑`/`↓` 选择终端、`PgUp`/`PgDn`（或预览区内滚轮）滚动预览内容、`Enter` 全屏预览、`x` 结束后台 shell、`r` 重新拉取（历史段 + 选中终端的最新内容）、`Esc` 退出。
+
+面板分两段展示，**每段内部都是"新的在上"**：
+
+- **上半段：活跃 shell**——正在运行的终端，新启动的排在最上面。输入框下方的 `<n> shell` 徽标与面板标题里的 `n` 都只统计这一段，历史 shell 不计入。
+- **下半段：历史 shell**——已结束的终端，**最近结束的排在最上面**，内容保留、可随时回看，数量在面板标题里以 `· history <n>` 单独标注。
+
+每条 shell 占两行：第一行是 `run` 的 reason（无则回退标题 / 终端 ID）与**右对齐的彩色状态**（运行中=蓝、已完成=绿、已终止=黄、失败=红），第二行是启动命令；预览区标题同样右对齐显示状态。面板全部文案（标题、计数、状态、页脚、空状态）都走 i18n，随界面语言切换。
+
+右侧预览是一个按框体尺寸实时重建的 VT 屏幕：长行按框宽**自动换行**、内容铺满整个预览框（含全屏预览），终端文字统一白色，ANSI 控制序列按 VT100/xterm 语义解析。
+
+预览最右一列是滚动条（内容不超一屏时显示为细点线），可回看的历史由屏幕缓冲保留（视口高度 + 最多 400 行）：
+
+- **粘滞**：停留在底部时（含刚打开面板、刚切到该终端）新输出自动跟随；向上滚动后位置保持不动，滚回底部即恢复跟随。
+- **切换终端一律回到最底部**：`↑`/`↓` 换选时该终端的预览总是从最新输出开始。
+
+活跃段有两个来源：
+
+- **实时推送**：后台任务（`run` 带 `background`）会推 `alk.cxykevin.top/terminal_update` 的 `start` / `running` / `stop`，行内与预览随之更新（运行期内容由服务端按 60s 周期推送）。
+- **主动查询**：前台 `run`（不带 `background`）**不推** `start` / `running`，正在运行的终端只能靠进入会话、打开面板或按 `r` 时调用的 `alk.cxykevin.top/session/terminal/list` 列出来；这类终端在命令结束前服务端不提供内容，结束后随 `stop` 推送与历史给出完整输出。
+
+历史内容有三个来源，互为补充：
+
+- **聊天记录复原（元数据）**：恢复会话时服务端会回放历史 `tool_call_update`，其中的 `run` 工具调用带 `alk.cxykevin.top/terminal_id`，工具参数则以私有 `alk.cxykevin.top/calling_info` 块随 `content` 推送（alkaid0 **不发送**标准 `rawInput`，直播与回放是同一份，见 alkaid0 `docs/acp/extension.md` §4.1）。客户端据此把工具调用与终端对应起来，**用工具参数复原终端的 reason 与命令**——这样即使是服务端只剩持久化副本、只有内容的历史终端，列表也能显示完整两行，而不是只剩 `@temp/run/<n>`。同一终端会被多次调用引用（启动 shell，随后 `wait` / `kill`），只补空字段、且忽略 `wait` / `kill` 的参数，避免用 run id 覆盖真实命令。
+- **服务端查询（内容）**：进入会话、打开面板或按 `r` 时调用 `alk.cxykevin.top/session/terminal/history`（`alk.cxykevin.top/alkaid0/v0.6` 能力）取回该会话全部已结束终端，包括服务端重启前结束、内存中只剩持久化副本的条目（响应里带 `restored`）。服务端不支持 v0.6 时静默跳过，面板仅显示本地归档的历史。
+- **本地归档**：终端结束时（`alk.cxykevin.top/terminal_update` 的 `stop`，或后台任务结束的 `shell_stop`）把已收到的内容移入历史段，而不是直接丢弃。
+
+终端 ID 与 `run` 工具返回的 run id 是同一个标识（`@temp/run/<n>`，见 alkaid0 `docs/acp/extension.md` §5.4），`tool_call_update` 顶层的 `alk.cxykevin.top/terminal_id` 也用它，因此工具调用与终端内容一一对应。
 
 ---
 

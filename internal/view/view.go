@@ -448,10 +448,10 @@ func (v *AppView) drawSession(c *renderer.Canvas, r renderer.Rect, m *model.AppM
 	}
 	ib.Draw(c, inputRect)
 
-	// 输入框下方横线；覆盖左侧显示活动 shell 数量。
+	// 输入框下方横线；覆盖左侧显示活动 shell 数量（不含历史段 shell）。
 	sep(y)
-	if n := len(m.Shells()); n > 0 {
-		badge := itoa(n) + " shell"
+	if n := len(m.ActiveShells()); n > 0 {
+		badge := i18n.T("%d 个终端", n)
 		if renderer.StringWidth(badge)+2 < r.W {
 			badgeStyle := v.Theme.StyleOn(renderer.RGB(255, 255, 255), renderer.RGB(0, 190, 200)).WithBold(true)
 			c.PutText(r.X+1, y, " "+badge+" ", badgeStyle)

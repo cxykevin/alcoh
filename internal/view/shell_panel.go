@@ -1,9 +1,13 @@
 package view
 
 import (
+	"strings"
+
+	"github.com/cxykevin/alcoh/internal/i18n"
 	"github.com/cxykevin/alcoh/internal/model"
 	"github.com/cxykevin/alcoh/internal/renderer"
-	"strings"
+	"github.com/cxykevin/alcoh/internal/term"
+	"github.com/cxykevin/alcoh/internal/widget"
 )
 
 // ShellPanel renders the live shell list and selected VT preview.
@@ -15,6 +19,13 @@ type ShellPanel struct {
 func (p *ShellPanel) Draw(c *renderer.Canvas, r renderer.Rect, m *model.AppModel) {
 	xs := m.Shells()
 	if len(xs) == 0 {
+		// 还没有任何 shell：仍画出面板骨架，提示内容由服务端查询而来。
+		c.PutText(r.X+1, r.Y, i18n.T("终端"), p.Theme.Style(p.Theme.Text).WithBold(true))
+		c.PutText(r.X+9, r.Y, i18n.T("%d", 0), p.Theme.Style(p.Theme.Accent).WithBold(true))
+		if r.H > 2 {
+			c.PutText(r.X+1, r.Y+2, i18n.T("暂无 shell，按 r 重新拉取"), p.Theme.Style(p.Theme.TextMuted).WithDim(true))
+		}
+		p.footer(c, r)
 		return
 	}
 	if m.ShellSelected < 0 {
@@ -23,13 +34,19 @@ func (p *ShellPanel) Draw(c *renderer.Canvas, r renderer.Rect, m *model.AppModel
 	if m.ShellSelected >= len(xs) {
 		m.ShellSelected = len(xs) - 1
 	}
+	// 列表顺序由模型保证：前 activeCount 个是活跃 shell，其余是历史 shell；
+	// 两段内部都是"新的在上"。
+	activeCount := len(m.ActiveShells())
+	if activeCount > len(xs) {
+		activeCount = len(xs)
+	}
 	if m.ShellFullscreen {
 		box := r
 		if box.H > 0 {
 			box.H-- // Keep the footer outside the preview border.
 		}
 		p.PreviewRect = box
-		p.drawPreviewBox(c, box, xs[m.ShellSelected])
+		p.drawPreviewBox(c, box, xs[m.ShellSelected], m)
 		p.footer(c, r)
 		return
 	}
@@ -47,28 +64,24 @@ func (p *ShellPanel) Draw(c *renderer.Canvas, r renderer.Rect, m *model.AppModel
 		left = r.W - 1
 	}
 	right := r.W - left
-	c.PutText(r.X+1, r.Y, "shells", p.Theme.Style(p.Theme.Text).WithBold(true))
-	c.PutText(r.X+8, r.Y, "n "+shellCount(len(xs)), p.Theme.Style(p.Theme.Accent).WithBold(true))
+	maxLeft := max(left-3, 1)
+	c.PutText(r.X+1, r.Y, i18n.T("终端"), p.Theme.Style(p.Theme.Text).WithBold(true))
+	c.PutText(r.X+9, r.Y, renderer.Truncate(shellSummary(activeCount, len(xs)-activeCount), max(left-9, 1)), p.Theme.Style(p.Theme.Accent).WithBold(true))
+	y := r.Y + 2
 	for i, s := range xs {
-		y := r.Y + 2 + i
-		if y >= r.Y+r.H-2 {
+		if i == activeCount {
+			if y >= r.Y+r.H-2 {
+				break
+			}
+			p.sectionLabel(c, r.X+1, y, left, i18n.T("历史 (%d)", len(xs)-activeCount))
+			y++
+		}
+		// 每条 shell 占两行：reason + 右对齐状态 / 命令。
+		if y+1 >= r.Y+r.H-1 {
 			break
 		}
-		st := p.Theme.Style(p.Theme.TextMuted)
-		prefix := "  "
-		if i == m.ShellSelected {
-			prefix = "> "
-			st = p.Theme.Style(p.Theme.Primary).WithBold(true)
-		}
-		title := s.Title
-		if title == "" {
-			title = s.ID
-		}
-		if s.Command != "" {
-			title = s.Command
-		}
-		maxTitle := max(left-3, 1)
-		c.PutText(r.X+1, y, prefix+renderer.Truncate(title, maxTitle), st)
+		p.drawShellRow(c, r.X+1, y, maxLeft, s, i == m.ShellSelected)
+		y += 2
 	}
 	if showPreview && right > 1 {
 		previewBox := renderer.NewRect(r.X+left+1, r.Y, right-1, r.H)
@@ -76,11 +89,51 @@ func (p *ShellPanel) Draw(c *renderer.Canvas, r renderer.Rect, m *model.AppModel
 			previewBox.H-- // Keep the footer outside the preview border.
 		}
 		p.PreviewRect = previewBox
-		p.drawPreviewBox(c, previewBox, xs[m.ShellSelected])
+		p.drawPreviewBox(c, previewBox, xs[m.ShellSelected], m)
 	}
 	p.footer(c, r)
 }
-func (p *ShellPanel) drawPreviewBox(c *renderer.Canvas, r renderer.Rect, s *model.TerminalState) {
+
+// drawShellRow 绘制一条 shell：第一行左侧为 reason、右侧为彩色状态（右对齐），
+// 第二行是启动命令。
+func (p *ShellPanel) drawShellRow(c *renderer.Canvas, x, y, width int, s *model.TerminalState, selected bool) {
+	if width <= 2 || s == nil {
+		return
+	}
+	marker := "  "
+	headStyle := p.Theme.Style(p.Theme.Text)
+	cmdStyle := p.Theme.Style(p.Theme.TextMuted)
+	if s.Finished() {
+		headStyle = p.Theme.Style(p.Theme.TextMuted).WithDim(true)
+		cmdStyle = cmdStyle.WithDim(true)
+	}
+	if selected {
+		marker = "> "
+		headStyle = p.Theme.Style(p.Theme.Primary).WithBold(true)
+		cmdStyle = p.Theme.Style(p.Theme.Text)
+	}
+	// 第一行：reason（左）+ 状态（右对齐）。
+	status := shellStatusLabel(s)
+	statusW := renderer.StringWidth(status)
+	headW := max(width-2-statusW-1, 1)
+	c.PutText(x, y, marker+renderer.Truncate(shellReason(s), headW), headStyle)
+	if sx := x + width - statusW; sx >= x+2 {
+		c.PutText(sx, y, status, p.Theme.Style(shellStatusColor(p.Theme, s)).WithBold(selected))
+	}
+	// 第二行：命令。
+	cmd := s.Command
+	if cmd == "" {
+		cmd = s.Title
+	}
+	if cmd == "" {
+		cmd = s.ID
+	}
+	if cmd != "" {
+		c.PutText(x+2, y+1, renderer.Truncate(cmd, max(width-2, 1)), cmdStyle)
+	}
+}
+
+func (p *ShellPanel) drawPreviewBox(c *renderer.Canvas, r renderer.Rect, s *model.TerminalState, m *model.AppModel) {
 	if r.W < 2 || r.H < 2 {
 		return
 	}
@@ -97,56 +150,230 @@ func (p *ShellPanel) drawPreviewBox(c *renderer.Canvas, r renderer.Rect, s *mode
 		c.Put(r.X, y, renderer.CellRune('│', style))
 		c.Put(r.X+r.W-1, y, renderer.CellRune('│', style))
 	}
-	p.preview(c, renderer.NewRect(r.X+1, r.Y+1, r.W-2, r.H-2), s)
+	p.preview(c, renderer.NewRect(r.X+1, r.Y+1, r.W-2, r.H-2), s, m)
 }
 
-func (p *ShellPanel) preview(c *renderer.Canvas, r renderer.Rect, s *model.TerminalState) {
+func (p *ShellPanel) preview(c *renderer.Canvas, r renderer.Rect, s *model.TerminalState, m *model.AppModel) {
 	if s == nil {
 		return
 	}
-	title := s.Title
-	if title == "" {
-		title = s.ID
+	// 标题左侧、状态右对齐（与列表一致）；标题按状态宽度留位，避免互相覆盖。
+	status := shellStatusLabel(s)
+	sw := renderer.StringWidth(status)
+	titleW := r.W - 2
+	if sw > 0 && titleW > sw+2 {
+		titleW -= sw + 2
 	}
-	if s.Command != "" {
-		title = s.Command
+	c.PutText(r.X+1, r.Y, renderer.Truncate(i18n.T("终端: %s", shellTitle(s)), titleW), p.Theme.Style(p.Theme.Info).WithBold(true))
+	if sw > 0 && r.W-2 > sw+2 {
+		c.PutText(r.X+r.W-2-sw, r.Y, status, p.Theme.Style(shellStatusColor(p.Theme, s)).WithBold(true))
 	}
-	c.PutText(r.X+1, r.Y, "terminal: "+renderer.Truncate(title, r.W-2), p.Theme.Style(p.Theme.Info).WithBold(true))
-	lines := []string{s.Transcript}
-	if s.Screen != nil {
-		lines = s.Screen.Lines()
+	// 内容区占满预览框剩余高度，最右一列留给滚动条。
+	content := renderer.NewRect(r.X, r.Y+1, r.W-1, r.H-1)
+	if content.W < 1 || content.H < 1 {
+		return
 	}
-	for i, line := range lines {
-		if i+2 >= r.H-1 {
+	if m != nil {
+		m.ShellPreviewRows = content.H
+	}
+	syncTerminalScreen(s, content.W, content.H)
+	if s.Screen == nil {
+		return
+	}
+	// 内容行数、可视窗口与滚动偏移：FollowBottom（粘滞）时始终显示最新输出。
+	// 回看范围受屏幕保留行数限制（更早的行已被顶出屏幕，不能再滚上去看到空白）。
+	retained := min(s.ScreenRows, s.Screen.Height)
+	maxScroll := max(retained-content.H, 0)
+	if s.Scroll > maxScroll {
+		s.Scroll = maxScroll
+	}
+	if s.FollowBottom {
+		s.Scroll = 0
+	}
+	top := max(s.ScreenRows-content.H-s.Scroll, 0)
+	// 屏幕里第一行对应的内容行号（屏幕只保留了尾部若干行）。
+	offset := max(s.ScreenRows-s.Screen.Height, 0)
+	barTop := max(top-offset, 0)
+	style := p.Theme.Style(renderer.RGB(0xFF, 0xFF, 0xFF))
+	for i := 0; i < content.H; i++ {
+		row := top + i - offset
+		if row < 0 || row >= s.Screen.Height {
+			continue
+		}
+		line := strings.TrimRight(s.Screen.Line(row), " ")
+		if line == "" {
+			continue
+		}
+		c.PutText(content.X, content.Y+i, cutToWidth(line, content.W), style)
+	}
+	// 滚动条：贴预览框右侧内边（Total/Top 以屏幕保留的内容为范围）。
+	(&widget.Scrollbar{
+		Total: max(retained, content.H), View: content.H, Top: barTop,
+		Track: p.Theme.Style(p.Theme.BorderSubtle),
+		Thumb: p.Theme.Style(p.Theme.Border),
+	}).Draw(c, renderer.NewRect(r.X+r.W-1, r.Y+1, 1, content.H))
+}
+
+// syncTerminalScreen 让终端的 VT 屏幕适配预览内容区：宽度即换行宽度；高度在
+// 视口基础上留出回滚余量（内容超出时按倍扩容，上限见 previewScrollbackCap），
+// 这样滚动条能回看历史输出。尺寸或容量变化时才重建并重放 transcript。
+func syncTerminalScreen(s *model.TerminalState, w, h int) {
+	if s == nil || w < 1 || h < 1 {
+		return
+	}
+	capH := h + previewScrollbackCap
+	rebuild := s.Screen == nil || s.Screen.Width != w || s.ScreenViewH != h
+	if !rebuild && s.Screen.Scrolled > 0 && s.Screen.Height < capH {
+		// 内容已顶出屏幕上沿：扩容以便回看（每次翻倍，摊薄重放成本）。
+		rebuild = true
+	}
+	if rebuild {
+		// 一次涨到内容放得下（按倍扩容，上限 capH）：面板空闲时不会再有下一帧，
+		// 不能依赖"下一帧继续扩容"。
+		target := h
+		if s.Screen != nil && s.Screen.Width == w && s.Screen.Height > h {
+			target = min(s.Screen.Height*2, capH)
+		}
+		for {
+			scr := term.NewVTScreen(w, target)
+			if s.Transcript != "" {
+				scr.Feed(s.Transcript)
+			}
+			s.Screen = scr
+			if scr.Scrolled == 0 || target >= capH {
+				break
+			}
+			next := min(target*2, capH)
+			if next == target {
+				break
+			}
+			target = next
+		}
+		s.ScreenViewH = h
+	}
+	s.ScreenRows = s.Screen.UsedRows()
+}
+
+// previewScrollbackCap 是预览回滚缓冲的最大额外行数。
+const previewScrollbackCap = 400
+
+// cutToWidth 按显示宽度截断且不加省略号：VT 屏幕按 rune 数换行，宽字符行可能
+// 略超框宽，这里只削掉溢出部分（换行已由屏幕完成，不需要提示截断）。
+func cutToWidth(s string, w int) string {
+	if w <= 0 {
+		return ""
+	}
+	if renderer.StringWidth(s) <= w {
+		return s
+	}
+	var sb strings.Builder
+	used := 0
+	for _, r := range s {
+		rw := renderer.StringWidth(string(r))
+		if used+rw > w {
 			break
 		}
-		for part := range strings.SplitSeq(line, "\n") {
-			// VT screens are fixed-width and pad short/empty output with spaces.
-			// Trim that padding before truncating, otherwise Truncate interprets
-			// the padding as overflow and adds a misleading ellipsis.
-			part = strings.TrimRight(part, " ")
-			if part != "" && r.W > 2 {
-				c.PutText(r.X+1, r.Y+i+1, renderer.Truncate(part, r.W-2), p.Theme.Style(p.Theme.MDCode))
-			}
-			i++
-		}
+		sb.WriteRune(r)
+		used += rw
 	}
+	return sb.String()
 }
+
 func (p *ShellPanel) footer(c *renderer.Canvas, r renderer.Rect) {
 	if r.H > 0 {
-		c.PutText(r.X+1, r.Y+r.H-1, "x kill  esc return", p.Theme.Style(p.Theme.TextMuted).WithDim(true))
+		c.PutText(r.X+1, r.Y+r.H-1, i18n.T("x 结束  r 刷新  PgUp/PgDn 滚动  Esc 返回"), p.Theme.Style(p.Theme.TextMuted).WithDim(true))
 	}
 }
-func shellCount(n int) string {
-	if n == 0 {
-		return "0"
+
+// sectionLabel 在列表内绘制分段标题（如历史段），右侧用横线补满列表宽度。
+func (p *ShellPanel) sectionLabel(c *renderer.Canvas, x, y, width int, label string) {
+	if width <= 2 {
+		return
 	}
-	var b [20]byte
-	i := len(b)
-	for n > 0 {
-		i--
-		b[i] = byte('0' + n%10)
-		n /= 10
+	st := p.Theme.Style(p.Theme.BorderSubtle)
+	text := "── " + label + " "
+	c.PutText(x, y, renderer.Truncate(text, width-2), st)
+	if fill := width - 2 - renderer.StringWidth(text); fill > 0 {
+		c.PutText(x+renderer.StringWidth(text), y, strings.Repeat("─", fill), st)
 	}
-	return string(b[i:])
+}
+
+// shellSummary 生成面板标题右侧的计数摘要：第一个数只统计活动 shell，
+// 历史段数量单独标注（两段互不重叠）。
+func shellSummary(active, history int) string {
+	if history <= 0 {
+		return i18n.T("%d", active)
+	}
+	return i18n.T("%d", active) + "  · " + i18n.T("历史 (%d)", history)
+}
+
+// shellReason 返回列表首行文案：run 的 reason 优先，其次标题、最后终端 ID。
+func shellReason(s *model.TerminalState) string {
+	if s == nil {
+		return ""
+	}
+	if s.Reason != "" {
+		return s.Reason
+	}
+	if s.Title != "" {
+		return s.Title
+	}
+	return s.ID
+}
+
+// shellTitle 返回终端的展示标题：命令优先，其次标题，最后 ID。
+func shellTitle(s *model.TerminalState) string {
+	if s == nil {
+		return ""
+	}
+	if s.Command != "" {
+		return s.Command
+	}
+	if s.Title != "" {
+		return s.Title
+	}
+	return s.ID
+}
+
+// shellStatusLabel 把服务端状态映射为本地化文案。
+func shellStatusLabel(s *model.TerminalState) string {
+	if s == nil {
+		return ""
+	}
+	switch strings.ToLower(s.Status) {
+	case "start", "running", "in_progress", "pending":
+		return i18n.T("运行中")
+	case "finished", "completed", "done", "exited":
+		return i18n.T("已完成")
+	case "killed", "cancelled", "stopped", "stop":
+		return i18n.T("已终止")
+	case "failed", "error":
+		return i18n.T("失败")
+	case "":
+		if s.Finished() {
+			return i18n.T("已完成")
+		}
+		return i18n.T("运行中")
+	default:
+		return s.Status
+	}
+}
+
+// shellStatusColor 按状态取色：运行中蓝、成功绿、终止黄、失败红、其余弱化。
+func shellStatusColor(t renderer.Theme, s *model.TerminalState) renderer.Color {
+	if s == nil {
+		return t.TextMuted
+	}
+	switch strings.ToLower(s.Status) {
+	case "start", "running", "in_progress", "pending", "":
+		return t.ToolRunning
+	case "finished", "completed", "done", "exited":
+		return t.ToolDone
+	case "killed", "cancelled", "stopped", "stop":
+		return t.Warning
+	case "failed", "error":
+		return t.ToolFailed
+	default:
+		return t.TextMuted
+	}
 }
