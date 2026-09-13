@@ -36,6 +36,9 @@ type ToolCallUpdateEvent struct {
 	RawOutput     json.RawMessage
 	ContentSet    bool
 	ContentAppend bool // tool_call_content_chunk 追加既有内容。
+	// TerminalID 是 alkaid0 v0.6 的 alk.cxykevin.top/terminal_id：run 工具调用
+	// 对应的终端 ID（与 run_id 同值），直播与历史回放都会携带。
+	TerminalID string
 }
 
 // PlanUpdateEvent 对应 plan_update（entries 整体替换）。
@@ -103,6 +106,22 @@ type TerminalUpdateEvent struct {
 	Terminal TerminalInfo
 	Command  string
 	Raw      json.RawMessage
+}
+
+// TerminalListEvent 携带 alkaid0 v0.5 terminal/list 的查询结果：当前活动终端。
+// 前台 run（不带 background）不推送 terminal_update 的 start/running，
+// 正在运行的终端只能靠这次查询列出来，因此客户端查询后广播该事件。
+type TerminalListEvent struct {
+	SessionID string
+	Terminals []TerminalInfo
+}
+
+// TerminalHistoryEvent 携带 alkaid0 v0.6 terminal/history 的查询结果：
+// 已结束终端（含服务端重启后仅剩持久化副本的条目）。它由客户端主动查询后
+// 广播，走与 terminal_update 相同的事件通道，UI 无需为查询结果单独接线。
+type TerminalHistoryEvent struct {
+	SessionID string
+	Terminals []TerminalInfo
 }
 
 // ShellStopEvent is the alkaid0 v0.5 notification emitted when a background shell exits.
@@ -179,6 +198,8 @@ type ElicitationRequestEvent struct {
 
 func (*UnknownSessionUpdateEvent) isEvent() {}
 func (*TerminalUpdateEvent) isEvent()       {}
+func (*TerminalHistoryEvent) isEvent()      {}
+func (*TerminalListEvent) isEvent()         {}
 func (*ShellStopEvent) isEvent()            {}
 func (*CommandsUpdateEvent) isEvent()       {}
 func (*ConfigOptionUpdateEvent) isEvent()   {}

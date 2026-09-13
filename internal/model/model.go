@@ -86,7 +86,9 @@ type AppModel struct {
 	Focus           Focus
 	ShellPanel      bool
 	ShellFullscreen bool
-	ShellSelected   int
+	// ShellPreviewRows 是 shells 面板预览视口高度（视图绘制时写入，用于翻页）。
+	ShellPreviewRows int
+	ShellSelected    int
 
 	Modal           ModalKind
 	Permission      *acp.PermissionRequest
@@ -559,6 +561,11 @@ func (m *AppModel) SupportsAlkaid0V05() bool {
 	return m.AgentCaps.Has(acp.Alkaid0CapabilityV05)
 }
 
+// SupportsAlkaid0V06 报告服务端是否支持已结束终端内容查询（terminal/history）。
+func (m *AppModel) SupportsAlkaid0V06() bool {
+	return m.AgentCaps.Has(acp.Alkaid0CapabilityV06)
+}
+
 // SupportsSessionDelete 报告服务端是否声明 session/delete 能力；仅当为 true
 // 时首页按 d 删除会话可用。
 func (m *AppModel) SupportsSessionDelete() bool {
@@ -623,21 +630,55 @@ func (m *AppModel) CycleLanguage(delta int) bool {
 
 func (m *AppModel) ActiveSession() *SessionState { return m.Active }
 
-func (m *AppModel) Shells() []*TerminalState {
+// ActiveShells 返回当前活动的 shell（按创建顺序）。
+func (m *AppModel) ActiveShells() []*TerminalState {
 	if !m.SupportsAlkaid0V05() || m.Active == nil {
 		return nil
 	}
 	return m.Active.Terminals()
 }
+
+// ShellHistory 返回已结束的 shell（按结束顺序，最旧在前）。
+func (m *AppModel) ShellHistory() []*TerminalState {
+	if !m.SupportsAlkaid0V05() || m.Active == nil {
+		return nil
+	}
+	return m.Active.TerminalHistory()
+}
+
+// Shells 返回 shells 面板的完整列表：活跃 shell 在前，历史 shell 在后。
+func (m *AppModel) Shells() []*TerminalState {
+	active := m.ActiveShells()
+	history := m.ShellHistory()
+	if len(history) == 0 {
+		return active
+	}
+	out := make([]*TerminalState, 0, len(active)+len(history))
+	out = append(out, active...)
+	out = append(out, history...)
+	return out
+}
+
+// CanOpenShellPanel 报告当前会话是否可展开 shells 面板：只要服务端支持终端
+// 协议即可。面板可能暂时没有任何 shell——服务端侧已结束的终端要查询后才出现。
+func (m *AppModel) CanOpenShellPanel() bool {
+	return m.SupportsAlkaid0V05() && m.Active != nil
+}
+
 func (m *AppModel) OpenShellPanel() {
-	if len(m.Shells()) > 0 {
-		m.ShellPanel = true
-		m.ShellFullscreen = false
+	if !m.CanOpenShellPanel() {
+		return
+	}
+	m.ShellPanel = true
+	m.ShellFullscreen = false
+	if n := len(m.Shells()); n == 0 {
+		m.ShellSelected = 0
+	} else {
 		if m.ShellSelected < 0 {
 			m.ShellSelected = 0
 		}
-		if m.ShellSelected >= len(m.Shells()) {
-			m.ShellSelected = len(m.Shells()) - 1
+		if m.ShellSelected >= n {
+			m.ShellSelected = n - 1
 		}
 	}
 }
@@ -648,6 +689,42 @@ func (m *AppModel) SelectedShell() *TerminalState {
 		return nil
 	}
 	return xs[m.ShellSelected]
+}
+
+// ShellPreviewRows 是预览视口高度（由视图绘制时写入），供翻页滚动使用。
+func (m *AppModel) ShellPreviewHeight() int {
+	if m.ShellPreviewRows <= 0 {
+		return 10
+	}
+	return m.ShellPreviewRows
+}
+
+// ResetShellPreviewScroll 把选中终端的预览滚回底部并恢复粘滞：
+// 每次切换到某个终端时都从最新输出开始看。
+func (m *AppModel) ResetShellPreviewScroll() {
+	if s := m.SelectedShell(); s != nil {
+		s.Scroll = 0
+		s.FollowBottom = true
+	}
+}
+
+// ScrollShellPreview 向上（delta>0）或向下（delta<0）滚动选中终端的预览；
+// 滚到底部时恢复粘滞，随新输出自动跟随。
+func (m *AppModel) ScrollShellPreview(delta int) {
+	s := m.SelectedShell()
+	if s == nil || delta == 0 {
+		return
+	}
+	maxScroll := max(s.ScreenRows-m.ShellPreviewHeight(), 0)
+	next := s.Scroll + delta
+	if next < 0 {
+		next = 0
+	}
+	if next > maxScroll {
+		next = maxScroll
+	}
+	s.Scroll = next
+	s.FollowBottom = next == 0
 }
 
 // HasActive 报告是否在会话视图且有活动会话。
@@ -858,6 +935,12 @@ func (m *AppModel) ApplyEvent(ev acp.Event) {
 	case *acp.ToolCallUpdateEvent:
 		if m.HasActive() && e.SessionID == m.Active.ID {
 			m.Active.ApplyToolCall(e)
+			// alkaid0 v0.6：run 工具调用顶层带 terminal_id（历史回放同样携带），
+			// 据此用工具参数复原终端条目的 reason / 命令——terminal/history 的
+			// 持久化副本只有内容，否则列表只能显示 @temp/run/<n>。
+			if e.TerminalID != "" && m.SupportsAlkaid0V06() {
+				m.Active.LinkToolCallTerminal(e.TerminalID, e.Content, e.RawInput, e.Status)
+			}
 		}
 	case *acp.PlanUpdateEvent:
 		if m.HasActive() && e.SessionID == m.Active.ID {
@@ -944,16 +1027,30 @@ func (m *AppModel) ApplyEvent(ev acp.Event) {
 	case *acp.ShellStopEvent:
 		if m.SupportsAlkaid0V05() && m.HasActive() && e.SessionID == m.Active.ID {
 			if e.TerminalID != "" {
-				m.Active.RemoveTerminal(e.TerminalID)
+				// shell 结束：移入历史段而不是丢弃，面板下半段仍可查看内容。
+				m.Active.ArchiveTerminal(e.TerminalID)
 			}
+		}
+	case *acp.TerminalListEvent:
+		if m.SupportsAlkaid0V05() && m.HasActive() && e.SessionID == m.Active.ID {
+			// 活动终端快照（terminal/list）：只并入，不移除未出现的终端——
+			// 结束仍由 stop 推送与历史查询驱动。
+			m.Active.MergeTerminals(e.Terminals)
+		}
+	case *acp.TerminalHistoryEvent:
+		if m.SupportsAlkaid0V05() && m.HasActive() && e.SessionID == m.Active.ID {
+			m.Active.ApplyTerminalHistory(e.Terminals)
 		}
 	case *acp.TerminalUpdateEvent:
 		if m.SupportsAlkaid0V05() && m.HasActive() && e.SessionID == m.Active.ID {
 			if e.UpdateType == "full" || e.UpdateType == "snapshot" {
 				m.Active.ReplaceTerminals(e.Terminals)
-			} else if e.Status == "stop" || e.Status == "stopped" || e.Status == "exited" {
-				m.Active.RemoveTerminal(e.TerminalID)
+			} else if acp.TerminalStatusFinished(e.Status) || acp.TerminalStatusFinished(e.Terminal.Status) {
+				m.Active.ArchiveTerminal(e.TerminalID)
 			} else {
+				// 增量推送的命令等元数据只出现在 terminals 快照里（顶层仅带
+				// terminalId/status/content），先并入快照，再应用本次增量字段。
+				m.Active.MergeTerminals(e.Terminals)
 				info := e.Terminal
 				if info.TerminalID == "" {
 					info.TerminalID = e.TerminalID
@@ -1082,6 +1179,10 @@ func eventSessionID(ev acp.Event) string {
 	case *acp.ConfigOptionUpdateEvent:
 		return e.SessionID
 	case *acp.TerminalUpdateEvent:
+		return e.SessionID
+	case *acp.TerminalHistoryEvent:
+		return e.SessionID
+	case *acp.TerminalListEvent:
 		return e.SessionID
 	case *acp.ShellStopEvent:
 		return e.SessionID

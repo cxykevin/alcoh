@@ -295,6 +295,9 @@ func decodeToolCallUpdate(sessionID string, raw json.RawMessage) (Event, error) 
 		Locations  []ToolCallLocation `json:"locations"`
 		RawInput   json.RawMessage    `json:"rawInput"`
 		RawOutput  json.RawMessage    `json:"rawOutput"`
+		// alkaid0 v0.6：run 工具调用对应的终端 ID（与 run_id 同值，直播与
+		// 历史回放都会返回），客户端据此把工具调用与终端内容对应起来。
+		TerminalID string `json:"alk.cxykevin.top/terminal_id"`
 	}
 	if err := json.Unmarshal(raw, &wire); err != nil {
 		return nil, err
@@ -307,6 +310,7 @@ func decodeToolCallUpdate(sessionID string, raw json.RawMessage) (Event, error) 
 		SessionID: sessionID, ToolCallID: wire.ToolCallID, Status: wire.Status,
 		Title: wire.Title, Kind: wire.Kind, Content: content, Locations: wire.Locations,
 		RawInput: wire.RawInput, RawOutput: wire.RawOutput, ContentSet: len(wire.Content) != 0,
+		TerminalID: wire.TerminalID,
 	}, nil
 }
 

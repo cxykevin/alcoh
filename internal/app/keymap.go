@@ -227,6 +227,11 @@ func (a *App) killSelectedShell() {
 	if s == nil || a.sess == nil {
 		return
 	}
+	if s.Finished() {
+		// 历史段的 shell 已经结束，停止请求没有意义：只保留内容供查看。
+		a.model.ShowInfo(i18n.T("该 shell 已结束，可查看内容但无法停止"))
+		return
+	}
 	control, ok := a.sess.(acp.TerminalControl)
 	if !ok {
 		a.model.ShowError("alkaid0 v0.5 terminal control unavailable")
@@ -236,6 +241,74 @@ func (a *App) killSelectedShell() {
 	a.startCommand(commandResult{kind: commandTerminalStop, sessionID: a.sess.ID(), terminalID: id}, func(ctx context.Context) (acp.Session, error) {
 		return nil, control.StopTerminal(ctx, id)
 	})
+}
+
+// refreshShellHistory 拉取已结束 shell 的内容（alkaid0 v0.6 terminal/history）。
+// 服务端未声明 v0.6 时静默跳过：这种情况下历史段只包含本地已知的、
+// 本次运行期间结束的 shell；结果经 TerminalHistoryEvent 应用到模型。
+func (a *App) refreshShellHistory() {
+	if a.sess == nil || !a.model.SupportsAlkaid0V06() {
+		return
+	}
+	control, ok := a.sess.(acp.TerminalControl)
+	if !ok {
+		return
+	}
+	session := a.sess
+	a.startCommand(commandResult{kind: commandTerminalHistory, sessionID: session.ID()}, func(ctx context.Context) (acp.Session, error) {
+		_, err := control.TerminalHistory(ctx, "")
+		return nil, err
+	})
+}
+
+// refreshShellTerminals 查询当前活动终端（alkaid0 v0.5 terminal/list）。
+// 前台 run（不带 background）不会推送 start/running，只有这次查询才能把正在运行的
+// 终端列出来；结果经 TerminalListEvent 并入模型的活动段。
+func (a *App) refreshShellTerminals() {
+	if a.sess == nil || !a.model.SupportsAlkaid0V05() {
+		return
+	}
+	control, ok := a.sess.(acp.TerminalControl)
+	if !ok {
+		return
+	}
+	session := a.sess
+	a.startCommand(commandResult{kind: commandTerminalList, sessionID: session.ID()}, func(ctx context.Context) (acp.Session, error) {
+		_, err := control.ListTerminals(ctx)
+		return nil, err
+	})
+}
+
+// refreshSelectedShell 取回选中活动终端的最新内容：terminal/status 成功后服务端会
+// 立即推送一条 full 更新，面板预览随之刷新（历史段由 refreshShellHistory 负责）。
+func (a *App) refreshSelectedShell() {
+	s := a.model.SelectedShell()
+	if s == nil || s.Finished() || a.sess == nil {
+		return
+	}
+	control, ok := a.sess.(acp.TerminalControl)
+	if !ok {
+		return
+	}
+	session := a.sess
+	id := s.ID
+	a.startCommand(commandResult{kind: commandTerminalStatus, sessionID: session.ID()}, func(ctx context.Context) (acp.Session, error) {
+		_, err := control.TerminalStatus(ctx, id)
+		return nil, err
+	})
+}
+
+// refreshShellOnEntry 进入会话时同步一次 shells 状态：活动终端 + 已结束终端。
+func (a *App) refreshShellOnEntry() {
+	a.refreshShellTerminals()
+	a.refreshShellHistory()
+}
+
+// refreshShellPanel 刷新整个 shells 面板：活动终端列表 + 历史段 + 选中终端内容。
+func (a *App) refreshShellPanel() {
+	a.refreshShellTerminals()
+	a.refreshShellHistory()
+	a.refreshSelectedShell()
 }
 
 func (a *App) sessionKey(ke input.KeyEvent) {
@@ -285,16 +358,33 @@ func (a *App) sessionKey(ke input.KeyEvent) {
 		case input.KeyUp:
 			if m.ShellSelected > 0 {
 				m.ShellSelected--
+				// 切到另一个终端：预览始终从最新输出（底部）开始。
+				m.ResetShellPreviewScroll()
 			}
 			return
 		case input.KeyDown:
 			if m.ShellSelected < len(m.Shells())-1 {
 				m.ShellSelected++
+				m.ResetShellPreviewScroll()
 			}
 			return
+		case input.KeyPageUp:
+			// PgUp/PgDn 滚动预览内容（回看历史输出）。
+			m.ScrollShellPreview(m.ShellPreviewHeight())
+			return
+		case input.KeyPageDown:
+			m.ScrollShellPreview(-m.ShellPreviewHeight())
+			return
 		case input.KeyRune:
-			if ke.Rune == 'x' && !ke.IsCtrl() && !ke.IsAlt() {
+			if ke.IsCtrl() || ke.IsAlt() {
+				return
+			}
+			switch ke.Rune {
+			case 'x':
 				a.killSelectedShell()
+				return
+			case 'r':
+				a.refreshShellPanel()
 				return
 			}
 		}
@@ -324,8 +414,11 @@ func (a *App) sessionKey(ke input.KeyEvent) {
 		}
 		return
 	}
-	if ke.Type == input.KeyDown && m.Input.HistPos < 0 && len(m.Shells()) > 0 {
+	if ke.Type == input.KeyDown && m.Input.HistPos < 0 && m.CanOpenShellPanel() {
 		m.OpenShellPanel()
+		// 打开面板时顺带刷新：服务端 v0.6 可返回本次会话此前（含上一次运行）
+		// 已结束 shell 的内容，terminal/status 可立即取回活动终端的最新内容。
+		a.refreshShellPanel()
 		return
 	}
 	if m.Focus == model.FocusMessage {
@@ -981,6 +1074,17 @@ func (a *App) dispatchMouse(me input.MouseEvent) {
 		a.handleShellSelect(me)
 		return
 	}
+	// 滚轮位于预览框内时滚动终端内容（回看历史输出）。
+	if me.IsWheel() && me.Action == input.MousePress && a.model.ShellPanel && a.model.Modal == model.NoModal {
+		if r := a.view.ShellPreviewRect; r.W > 0 && me.X >= r.X && me.X < r.X+r.W && me.Y >= r.Y && me.Y < r.Y+r.H {
+			if me.Button == input.MouseWheelUp {
+				a.model.ScrollShellPreview(3)
+			} else if me.Button == input.MouseWheelDown {
+				a.model.ScrollShellPreview(-3)
+			}
+			return
+		}
+	}
 	// 左键用于文本选择；选择不依赖鼠标位置（所见即所得整屏框选）。
 	if me.Button == input.MouseLeft {
 		a.handleSelect(me)
@@ -1514,6 +1618,8 @@ func (a *App) usePreSession(prompt string) bool {
 	a.preSession = nil
 	// 提升为活动会话：保留已应用的 config/commands；a.sess 仍指向该会话句柄。
 	a.model.ActivateSession(s.ID(), s.Title())
+	// 预创建会话可能已被上一次运行写入过终端与终端历史，进入会话时一并取回。
+	a.refreshShellOnEntry()
 	// 引导里选的 effort 应用到用户第一个会话（仅一次，此后由 /effort 管理）。
 	a.applyFirstSessionEffort(s)
 	if prompt != "" {

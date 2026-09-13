@@ -109,7 +109,29 @@ type TerminalState struct {
 	Transcript string
 	Truncated  bool
 	Expanded   bool
-	Screen     *term.VTScreen
+	// Restored 标记该终端来自服务端的持久化副本（服务端重启后内存中已无它），
+	// 此时只有内容可信，命令/类型等元数据为空。
+	Restored bool
+	// Screen 是预览用的 VT 屏幕（尺寸由视图按预览框调整）；ScreenRows 是内容
+	// 换行后的总行数，ScreenViewH 是构建时的可见视口高度。
+	Screen      *term.VTScreen
+	ScreenRows  int
+	ScreenViewH int
+	// Scroll 是预览向上回看的行数（0 = 停在底部）；FollowBottom 为 true 时
+	// 新内容到达保持粘滞（始终显示最新输出）。
+	Scroll       int
+	FollowBottom bool
+}
+
+// NewTerminalState 创建终端状态：预览默认粘滞在底部。
+func NewTerminalState(id string) *TerminalState {
+	return &TerminalState{ID: id, Expanded: true, FollowBottom: true, Screen: term.NewVTScreen(80, 24)}
+}
+
+// Finished 报告终端是否已结束：结束的终端从活动列表移入历史段，
+// 其内容仍可通过 terminal/history 取回。
+func (t *TerminalState) Finished() bool {
+	return t != nil && acp.TerminalStatusFinished(t.Status)
 }
 
 const maxTerminalTranscriptBytes = 32 << 10
@@ -150,8 +172,12 @@ type SessionState struct {
 
 	Timeline      []*TimelineItem
 	timelineIndex map[string]*TimelineItem
-	terminals     map[string]*TerminalState
-	terminalOrder []string
+	// terminals/terminalOrder 是活动终端；terminalHistory/terminalHistoryOrder
+	// 是已结束终端（shells 面板下半段，内容保留）。
+	terminals            map[string]*TerminalState
+	terminalOrder        []string
+	terminalHistory      map[string]*TerminalState
+	terminalHistoryOrder []string
 
 	ProtocolUpdates []json.RawMessage
 	Scroll          int
@@ -164,13 +190,14 @@ type SessionState struct {
 
 func NewSession(id, title string) *SessionState {
 	return &SessionState{
-		ID:            id,
-		Title:         title,
-		State:         acp.StateIdle,
-		msgIndex:      map[string]*Message{},
-		ToolCalls:     map[string]*ToolCall{},
-		timelineIndex: map[string]*TimelineItem{},
-		terminals:     map[string]*TerminalState{},
+		ID:              id,
+		Title:           title,
+		State:           acp.StateIdle,
+		msgIndex:        map[string]*Message{},
+		ToolCalls:       map[string]*ToolCall{},
+		timelineIndex:   map[string]*TimelineItem{},
+		terminals:       map[string]*TerminalState{},
+		terminalHistory: map[string]*TerminalState{},
 	}
 }
 
@@ -499,7 +526,12 @@ func (s *SessionState) ApplyTerminal(id, title, command, status, output string) 
 }
 
 // ApplyTerminalInfo upserts metadata without erasing omitted fields.
+// 已结束（status 为 stop/finished/killed 等）的终端不进活动列表，直接归入历史段。
 func (s *SessionState) ApplyTerminalInfo(info acp.TerminalInfo) {
+	if acp.TerminalStatusFinished(info.Status) {
+		s.applyTerminalHistoryInfo(info)
+		return
+	}
 	id := info.TerminalID
 	if id == "" {
 		id = "session"
@@ -507,12 +539,14 @@ func (s *SessionState) ApplyTerminalInfo(info acp.TerminalInfo) {
 	}
 	terminal, ok := s.terminals[id]
 	if !ok {
-		terminal = &TerminalState{ID: id, Expanded: true, Screen: term.NewVTScreen(80, 24)}
-		s.terminals[id] = terminal
-		s.terminalOrder = append(s.terminalOrder, id)
-		item := s.appendTimeline("terminal:"+id, TimelineTerminal)
-		item.Terminal = terminal
+		terminal = NewTerminalState(id)
+		s.putTerminalActive(terminal)
 	}
+	s.mergeTerminalInfo(terminal, info)
+}
+
+// mergeTerminalInfo 把非空字段合并进终端状态；快照里的 content 整体替换既有内容。
+func (s *SessionState) mergeTerminalInfo(terminal *TerminalState, info acp.TerminalInfo) {
 	if info.SessionID != "" {
 		terminal.SessionID = info.SessionID
 	}
@@ -540,6 +574,9 @@ func (s *SessionState) ApplyTerminalInfo(info acp.TerminalInfo) {
 	if info.CreatedAt != "" {
 		terminal.CreatedAt = info.CreatedAt
 	}
+	if info.Restored {
+		terminal.Restored = true
+	}
 	if info.Content != "" {
 		terminal.Transcript = info.Content
 		terminal.Truncated = false
@@ -550,25 +587,221 @@ func (s *SessionState) ApplyTerminalInfo(info acp.TerminalInfo) {
 	}
 }
 
-// ReplaceTerminals applies the v0.5 full snapshot.
-func (s *SessionState) ReplaceTerminals(infos []acp.TerminalInfo) {
-	seen := make(map[string]bool, len(infos))
+// ApplyTerminalHistory 合并 terminal/history 的查询结果（已结束终端，含
+// 服务端重启后仅剩持久化副本的条目）。同 ID 已存在于活动列表时搬运过去，
+// 保留本地已收集到的完整内容。
+func (s *SessionState) ApplyTerminalHistory(infos []acp.TerminalInfo) {
 	for _, info := range infos {
 		if info.TerminalID != "" {
-			seen[info.TerminalID] = true
-			old := s.terminals[info.TerminalID]
-			s.ApplyTerminalInfo(info)
-			if old != nil { /* snapshot content replaces prior transcript */
-			}
-		}
-	}
-	for id := range s.terminals {
-		if !seen[id] {
-			s.RemoveTerminal(id)
+			s.applyTerminalHistoryInfo(info)
 		}
 	}
 }
 
+func (s *SessionState) applyTerminalHistoryInfo(info acp.TerminalInfo) {
+	id := info.TerminalID
+	if id == "" {
+		return
+	}
+	terminal, ok := s.terminalHistory[id]
+	if !ok {
+		if active, activeOK := s.terminals[id]; activeOK {
+			s.ArchiveTerminal(id)
+			terminal = active
+		} else {
+			terminal = NewTerminalState(id)
+			s.putTerminalHistory(terminal)
+		}
+	}
+	s.mergeTerminalInfo(terminal, info)
+	if terminal.Status == "" {
+		terminal.Status = "finished"
+	}
+}
+
+// LinkToolCallTerminal 用 run 工具调用的信息补全终端条目。
+// 历史回放（session/resume）里的 run 工具调用带 terminal_id，工具入参则放在
+// content 的 alk.cxykevin.top/calling_info 块里（alkaid0 不发送标准 rawInput，
+// 见 extension.md §4.1）：据此复原列表首行（reason）与命令，并据工具调用状态
+// 决定它进哪一段——已结束的进历史段，仍在执行的留在活动段（随后由
+// terminal/list 与 history 校正）。terminal/history 的持久化副本只有内容，
+// 没有这层复原就只能显示 @temp/run/<n>。
+func (s *SessionState) LinkToolCallTerminal(id string, contents []acp.ToolCallContent, rawInput json.RawMessage, status *acp.ToolCallStatus) {
+	if id == "" {
+		return
+	}
+	var args struct {
+		Type    string `json:"type"`
+		Reason  string `json:"reason"`
+		Command string `json:"command"`
+	}
+	for _, content := range contents {
+		if content.Type != acp.ToolCallingInfoType || len(content.Args) == 0 {
+			continue
+		}
+		_ = json.Unmarshal(content.Args, &args)
+		break
+	}
+	// 兼容仍然发送 rawInput 的实现。
+	if args.Command == "" && len(rawInput) > 0 {
+		_ = json.Unmarshal(rawInput, &args)
+	}
+	terminal := s.terminals[id]
+	if terminal == nil {
+		terminal = s.terminalHistory[id]
+	}
+	if terminal == nil {
+		terminal = NewTerminalState(id)
+		if status != nil && toolCallStatusFinished(*status) {
+			s.putTerminalHistory(terminal)
+		} else {
+			s.putTerminalActive(terminal)
+		}
+	}
+	// 只补空字段：同一个终端会被多次工具调用引用（启动 shell，随后 wait / kill），
+	// 先到的"启动"调用给出真实 reason / command，后到的不能覆盖。
+	// wait / kill 的 command 是 run id，也不是终端自身的命令，直接跳过。
+	if args.Type == "" || args.Type == "shell" || args.Type == "sleep" || args.Type == "python" {
+		if terminal.Reason == "" && args.Reason != "" {
+			terminal.Reason = args.Reason
+		}
+		if terminal.Command == "" && args.Command != "" {
+			terminal.Command = args.Command
+		}
+		if terminal.Kind == "" && args.Type != "" {
+			terminal.Kind = args.Type
+		}
+	}
+}
+
+// toolCallStatusFinished 报告工具调用是否已结束（结束的 run 工具调用对应已结束终端）。
+func toolCallStatusFinished(status acp.ToolCallStatus) bool {
+	switch status {
+	case acp.ToolCompleted, acp.ToolFailed, acp.ToolCancelled:
+		return true
+	default:
+		return false
+	}
+}
+
+// putTerminalActive 把终端放入活动段（已存在则原位更新），并从历史段移除同 ID 条目：
+// 一个终端只会出现在一段里。
+func (s *SessionState) putTerminalActive(terminal *TerminalState) {
+	if terminal == nil || terminal.ID == "" {
+		return
+	}
+	s.removeTerminalHistoryEntry(terminal.ID)
+	if _, ok := s.terminals[terminal.ID]; !ok {
+		// 新终端排在最前：面板里"新的 shell 在上"。
+		s.terminalOrder = append([]string{terminal.ID}, s.terminalOrder...)
+	}
+	s.terminals[terminal.ID] = terminal
+	item := s.appendTimeline("terminal:"+terminal.ID, TimelineTerminal)
+	item.Terminal = terminal
+}
+
+// removeTerminalHistoryEntry 从历史段移除指定终端（不含时间线）。
+func (s *SessionState) removeTerminalHistoryEntry(id string) {
+	delete(s.terminalHistory, id)
+	for i, v := range s.terminalHistoryOrder {
+		if v == id {
+			s.terminalHistoryOrder = append(s.terminalHistoryOrder[:i], s.terminalHistoryOrder[i+1:]...)
+			break
+		}
+	}
+}
+
+// putTerminalHistory 把终端放入历史段（已存在则原位更新）。
+// 历史段按"最后结束的排最前"排列：面板里历史紧接在活动 shell 下方，
+// 最近结束的终端最靠近上方（与服务端 terminal/history 的升序相反）。
+func (s *SessionState) putTerminalHistory(terminal *TerminalState) {
+	if terminal == nil || terminal.ID == "" {
+		return
+	}
+	// 同一终端只出现在一段里：进历史段时从活动段移除（时间线由 ArchiveTerminal 处理）。
+	delete(s.terminals, terminal.ID)
+	for i, v := range s.terminalOrder {
+		if v == terminal.ID {
+			s.terminalOrder = append(s.terminalOrder[:i], s.terminalOrder[i+1:]...)
+			break
+		}
+	}
+	if _, ok := s.terminalHistory[terminal.ID]; !ok {
+		s.terminalHistoryOrder = append([]string{terminal.ID}, s.terminalHistoryOrder...)
+	}
+	s.terminalHistory[terminal.ID] = terminal
+}
+
+// ArchiveTerminal 把活动终端移入历史段：内容保留，只从活动列表与时间线移除。
+func (s *SessionState) ArchiveTerminal(id string) {
+	terminal, ok := s.terminals[id]
+	if !ok {
+		return
+	}
+	delete(s.terminals, id)
+	for i, v := range s.terminalOrder {
+		if v == id {
+			s.terminalOrder = append(s.terminalOrder[:i], s.terminalOrder[i+1:]...)
+			break
+		}
+	}
+	s.removeTerminalTimeline(id)
+	if !acp.TerminalStatusFinished(terminal.Status) {
+		terminal.Status = "finished"
+	}
+	s.putTerminalHistory(terminal)
+}
+
+// MergeTerminals 并入一组终端快照（增量推送里的 terminals 字段）：只做
+// upsert，不因快照缺失而移除其它终端——结束仍由显式的 stop/shell_stop 驱动。
+func (s *SessionState) MergeTerminals(infos []acp.TerminalInfo) {
+	for _, info := range infos {
+		if info.TerminalID == "" {
+			continue
+		}
+		if acp.TerminalStatusFinished(info.Status) {
+			s.applyTerminalHistoryInfo(info)
+			continue
+		}
+		s.ApplyTerminalInfo(info)
+	}
+}
+
+// ReplaceTerminals applies the v0.5 full snapshot.
+// 快照只描述活动终端：不在快照里的活动终端视为已结束并移入历史段（保留内容）。
+// 例外是历史查询的推送——它的条目全部已结束，此时只更新历史段，不动活动列表。
+func (s *SessionState) ReplaceTerminals(infos []acp.TerminalInfo) {
+	historyOnly := len(infos) > 0
+	for _, info := range infos {
+		if info.TerminalID != "" && !acp.TerminalStatusFinished(info.Status) {
+			historyOnly = false
+			break
+		}
+	}
+	if historyOnly {
+		s.ApplyTerminalHistory(infos)
+		return
+	}
+	seen := make(map[string]bool, len(infos))
+	for _, info := range infos {
+		if info.TerminalID == "" {
+			continue
+		}
+		if acp.TerminalStatusFinished(info.Status) {
+			s.applyTerminalHistoryInfo(info)
+			continue
+		}
+		seen[info.TerminalID] = true
+		s.ApplyTerminalInfo(info)
+	}
+	for _, id := range append([]string(nil), s.terminalOrder...) {
+		if !seen[id] {
+			s.ArchiveTerminal(id)
+		}
+	}
+}
+
+// RemoveTerminal 彻底丢弃终端（活动与历史两段）。
 func (s *SessionState) RemoveTerminal(id string) {
 	delete(s.terminals, id)
 	for i, v := range s.terminalOrder {
@@ -577,6 +810,17 @@ func (s *SessionState) RemoveTerminal(id string) {
 			break
 		}
 	}
+	delete(s.terminalHistory, id)
+	for i, v := range s.terminalHistoryOrder {
+		if v == id {
+			s.terminalHistoryOrder = append(s.terminalHistoryOrder[:i], s.terminalHistoryOrder[i+1:]...)
+			break
+		}
+	}
+	s.removeTerminalTimeline(id)
+}
+
+func (s *SessionState) removeTerminalTimeline(id string) {
 	delete(s.timelineIndex, "terminal:"+id)
 	for i, item := range s.Timeline {
 		if item.Key == "terminal:"+id {
@@ -586,7 +830,7 @@ func (s *SessionState) RemoveTerminal(id string) {
 	}
 }
 
-// Terminals returns shells in stable creation order.
+// Terminals returns active shells, most recently created first.
 func (s *SessionState) Terminals() []*TerminalState {
 	out := make([]*TerminalState, 0, len(s.terminalOrder))
 	for _, id := range s.terminalOrder {
@@ -597,7 +841,21 @@ func (s *SessionState) Terminals() []*TerminalState {
 	return out
 }
 
+// TerminalHistory returns finished shells, most recently finished first.
+func (s *SessionState) TerminalHistory() []*TerminalState {
+	out := make([]*TerminalState, 0, len(s.terminalHistoryOrder))
+	for _, id := range s.terminalHistoryOrder {
+		if t := s.terminalHistory[id]; t != nil {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 func (s *SessionState) Terminal(id string) *TerminalState { return s.terminals[id] }
+
+// TerminalHistoryByID 返回历史段（已结束）中的终端。
+func (s *SessionState) TerminalHistoryByID(id string) *TerminalState { return s.terminalHistory[id] }
 
 func (s *SessionState) Running() bool {
 	return s.State == acp.StateRunning || s.State == acp.StateRequiresAction

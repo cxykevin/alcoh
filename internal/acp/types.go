@@ -152,11 +152,18 @@ type ToolCallUpdate struct {
 
 // ToolCallContent 是工具输出内容项（type 判别）。
 type ToolCallContent struct {
-	Type    string          `json:"type"` // content|diff|terminal|other
-	Content *ContentBlock   `json:"content,omitempty"`
-	Text    *string         `json:"text,omitempty"`
-	Raw     json.RawMessage `json:"-"`
+	Type    string        `json:"type"` // content|diff|terminal|other
+	Content *ContentBlock `json:"content,omitempty"`
+	Text    *string       `json:"text,omitempty"`
+	// Name/Args 用于 alkaid0 私有 calling_info 块：alkaid0 不发送标准 rawInput，
+	// 工具入参经该块完整给出（见 docs/acp/extension.md §4.1）。
+	Name string          `json:"name,omitempty"`
+	Args json.RawMessage `json:"args,omitempty"`
+	Raw  json.RawMessage `json:"-"`
 }
+
+// ToolCallingInfoType 是 alkaid0 私有工具调用参数块（content 数组中的一项）。
+const ToolCallingInfoType = "alk.cxykevin.top/calling_info"
 
 // ToolCallLocation 是工具操作的文件位置（follow-along）。
 type ToolCallLocation struct {
@@ -244,7 +251,7 @@ type PermissionResponse struct {
 	OptionID *string           `json:"optionId,omitempty"`
 }
 
-// TerminalInfo is a private alkaid0 v0.5 terminal snapshot.
+// TerminalInfo is a private alkaid0 terminal snapshot (v0.5 列表/增量，v0.6 历史)。
 type TerminalInfo struct {
 	TerminalID string `json:"terminalId"`
 	SessionID  string `json:"sessionId"`
@@ -257,13 +264,30 @@ type TerminalInfo struct {
 	ToolID     string `json:"toolId"`
 	Content    string `json:"content"`
 	CreatedAt  string `json:"createdAt"`
+	// Restored 标记该条目来自持久化副本（服务端重启后内存中已无该终端）。
+	// 此时只有 TerminalID / SessionID / Content 可信，Status 固定为 finished。
+	Restored bool `json:"restored,omitempty"`
 }
 
-// TerminalControl exposes the private v0.5 terminal RPCs.
+// TerminalStatusFinished 报告终端状态是否已结束：结束的终端会从活动列表
+// 移除，只能经 terminal/history 取回内容（见 docs，§2.2 / §3.1）。
+func TerminalStatusFinished(status string) bool {
+	switch status {
+	case "stop", "stopped", "exited", "finished", "killed", "cancelled", "completed":
+		return true
+	default:
+		return false
+	}
+}
+
+// TerminalControl exposes the private alkaid0 terminal RPCs.
 type TerminalControl interface {
 	ListTerminals(context.Context) ([]TerminalInfo, error)
 	TerminalStatus(context.Context, string) (TerminalInfo, error)
 	StopTerminal(context.Context, string) error
+	// TerminalHistory 返回已结束终端（含持久化副本）。terminalID 为空时
+	// 返回该会话全部已结束终端。仅 v0.6 服务端支持。
+	TerminalHistory(context.Context, string) ([]TerminalInfo, error)
 }
 
 // ---- 会话 ----

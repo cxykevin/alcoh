@@ -106,6 +106,9 @@ const (
 	commandConnectFetch
 	commandConnectSubmit
 	commandTerminalStop
+	commandTerminalHistory
+	commandTerminalStatus
+	commandTerminalList
 )
 
 type commandResult struct {
@@ -358,12 +361,18 @@ type modelSnapshot struct {
 	ActiveRunning bool
 	ActiveScroll  int
 	FollowBottom  bool
-	ServerCfg     bool   // 服务端配置树已加载（ServerCfg != nil）
-	ServerSaving  bool   // 服务端配置写回/全量重载进行中（编辑被阻塞）
-	ServerCurKey  string // 服务端配置编辑器当前页 Key（根为空串）
-	ServerSelKey  string // 当前页选中行节点 Key（无选中行或非对象键时为空串）
-	BodyScroll    int    // 最近一帧正文滚动偏移
-	ThoughtRow    int    // 最近一帧首个思考标题行（contentY），无则 -1
+	ServerCfg     bool     // 服务端配置树已加载（ServerCfg != nil）
+	ServerSaving  bool     // 服务端配置写回/全量重载进行中（编辑被阻塞）
+	ServerCurKey  string   // 服务端配置编辑器当前页 Key（根为空串）
+	ServerSelKey  string   // 当前页选中行节点 Key（无选中行或非对象键时为空串）
+	BodyScroll    int      // 最近一帧正文滚动偏移
+	ThoughtRow    int      // 最近一帧首个思考标题行（contentY），无则 -1
+	ShellPanel    bool     // shells 面板是否展开
+	ShellSelected int      // shells 面板选中项下标
+	ShellCount    int      // shells 面板列表长度（活跃 + 历史）
+	ShellIDs      []string // shells 面板列表顺序（活跃在前、历史在后）
+	HistoryIDs    []string // 历史段终端 ID
+	HistoryTexts  []string // 历史段终端内容
 }
 
 // snapshot 返回当前模型状态快照，供测试在应用运行期间安全轮询。
@@ -371,10 +380,13 @@ func (a *App) snapshot() modelSnapshot {
 	a.modelMu.RLock()
 	defer a.modelMu.RUnlock()
 	s := modelSnapshot{
-		Quitting:   a.model.Quitting,
-		Modal:      a.model.Modal,
-		BodyScroll: a.view.BodyScroll,
-		ThoughtRow: firstThoughtRow(a.view.BodyToggles),
+		Quitting:      a.model.Quitting,
+		Modal:         a.model.Modal,
+		ShellPanel:    a.model.ShellPanel,
+		ShellSelected: a.model.ShellSelected,
+		ShellCount:    len(a.model.Shells()),
+		BodyScroll:    a.view.BodyScroll,
+		ThoughtRow:    firstThoughtRow(a.view.BodyToggles),
 	}
 	if a.model.ServerCfg != nil {
 		s.ServerCfg = true
@@ -385,6 +397,13 @@ func (a *App) snapshot() modelSnapshot {
 		if n := a.model.ServerCfg.SelectedNode(); n != nil {
 			s.ServerSelKey = n.Key
 		}
+	}
+	for _, t := range a.model.Shells() {
+		s.ShellIDs = append(s.ShellIDs, t.ID)
+	}
+	for _, t := range a.model.ShellHistory() {
+		s.HistoryIDs = append(s.HistoryIDs, t.ID)
+		s.HistoryTexts = append(s.HistoryTexts, t.Transcript)
 	}
 	if a.model.Active != nil {
 		s.HasActive = true
@@ -674,6 +693,24 @@ func (a *App) applyCommandResult(result commandResult) {
 			return
 		}
 		a.model.ShowInfo("终端停止请求已发送")
+		// 停止是异步的：立刻补一次历史查询，尽量取到服务端落库的最终内容。
+		a.refreshShellHistory()
+		return
+	}
+	if result.kind == commandTerminalHistory {
+		if result.err != nil {
+			// 能力探测通过后仍失败（旧服务端 / 会话已释放）：只提示，不影响面板。
+			a.model.ShowError(i18n.T("获取 shell 历史失败: %s", result.err.Error()))
+		}
+		return
+	}
+	if result.kind == commandTerminalStatus {
+		// 状态查询只为触发服务端推送最新内容（full 更新）；终端刚好结束等失败
+		// 无需打扰用户，面板保留已有内容。
+		return
+	}
+	if result.kind == commandTerminalList {
+		// 活动终端列表经 TerminalListEvent 并入模型，这里只需吞掉结果/错误。
 		return
 	}
 	if result.kind == commandSessionDelete {
@@ -714,6 +751,9 @@ func (a *App) applyCommandResult(result commandResult) {
 		a.sess = result.session
 		a.model.ClearSelection()
 		a.model.ApplyEvent(&acp.NewSessionEvent{Session: result.session})
+		// 进入会话即同步一次 shells 状态（活动终端 + 已结束终端）：面板据此
+		// 在没有活跃 shell 时也能打开，直接看到上一次运行留下的终端内容。
+		a.refreshShellOnEntry()
 		if result.opID == a.firstSessionOpID {
 			// 新手引导后的第一个新会话：应用引导里选的 effort。
 			a.firstSessionOpID = 0

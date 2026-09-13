@@ -26,6 +26,10 @@ const (
 	Alkaid0CapabilityV04 = "alk.cxykevin.top/alkaid0/v0.4"
 	// Alkaid0CapabilityV05 gates the private terminal protocol.
 	Alkaid0CapabilityV05 = "alk.cxykevin.top/alkaid0/v0.5"
+	// Alkaid0CapabilityV06 是已结束终端内容查询能力（terminal/history）。
+	// 终端 ID 与 run id 统一为 @temp/run/<n>，终端内容持久化在该路径下，
+	// 因此客户端可凭 terminalId 取回已结束终端（含服务端重启前结束的）。
+	Alkaid0CapabilityV06 = "alk.cxykevin.top/alkaid0/v0.6"
 
 	// MethodConfigGet 是 alkaid0 扩展方法：获取完整服务端配置。见 docs/acp/extension.md。
 	MethodConfigGet = "alk.cxykevin.top/config/get"
@@ -36,6 +40,8 @@ const (
 	MethodTerminalList   = "alk.cxykevin.top/session/terminal/list"
 	MethodTerminalStatus = "alk.cxykevin.top/session/terminal/status"
 	MethodTerminalStop   = "alk.cxykevin.top/session/terminal/stop"
+	// MethodTerminalHistory 查询已结束终端的内容（alkaid0 v0.6）。
+	MethodTerminalHistory = "alk.cxykevin.top/session/terminal/history"
 )
 
 // ConfigGetResult 是 alk.cxykevin.top/config/get 的响应。Config 为完整的
@@ -298,6 +304,21 @@ type TerminalStatusResult struct {
 type TerminalStopParams struct {
 	SessionID  string `json:"sessionId"`
 	TerminalID string `json:"terminalId"`
+}
+
+// TerminalHistoryParams 是 alkaid0 v0.6 terminal/history request 参数。
+// 省略 TerminalID 时返回该会话全部已结束终端。
+type TerminalHistoryParams struct {
+	SessionID string `json:"sessionId"`
+	// TerminalID 为统一的 @temp/run/<n>；ID 只在工作目录内唯一，
+	// 因此必须同时带 SessionID 才能定位。
+	TerminalID string `json:"terminalId,omitempty"`
+}
+
+// TerminalHistoryResult 是 terminal/history response，只包含已结束
+// （finished / killed）终端，按 createdAt（再按 terminalId）升序。
+type TerminalHistoryResult struct {
+	Terminals []TerminalInfo `json:"terminals"`
 }
 
 // TerminalStopResult 是 terminal/stop response。

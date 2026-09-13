@@ -559,6 +559,9 @@ func (s *clientSession) ListTerminals(ctx context.Context) ([]TerminalInfo, erro
 	if err := t.Request(ctx, MethodTerminalList, TerminalListParams{SessionID: s.id}, &result); err != nil {
 		return nil, err
 	}
+	// 活动终端快照同时广播给 UI：前台 run 没有任何 terminal_update 推送，
+	// 只能靠这次查询把正在运行的终端列出来。
+	s.backend.emit(&TerminalListEvent{SessionID: s.id, Terminals: result.Terminals})
 	return result.Terminals, nil
 }
 
@@ -587,6 +590,32 @@ func (s *clientSession) StopTerminal(ctx context.Context, id string) error {
 	}
 	var result TerminalStopResult
 	return t.Request(ctx, MethodTerminalStop, TerminalStopParams{SessionID: s.id, TerminalID: id}, &result)
+}
+
+// TerminalHistory 查询已结束终端内容（v0.6）。id 为空时返回该会话全部
+// 已结束终端；服务端按 createdAt（再按 terminalId）升序返回，只有内容
+// 落库的持久化副本 createdAt 为空，因此排在最前。
+func (s *clientSession) TerminalHistory(ctx context.Context, id string) ([]TerminalInfo, error) {
+	if !s.backend.AgentCapabilities().Has(Alkaid0CapabilityV06) {
+		return nil, errors.New("alkaid0 v0.6 terminal history is not supported")
+	}
+	t, err := s.backend.readyTransport()
+	if err != nil {
+		return nil, err
+	}
+	var result TerminalHistoryResult
+	if err := t.Request(ctx, MethodTerminalHistory, TerminalHistoryParams{SessionID: s.id, TerminalID: id}, &result); err != nil {
+		return nil, err
+	}
+	for i := range result.Terminals {
+		if result.Terminals[i].SessionID == "" {
+			result.Terminals[i].SessionID = s.id
+		}
+	}
+	// 结果同时以事件形式广播：历史内容与 terminal_update 走同一条通道，
+	// UI 不必为查询结果单独接线（与 SendPrompt 回传 stopReason 同构）。
+	s.backend.emit(&TerminalHistoryEvent{SessionID: s.id, Terminals: result.Terminals})
+	return result.Terminals, nil
 }
 
 func (s *clientSession) SetConfigOption(ctx context.Context, configID, configType, value string) error {
