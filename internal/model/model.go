@@ -281,7 +281,7 @@ func (m *AppModel) slashCommandInfos() []SlashCommandInfo {
 					candidate = "/" + candidate
 				}
 				if candidate == name {
-					info.Description = command.Description
+					info.Description = m.agentCommandDescription(command.Description)
 					break
 				}
 			}
@@ -289,6 +289,18 @@ func (m *AppModel) slashCommandInfos() []SlashCommandInfo {
 		infos = append(infos, info)
 	}
 	return infos
+}
+
+// agentCommandDescription 返回服务端下发命令描述的展示文本。
+//
+// 服务端声明 alkaid0 v0.4 私有能力时，其命令描述是 alkaid0 的英文原文，客户端
+// 按当前界面语言自行翻译（见 i18n.TServer；英文界面即服务端原文）。其它 ACP
+// 服务端的描述是第三方文本、语言未知，原样展示，不做猜测性翻译。
+func (m *AppModel) agentCommandDescription(description string) string {
+	if description == "" || !m.SupportsAlkaid0() {
+		return description
+	}
+	return i18n.TServer(description)
 }
 
 // SlashCompletion 返回当前命令的灰色补全文本和说明。

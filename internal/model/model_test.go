@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/cxykevin/alcoh/internal/acp"
+	"github.com/cxykevin/alcoh/internal/i18n"
 	"github.com/cxykevin/alcoh/internal/widget"
 )
 
@@ -216,6 +217,59 @@ func TestServerCommandRequiresAlkaid0Capability(t *testing.T) {
 	}
 	if containsString(m.SlashCommands(), "/server") {
 		t.Fatal("/server should not appear for unrelated capability")
+	}
+}
+
+// slashDescription 返回命令在命令面板中的描述；命令不存在时判定测试失败。
+func slashDescription(t *testing.T, m *AppModel, command string) string {
+	t.Helper()
+	commands := m.SlashCommands()
+	descriptions := m.SlashCommandDescriptions()
+	if len(commands) != len(descriptions) {
+		t.Fatalf("commands = %d, descriptions = %d, want 1:1", len(commands), len(descriptions))
+	}
+	for i, name := range commands {
+		if name == command {
+			return descriptions[i]
+		}
+	}
+	t.Fatalf("command %s not found in %v", command, commands)
+	return ""
+}
+
+// TestServerCommandDescriptionsLocalized 验证服务端命令描述只在服务端声明
+// alkaid0 v0.4 私有能力时由客户端 i18n（alkaid0 下发的描述是英文原文）；未声明
+// 能力的第三方 ACP 服务端描述原样展示，不做猜测性翻译。
+func TestServerCommandDescriptionsLocalized(t *testing.T) {
+	i18n.SetLang(i18n.Zh)
+	defer i18n.SetLang(i18n.Zh)
+
+	m := New()
+	m.ActivateSession("s1", "")
+	m.Active.Commands = []acp.AvailableCommand{
+		{Name: "compress", Description: "Compress the history"},
+		{Name: "custom", Description: "A brand new command description"},
+	}
+
+	// 未声明 alkaid0 能力：服务端描述原样展示。
+	if got := slashDescription(t, m, "/compress"); got != "Compress the history" {
+		t.Fatalf("description without alkaid0 capability = %q, want server text", got)
+	}
+
+	// 声明 alkaid0 v0.4 私有能力：描述按当前界面语言由客户端翻译。
+	m.SetAgentInfo(acp.AgentInfo{Name: "alkaid0", Version: "test"}, alkaid0Caps())
+	if got := slashDescription(t, m, "/compress"); got != "压缩历史记录" {
+		t.Fatalf("localized description = %q, want 压缩历史记录", got)
+	}
+	// 未收录的描述（服务端新增或改写文案）回退服务端原文。
+	if got := slashDescription(t, m, "/custom"); got != "A brand new command description" {
+		t.Fatalf("unknown description = %q, want server text", got)
+	}
+
+	// 英文界面下服务端原文即目标语言，保持原样。
+	i18n.SetLang(i18n.En)
+	if got := slashDescription(t, m, "/compress"); got != "Compress the history" {
+		t.Fatalf("en description = %q, want server text", got)
 	}
 }
 
