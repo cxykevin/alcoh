@@ -129,6 +129,214 @@ func TestConfigEditorDisplayKey(t *testing.T) {
 	_ = args
 }
 
+// nodeAtPath 返回从 root 沿 path 逐层前进到的节点；任一段缺失时返回 nil。
+func nodeAtPath(root *ConfigNode, path ...string) *ConfigNode {
+	n := root
+	for _, seg := range path {
+		if n = n.findChild(seg); n == nil {
+			return nil
+		}
+	}
+	return n
+}
+
+// TestModelRefPreview 验证"选择模型"的键（SummaryModel / TitleModel / AgentModel /
+// DefaultModelID / EmbeddingModelID / SearchSummaryModel）解析出行尾灰字提示的
+// 模型名称：数字或字符串引用按 Models 的键匹配、未命中再按模型条目的 ModelID
+// 匹配；ModelName 为空时退回 ModelID；引用不到模型或模型无名时不提示。
+func TestModelRefPreview(t *testing.T) {
+	cfg := `{
+		"Model": {
+			"DefaultModelID": 1,
+			"Models": {
+				"1": {"ModelName": "Kimi", "ModelID": "moonshot-v1-8k"},
+				"2": {"ModelName": "", "ModelID": "deepseek-chat"},
+				"3": {"ModelName": "", "ModelID": ""}
+			}
+		},
+		"Agent": {
+			"SummaryModel": 2,
+			"TitleModel": 9,
+			"MaxCallCount": 50,
+			"Agents": {"main": {"AgentModel": 1}}
+		},
+		"Context": {"EmbeddingModelID": 3, "SearchSummaryModel": "moonshot-v1-8k"}
+	}`
+	ed := NewConfigEditor(json.RawMessage(cfg))
+	cases := []struct {
+		path []string
+		want string
+		ok   bool
+	}{
+		{[]string{"Model", "DefaultModelID"}, "Kimi", true},        // 数字键命中，显示 ModelName
+		{[]string{"Agent", "SummaryModel"}, "deepseek-chat", true}, // ModelName 为空 → 退回 ModelID
+		{[]string{"Agent", "TitleModel"}, "", false},               // 引用不到模型（没有键 9）
+		{[]string{"Agent", "Agents", "main", "AgentModel"}, "Kimi", true},
+		{[]string{"Context", "EmbeddingModelID"}, "", false},      // 模型既没有 ModelName 也没有 ModelID
+		{[]string{"Context", "SearchSummaryModel"}, "Kimi", true}, // 字符串引用按 ModelID 匹配
+		{[]string{"Agent", "MaxCallCount"}, "", false},            // 非选择模型的键
+		{[]string{"Model", "Models"}, "", false},                  // 集合（对象）本身不提示
+	}
+	for _, c := range cases {
+		n := nodeAtPath(ed.Root, c.path...)
+		if n == nil {
+			t.Fatalf("node %v not found", c.path)
+		}
+		got, ok := ed.ModelRefPreview(n)
+		if got != c.want || ok != c.ok {
+			t.Errorf("ModelRefPreview(%v) = (%q, %v), want (%q, %v)", c.path, got, ok, c.want, c.ok)
+		}
+	}
+	// 配置里没有 Models 集合时，引用键一律不提示。
+	ed2 := NewConfigEditor(json.RawMessage(`{"Agent":{"SummaryModel":1}}`))
+	if got, ok := ed2.ModelRefPreview(nodeAtPath(ed2.Root, "Agent", "SummaryModel")); ok || got != "" {
+		t.Errorf("without Models: ModelRefPreview = (%q, %v), want no hint", got, ok)
+	}
+	// nil 节点安全。
+	if got, ok := ed.ModelRefPreview(nil); ok || got != "" {
+		t.Errorf("ModelRefPreview(nil) = (%q, %v), want no hint", got, ok)
+	}
+}
+
+// TestConfigEditorModelPick 验证"选择模型"键的模型选择框：候选项直接来自配置的
+// Model.Models（顺序与 Models 集合页一致，隐藏模型与所有类型都列出），打开时
+// 选中当前引用值，↑↓ 带环绕，Esc 只关闭不写回，Enter 写回选中模型的键且值的
+// 类型与字段原有类型一致（数字字段写数字、字符串字段写字符串、null 按键推断）。
+func TestConfigEditorModelPick(t *testing.T) {
+	cfg := `{
+		"Model": {"DefaultModelID": 2, "ProviderKey": "sk-test", "Models": {
+			"1": {"ModelName": "Kimi", "ModelID": "kimi-k2", "Hide": true},
+			"2": {"ModelName": "Deepseek", "ModelID": "deepseek-v3"},
+			"3": {"ModelName": "Embed", "ModelID": "bge-m3", "Type": "embedding"},
+			"4": {"ModelName": "", "ModelID": "bge-reranker", "Type": "rerank"},
+			"5": {}
+		}},
+		"Agent": {"SummaryModel": "deepseek-chat", "TitleModel": null,
+			"Agents": {"main": {"AgentModel": 1}}}
+	}`
+	ed := NewConfigEditor(json.RawMessage(cfg))
+
+	// 候选列表：全部模型（含 Hide 与 embedding/rerank），ModelName 为空退回
+	// ModelID，再为空退回键。
+	opts := ed.ModelPickOptions()
+	if len(opts) != 5 {
+		t.Fatalf("pick options = %d, want 5 (%v)", len(opts), opts)
+	}
+	keys := []string{"1", "2", "3", "4", "5"}
+	for i, want := range keys {
+		if opts[i].Key != want {
+			t.Errorf("option[%d].Key = %q, want %q", i, opts[i].Key, want)
+		}
+	}
+	if !opts[0].Hide || opts[0].Name != "Kimi" || opts[0].ID != "kimi-k2" {
+		t.Errorf("option[0] = %+v, want 隐藏的 Kimi/kimi-k2", opts[0])
+	}
+	if opts[2].Type != "embedding" || opts[3].Type != "rerank" {
+		t.Errorf("types = %q/%q, want embedding/rerank", opts[2].Type, opts[3].Type)
+	}
+	if opts[3].Name != "bge-reranker" {
+		t.Errorf("option[3].Name = %q, want ModelID fallback bge-reranker", opts[3].Name)
+	}
+	if opts[4].Name != "5" {
+		t.Errorf("option[4].Name = %q, want key fallback 5", opts[4].Name)
+	}
+
+	// 数字引用：打开时选中当前值 2。
+	ed.focusNode([]string{"Model", "DefaultModelID"})
+	if !ed.BeginModelPick() {
+		t.Fatal("BeginModelPick should open for Model.DefaultModelID")
+	}
+	if !ed.PickingModel || ed.PickSelected != 1 {
+		t.Fatalf("pick state = (%v, %d), want (true, 1)", ed.PickingModel, ed.PickSelected)
+	}
+	// ↑↓ 带环绕。
+	ed.PickMove(-1)
+	if ed.PickSelected != 0 {
+		t.Errorf("PickMove(-1) from 1 = %d, want 0", ed.PickSelected)
+	}
+	ed.PickMove(-1)
+	if ed.PickSelected != len(opts)-1 {
+		t.Errorf("PickMove wrap = %d, want %d", ed.PickSelected, len(opts)-1)
+	}
+
+	// Esc：关闭选择框、不改动节点，关闭后再提交也不产生 patch。
+	ed.CancelModelPick()
+	n := nodeAtPath(ed.Root, "Model", "DefaultModelID")
+	if ed.PickingModel || n == nil || n.Kind != ConfigNumber || n.Num != 2 {
+		t.Fatalf("after cancel: picking=%v node=%+v, want unchanged 2", ed.PickingModel, n)
+	}
+	if patch, ok := ed.CommitModelPick(); ok || patch != nil {
+		t.Fatalf("CommitModelPick after cancel = (%s, %v), want (nil, false)", patch, ok)
+	}
+
+	// 数字字段：重新打开（当前值 2 落在索引 1），移到键 3 → 写回数字 3。
+	if !ed.BeginModelPick() {
+		t.Fatal("BeginModelPick should reopen")
+	}
+	ed.PickMove(1) // 索引 1 → 2（键 "3"）
+	patch, ok := ed.CommitModelPick()
+	if !ok || string(patch) != `{"Model":{"DefaultModelID":3}}` {
+		t.Fatalf("numeric pick patch = %s (ok=%v), want {\"Model\":{\"DefaultModelID\":3}}", patch, ok)
+	}
+	if n.Kind != ConfigNumber || n.Num != 3 || ed.PickingModel {
+		t.Errorf("node after numeric pick = kind %v num %v picking %v", n.Kind, n.Num, ed.PickingModel)
+	}
+	// 选择框已关闭：再次提交失败。
+	if _, ok := ed.CommitModelPick(); ok {
+		t.Error("CommitModelPick twice should fail")
+	}
+
+	// 字符串引用值按 ModelID 命中（deepseek-chat 无对应模型，停在首行）。
+	ed.focusNode([]string{"Agent", "SummaryModel"})
+	if !ed.BeginModelPick() || ed.PickSelected != 0 {
+		t.Fatalf("SummaryModel pick = (%v, %d), want (true, 0)", ed.PickingModel, ed.PickSelected)
+	}
+	patch, ok = ed.CommitModelPick()
+	if !ok || string(patch) != `{"Agent":{"SummaryModel":"1"}}` {
+		t.Fatalf("string pick patch = %s (ok=%v), want {\"Agent\":{\"SummaryModel\":\"1\"}}", patch, ok)
+	}
+	sn := nodeAtPath(ed.Root, "Agent", "SummaryModel")
+	if sn.Kind != ConfigString || sn.Str != "1" {
+		t.Errorf("string node after pick = kind %v str %q, want string 1", sn.Kind, sn.Str)
+	}
+
+	// null（未赋值）：按键的形状推断为数字；子代理的 AgentModel 同理。
+	ed.focusNode([]string{"Agent", "TitleModel"})
+	if !ed.BeginModelPick() {
+		t.Fatal("BeginModelPick should open for unset (null) TitleModel")
+	}
+	ed.PickMove(3) // 键 4
+	patch, ok = ed.CommitModelPick()
+	if !ok || string(patch) != `{"Agent":{"TitleModel":4}}` {
+		t.Fatalf("null pick patch = %s (ok=%v), want {\"Agent\":{\"TitleModel\":4}}", patch, ok)
+	}
+	tn := nodeAtPath(ed.Root, "Agent", "TitleModel")
+	if tn.Kind != ConfigNumber || tn.Num != 4 {
+		t.Errorf("null node after pick = kind %v num %v, want number 4", tn.Kind, tn.Num)
+	}
+	// 子代理模型：AgentModel = 1 → 当前选中首行。
+	ed.focusNode([]string{"Agent", "Agents", "main", "AgentModel"})
+	if !ed.BeginModelPick() || ed.PickSelected != 0 {
+		t.Fatalf("AgentModel pick = (%v, %d), want (true, 0)", ed.PickingModel, ed.PickSelected)
+	}
+
+	// 非"选择模型"的键、以及配置里没有模型时都不能打开选择框。
+	ed.CancelModelPick()
+	ed.focusNode([]string{"Model", "ProviderKey"})
+	pk := ed.SelectedNode()
+	if pk == nil {
+		t.Fatalf("ProviderKey not found, current page key = %q", ed.Current().Key)
+	}
+	if ed.CanPickModel(pk) {
+		t.Errorf("ProviderKey (selected %q) should not be pickable", pk.Key)
+	}
+	empty := NewConfigEditor(json.RawMessage(`{"Model":{"Models":{}},"Agent":{"SummaryModel":1}}`))
+	empty.focusNode([]string{"Agent", "SummaryModel"})
+	if empty.CanPickModel(empty.SelectedNode()) || empty.BeginModelPick() {
+		t.Error("no models in config: pick should be unavailable")
+	}
+}
+
 func TestConfigEditorNavigate(t *testing.T) {
 	ed := NewConfigEditor(sampleConfig())
 	// 根页 Crumb。

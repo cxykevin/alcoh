@@ -181,6 +181,9 @@ var en = map[string]string{
 	"无效数字: %s": "Invalid number: %s",
 	"键名不能为空":   "Key name cannot be empty",
 	"该集合不支持新增": "This collection does not support adding items",
+	"选择模型":     "Model picker",
+	"选择模型: %s": "Model picker: %s",
+	"↑↓ 选择    Enter 确认    e 手工输入    Esc 取消": "↑↓ select    Enter confirm    e manual input    Esc cancel",
 
 	// ---- 计划面板 ----
 	"计划  %s/%s 完成": "Plan  %s/%s done",

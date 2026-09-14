@@ -938,17 +938,20 @@ func TestServerConfigEditor(t *testing.T) {
 	// 配置树加载完成（ServerCfg != nil）后才可导航。
 	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.ServerCfg })
 
-	// 子页面导航（布局见 demoConfigJSON）：根页 Model 是行 0，Enter 进入其
-	// 子页；DefaultModelID 是子页行 0，Enter 进入数字编辑（输入框预填原值 1），
-	// Ctrl+U 清空后输入 7，Enter 提交 → patch {"Model":{"DefaultModelID":7}}。
-	ft.sendKey(input.SimpleKey(input.KeyEnter)) // 进入 Model 子页
-	ft.sendKey(input.SimpleKey(input.KeyEnter)) // 编辑 DefaultModelID
+	// 子页面导航（布局见 demoConfigJSON）：根页 [Model, Server, Version]，
+	// ↓↓ 选中数字叶子 Version（行 2）后 Enter 进入数字编辑（输入框预填原值 1），
+	// Ctrl+U 清空后输入 7，Enter 提交 → patch {"Version":7}。
+	// （Model.DefaultModelID 这类"选择模型"的键现在由模型选择框接管，
+	// 见 TestServerConfigEditorModelPick。）
+	ft.sendKey(input.SimpleKey(input.KeyDown))  // Server
+	ft.sendKey(input.SimpleKey(input.KeyDown))  // Version
+	ft.sendKey(input.SimpleKey(input.KeyEnter)) // 编辑 Version
 	time.Sleep(30 * time.Millisecond)
 	ft.sendKey(input.RuneKey('u', input.ModCtrl))
 	ft.sendKey(input.RuneKey('7', input.ModNone))
 	ft.sendKey(input.SimpleKey(input.KeyEnter))
 
-	// SetConfig 应被调用一次，patch 为 {"Model":{"DefaultModelID":7}}。
+	// SetConfig 应被调用一次，patch 为 {"Version":7}。
 	waitAtomic(t, &b.sets, 1, "config/set calls")
 	b.mu.Lock()
 	patches := append([]json.RawMessage(nil), b.patches...)
@@ -960,12 +963,8 @@ func TestServerConfigEditor(t *testing.T) {
 	if err := json.Unmarshal(patches[0], &patch); err != nil {
 		t.Fatalf("unmarshal patch: %v", err)
 	}
-	modelObj, ok := patch["Model"].(map[string]any)
-	if !ok {
-		t.Fatalf("patch Model = %v, want object", patch["Model"])
-	}
-	if v, ok := modelObj["DefaultModelID"].(float64); !ok || v != 7 {
-		t.Errorf("patch Model.DefaultModelID = %v, want 7", modelObj["DefaultModelID"])
+	if v, ok := patch["Version"].(float64); !ok || v != 7 {
+		t.Errorf("patch Version = %v, want 7", patch["Version"])
 	}
 
 	// Esc 关闭编辑器（退出后读取模型安全）。

@@ -22,7 +22,7 @@ alcoh 实现了大部分的 ACP v2 协议内容，因此可以通过命令行访
 - **ACP v2 双 transport**：JSON-RPC 2.0 over stdio 与 WebSocket 双 transport 客户端
 - **终端体验**：CJK 宽字符、Markdown / 代码高亮、鼠标框选复制
 - **命令面板**：`/` 打开本地与 agent 命令面板；`/settings` 打开本地设置；`/effort`、`/model` 调整推理强度与切换模型
-- **服务端配置编辑器**：`/server` 经 alkaid0 扩展 RPC 浏览/编辑服务端配置，编辑即自动保存（只适配 alkaid0 后端）
+- **服务端配置编辑器**：`/server` 经 alkaid0 扩展 RPC 浏览/编辑服务端配置，编辑即自动保存；模型集合行尾灰字显示模型名，选择模型的键（`SummaryModel`、`TitleModel`、`AgentModel`、`DefaultModelID` 等）行尾灰字提示当前指向的模型，按 Enter 弹出**模型选择框**（候选直接读配置的 `Model.Models`，忽略 `Hide`、不限类型）（只适配 alkaid0 后端）
 - **新手引导**：启动进入引导（与 `/connect` 向导同义：选服务商 → 填 key → 拉取模型列表 → 选模型 → 推理强度 → 操作教学）（只适配 alkaid0 后端）
 - **Shells 面板**：实时查看 agent 启动的终端，活跃 shell 在上、历史 shell 与内容在下（alkaid0 v0.5+）
 - **跨平台**：Linux、macOS、Windows Terminal
@@ -192,7 +192,17 @@ agent 经 `run` 工具启动的终端会实时推送到 shells 面板（仅当�
 - `/plugins`：本地配置编辑器（复用 `/server` 的配置树面板）——浏览/新增/删除
   `config.json` 的插件条目（name/command/args/dir/env/disabled 等），编辑即
   保存，插件改动重启 alcoh 后生效
-- `/server`：服务端配置编辑器，仅当服务端在 initialize 中声明 `alk.cxykevin.top/alkaid0/v0.4` 能力时出现
+- `/server`：服务端配置编辑器，仅当服务端在 initialize 中声明 `alk.cxykevin.top/alkaid0/v0.4` 能力时出现。
+  列表行尾以灰字提示模型：模型集合（`Model.Models`）页显示各项模型名，选择模型的键
+  （`Agent.SummaryModel`、`Agent.TitleModel`、`Agent.Agents.*.AgentModel`、
+  `Model.DefaultModelID`、`Context.EmbeddingModelID`、`Context.SearchSummaryModel`）
+  显示其值指向的模型名称（引用不到模型时不提示）
+  选择模型的键按 Enter 弹出**模型选择框**：候选项直接读配置文档的 `Model.Models`（与
+  `/model` 不同——不查服务端公布的模型列表），**忽略 `Hide`**（隐藏模型一并列出并标注）、
+  **不限类型**（LLM / `embedding` / `rerank` 全部出现），每行显示 `键  模型名 — ModelID [类型]`。
+  打开时选中当前的引用值，`↑↓`（或滚轮）移动、`Enter` 写回该模型的键、`e` 退回手工输入值
+  （需要写入不在 `Model.Models` 里的引用值时使用）、`Esc` 取消；配置里没有任何模型时不弹
+  选择框，直接进入值编辑
 
 ### 常用快捷键
 

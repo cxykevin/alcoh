@@ -365,6 +365,8 @@ type modelSnapshot struct {
 	ServerSaving  bool     // 服务端配置写回/全量重载进行中（编辑被阻塞）
 	ServerCurKey  string   // 服务端配置编辑器当前页 Key（根为空串）
 	ServerSelKey  string   // 当前页选中行节点 Key（无选中行或非对象键时为空串）
+	ServerPicking bool     // 模型选择框是否打开（"选择模型"的键）
+	ServerPickSel int      // 模型选择框当前选中行
 	BodyScroll    int      // 最近一帧正文滚动偏移
 	ThoughtRow    int      // 最近一帧首个思考标题行（contentY），无则 -1
 	ShellPanel    bool     // shells 面板是否展开
@@ -397,6 +399,8 @@ func (a *App) snapshot() modelSnapshot {
 		if n := a.model.ServerCfg.SelectedNode(); n != nil {
 			s.ServerSelKey = n.Key
 		}
+		s.ServerPicking = a.model.ServerCfg.PickingModel
+		s.ServerPickSel = a.model.ServerCfg.PickSelected
 	}
 	for _, t := range a.model.Shells() {
 		s.ShellIDs = append(s.ShellIDs, t.ID)

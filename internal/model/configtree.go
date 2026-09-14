@@ -268,6 +268,256 @@ func (n *ConfigNode) ModelPreview() (name string, ok bool) {
 	return "", false
 }
 
+// modelRefKeys 是配置中"选择模型"的字段名：其值指向 Model.Models 中的某个
+// 模型（键为模型 ID，通常是整数字符串），如 Agent.SummaryModel、Agent.TitleModel、
+// Agent.Agents.*.AgentModel、Model.DefaultModelID、Context.EmbeddingModelID 与
+// Context.SearchSummaryModel。编辑器在这些键的行尾以灰字提示被引用模型的名称，
+// 便于确认当前指向的是哪个模型（见 ConfigEditor.ModelRefPreview）。
+var modelRefKeys = map[string]bool{
+	"DefaultModelID":     true,
+	"SummaryModel":       true,
+	"TitleModel":         true,
+	"AgentModel":         true,
+	"EmbeddingModelID":   true,
+	"SearchSummaryModel": true,
+}
+
+// modelEntries 返回配置中 Model.Models 的模型项；集合缺失（或类型不符）时返回 nil。
+func (ed *ConfigEditor) modelEntries() []*ConfigNode {
+	if ed.Root == nil {
+		return nil
+	}
+	for _, c := range ed.Root.Children {
+		if c.Key != "Model" || c.Kind != ConfigObject {
+			continue
+		}
+		for _, m := range c.Children {
+			if m.Key == "Models" && m.Kind == ConfigObject {
+				return m.Children
+			}
+		}
+	}
+	return nil
+}
+
+// modelEntryNames 返回模型项的显示名（ModelName）与供应商处的模型 ID（ModelID）。
+// 两项都可能是空串（新增未赋值）或非字符串（null），非字符串按空串处理。
+func modelEntryNames(n *ConfigNode) (name, id string) {
+	for _, c := range n.Children {
+		if c.Kind != ConfigString {
+			continue
+		}
+		switch c.Key {
+		case "ModelName":
+			name = c.Str
+		case "ModelID":
+			id = c.Str
+		}
+	}
+	return name, id
+}
+
+// modelRefValue 返回"选择模型"的键节点当前的引用值文本：数字按整数文本
+// （Models 的键是整数字符串，避免 1 显示成 "1.000000"）、字符串原样；值不是
+// 标量或为空时 ok=false。
+func (n *ConfigNode) modelRefValue() (string, bool) {
+	switch n.Kind {
+	case ConfigNumber:
+		return strconv.FormatFloat(n.Num, 'f', -1, 64), true
+	case ConfigString:
+		if n.Str == "" {
+			return "", false
+		}
+		return n.Str, true
+	}
+	return "", false
+}
+
+// ModelRefPreview 返回该节点是否为"选择模型"的键，以及其值指向的模型名称
+// （用于行尾的灰色提示）。引用值先按 Models 的键（模型 ID）匹配，未命中再按
+// 模型条目的 ModelID 匹配；值不是标量、引用不到模型、或模型没有名称也没有
+// ModelID 时 ok=false（不显示提示）。
+func (ed *ConfigEditor) ModelRefPreview(n *ConfigNode) (string, bool) {
+	if n == nil || !modelRefKeys[n.Key] {
+		return "", false
+	}
+	ref, ok := n.modelRefValue()
+	if !ok {
+		return "", false
+	}
+	entries := ed.modelEntries()
+	for _, e := range entries {
+		if e.Key == ref {
+			// 键命中：名称缺失时不再退回按 ModelID 匹配，避免提示到别的模型。
+			return modelEntryDisplayName(e)
+		}
+	}
+	for _, e := range entries {
+		if _, id := modelEntryNames(e); id == ref {
+			return modelEntryDisplayName(e)
+		}
+	}
+	return "", false
+}
+
+// modelEntryDisplayName 返回模型项用于行尾提示的名称：优先 ModelName，
+// 为空时退回 ModelID；两者都为空时 ok=false。
+func modelEntryDisplayName(n *ConfigNode) (string, bool) {
+	name, id := modelEntryNames(n)
+	if name != "" {
+		return name, true
+	}
+	if id != "" {
+		return id, true
+	}
+	return "", false
+}
+
+// ModelPickOption 是"选择模型"的键在选择框里的候选项，直接取自配置文档的
+// Model.Models。与 /model 的候选列表不同：这里忽略 Hide（隐藏模型同样列出，
+// 只加标注不隐藏），也不按 Type 过滤——所有类型的模型（LLM / embedding /
+// rerank）都会出现。
+type ModelPickOption struct {
+	Key  string // Model.Models 的键，即写回配置的引用值
+	Name string // 显示名：ModelName，为空退回 ModelID，再为空退回键
+	ID   string // ModelID（供应商处的模型 ID）
+	Type string // Type（""=LLM、embedding、rerank）
+	Hide bool   // Hide：在 /model 等按 Hide 过滤的入口不出现
+}
+
+// modelEntryType 返回模型项的 Type（非字符串或缺失时为空串）。
+func modelEntryType(n *ConfigNode) string {
+	for _, c := range n.Children {
+		if c.Key == "Type" && c.Kind == ConfigString {
+			return c.Str
+		}
+	}
+	return ""
+}
+
+// modelEntryHidden 返回模型项的 Hide 标记（缺失或非布尔时为 false）。
+func modelEntryHidden(n *ConfigNode) bool {
+	for _, c := range n.Children {
+		if c.Key == "Hide" && c.Kind == ConfigBool {
+			return c.Bool
+		}
+	}
+	return false
+}
+
+// ModelPickOptions 返回配置中全部模型的候选列表（顺序与 Models 集合页一致：
+// 数字键按数值升序）。列表为空表示配置里没有可用模型。
+func (ed *ConfigEditor) ModelPickOptions() []ModelPickOption {
+	entries := ed.modelEntries()
+	out := make([]ModelPickOption, 0, len(entries))
+	for _, e := range entries {
+		name, id := modelEntryNames(e)
+		opt := ModelPickOption{Key: e.Key, Name: name, ID: id, Type: modelEntryType(e), Hide: modelEntryHidden(e)}
+		if opt.Name == "" {
+			opt.Name = id
+		}
+		if opt.Name == "" {
+			opt.Name = e.Key
+		}
+		out = append(out, opt)
+	}
+	return out
+}
+
+// CanPickModel 报告该节点是否可以用选择框改值：它是"选择模型"的键、当前值可
+// 作为引用值（数字/字符串/null），且配置的 Model.Models 里至少有一个模型。
+// 不满足时调用方退回手工输入（见 BeginEdit）。
+func (ed *ConfigEditor) CanPickModel(n *ConfigNode) bool {
+	if n == nil || !modelRefKeys[n.Key] {
+		return false
+	}
+	switch n.Kind {
+	case ConfigNumber, ConfigString, ConfigNull:
+	default:
+		return false
+	}
+	return len(ed.modelEntries()) > 0
+}
+
+// BeginModelPick 为当前选中行打开模型选择框，选中项初始化为该键当前引用的
+// 模型（按键或 ModelID 匹配；引用不到时停在首行）。不可选择时返回 false。
+func (ed *ConfigEditor) BeginModelPick() bool {
+	n := ed.SelectedNode()
+	if !ed.CanPickModel(n) {
+		return false
+	}
+	opts := ed.ModelPickOptions()
+	ed.PickNode = n
+	ed.PickOptions = opts
+	ed.PickSelected = 0
+	if ref, ok := n.modelRefValue(); ok {
+		for i, o := range opts {
+			if o.Key == ref || o.ID == ref {
+				ed.PickSelected = i
+				break
+			}
+		}
+	}
+	ed.PickingModel = true
+	return true
+}
+
+// PickMove 上下移动选择框（带环绕）。
+func (ed *ConfigEditor) PickMove(delta int) {
+	n := len(ed.PickOptions)
+	if n == 0 {
+		return
+	}
+	ed.PickSelected = (ed.PickSelected + delta + n) % n
+}
+
+// CancelModelPick 关闭选择框且不写回（被编辑的键保持原值）。
+func (ed *ConfigEditor) CancelModelPick() {
+	ed.PickingModel = false
+	ed.PickNode = nil
+	ed.PickOptions = nil
+	ed.PickSelected = 0
+}
+
+// CommitModelPick 关闭选择框并把选中模型的键写入被编辑的键节点，返回写回
+// patch。值的类型沿用该字段原有的类型（数字字段写数字、字符串字段写字符串）；
+// 原值为 null（未赋值）时按键的形状推断，与 CommitEdit 对 null 的处理一致。
+// 模型键不是数字时写字符串，避免写回非法数字。
+func (ed *ConfigEditor) CommitModelPick() (json.RawMessage, bool) {
+	if !ed.PickingModel || ed.PickNode == nil || len(ed.PickOptions) == 0 {
+		return nil, false
+	}
+	idx := ed.PickSelected
+	if idx < 0 || idx >= len(ed.PickOptions) {
+		idx = 0
+	}
+	key := ed.PickOptions[idx].Key
+	n := ed.PickNode
+	num, err := strconv.Atoi(key)
+	switch n.Kind {
+	case ConfigString:
+		n.Str = key
+	case ConfigNumber:
+		if err == nil {
+			n.Num = float64(num)
+		} else {
+			n.Kind = ConfigString
+			n.Str = key
+		}
+	default: // ConfigNull：未赋值，按键的形状推断
+		if err == nil {
+			n.Kind = ConfigNumber
+			n.Num = float64(num)
+		} else {
+			n.Kind = ConfigString
+			n.Str = key
+		}
+	}
+	patch := ed.patchForNode(n, n.AsValue())
+	ed.CancelModelPick()
+	return patch, true
+}
+
 // buildConfigNode 从解码后的 JSON 值递归构建节点。根节点 key 为空、parent 为 nil。
 func buildConfigNode(key string, path []string, parent *ConfigNode, v any) *ConfigNode {
 	n := &ConfigNode{Key: key, Path: append([]string(nil), path...), Parent: parent}
@@ -417,6 +667,14 @@ type ConfigEditor struct {
 	CopyingKey  bool
 	CopyInput   *widget.InputBuffer
 	CopyNode    *ConfigNode
+
+	// PickingModel 表示正在用选择框为"选择模型"的键挑模型（见 BeginModelPick）：
+	// 候选项直接取自配置的 Model.Models，忽略 Hide 与 Type。PickNode 是被编辑
+	// 的键节点，PickSelected 是选择框当前选中行。
+	PickingModel bool
+	PickNode     *ConfigNode
+	PickOptions  []ModelPickOption
+	PickSelected int
 
 	// Saving 表示配置写回（config/set）与随后的全量重载（config/get）进行中。
 	// 期间阻塞新的改动，界面底部显示"保存中…"，直到重载完成解除。
@@ -1351,7 +1609,8 @@ func (ed *ConfigEditor) focusNode(path []string) {
 	}
 }
 
-// IsEditing 报告当前是否处于值编辑或新增键输入模式（重载重建后不应被覆盖）。
+// IsEditing 报告当前是否处于值编辑、新增/重命名键或模型选择框模式
+// （重载重建后不应被覆盖）。
 func (ed *ConfigEditor) IsEditing() bool {
-	return ed.Editing || ed.AddingKey || ed.RenamingKey || ed.CopyingKey
+	return ed.Editing || ed.AddingKey || ed.RenamingKey || ed.CopyingKey || ed.PickingModel
 }

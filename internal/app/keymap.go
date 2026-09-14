@@ -781,6 +781,24 @@ func (a *App) pluginsConfigKey(ke input.KeyEvent) {
 // onRefresh 是 "r" 重新加载的钩子（服务端重新 config/get，本地重新读盘）。
 // 返回 true 表示按键已处理；Esc 关闭由调用方决定。
 func (a *App) configEditorKey(ke input.KeyEvent, ed *model.ConfigEditor, onRefresh func()) bool {
+	if ed.PickingModel {
+		// 模型选择框：↑↓ 移动、Enter 写回选中模型的键、Esc 放弃；e 退回手工
+		// 输入值（需要写入不在 Model.Models 里的引用值时使用）。
+		switch {
+		case ke.Type == input.KeyUp:
+			ed.PickMove(-1)
+		case ke.Type == input.KeyDown:
+			ed.PickMove(1)
+		case ke.Type == input.KeyEnter:
+			a.commitConfigModelPick(ed)
+		case ke.Type == input.KeyEsc:
+			ed.CancelModelPick()
+		case ke.Type == input.KeyRune && ke.Rune == 'e':
+			ed.CancelModelPick()
+			ed.BeginEdit()
+		}
+		return true
+	}
 	if ed.CopyingKey {
 		switch {
 		case ke.Type == input.KeyEsc:
@@ -928,6 +946,12 @@ func (a *App) activateConfigRow(ed *model.ConfigEditor) {
 	case model.ConfigBool:
 		a.applyEditorPatch(ed, ed.ToggleBool())
 	default:
+		// "选择模型"的键（SummaryModel / AgentModel / DefaultModelID …）弹出
+		// 模型选择框：候选直接取自配置的 Model.Models（忽略 Hide 与 Type）。
+		// 配置里没有模型等不可选择的情况退回手工输入值。
+		if ed.BeginModelPick() {
+			return
+		}
 		ed.BeginEdit()
 	}
 }
@@ -979,6 +1003,17 @@ func (a *App) commitConfigEdit(ed *model.ConfigEditor) {
 	patch, ok, errMsg := ed.CommitEdit()
 	if !ok {
 		a.model.ShowError(i18n.T("编辑失败: %s", errMsg))
+		return
+	}
+	a.applyEditorPatch(ed, patch)
+}
+
+// commitConfigModelPick 提交模型选择框：把选中模型的键写入被编辑的键节点并按
+// 活动编辑器写回 patch。
+func (a *App) commitConfigModelPick(ed *model.ConfigEditor) {
+	patch, ok := ed.CommitModelPick()
+	if !ok {
+		ed.CancelModelPick()
 		return
 	}
 	a.applyEditorPatch(ed, patch)
@@ -1146,6 +1181,15 @@ func (a *App) dispatchMouse(me input.MouseEvent) {
 		if ed == nil || ed.Editing || ed.AddingKey {
 			return
 		}
+		if ed.PickingModel {
+			// 模型选择框打开时滚轮移动框内选中行。
+			if me.Button == input.MouseWheelUp {
+				ed.PickMove(-1)
+			} else if me.Button == input.MouseWheelDown {
+				ed.PickMove(1)
+			}
+			return
+		}
 		if me.Button == input.MouseWheelUp {
 			ed.Move(-1)
 		} else if me.Button == input.MouseWheelDown {
@@ -1155,6 +1199,14 @@ func (a *App) dispatchMouse(me input.MouseEvent) {
 	case model.ModalPlugins:
 		ed := m.PluginsCfg
 		if ed == nil || ed.Editing || ed.AddingKey {
+			return
+		}
+		if ed.PickingModel {
+			if me.Button == input.MouseWheelUp {
+				ed.PickMove(-1)
+			} else if me.Button == input.MouseWheelDown {
+				ed.PickMove(1)
+			}
 			return
 		}
 		if me.Button == input.MouseWheelUp {

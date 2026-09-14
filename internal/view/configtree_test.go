@@ -133,6 +133,100 @@ func TestConfigTreeDrawModelPreview(t *testing.T) {
 	}
 }
 
+// TestConfigTreeDrawModelRefPreview 验证"选择模型"的键（SummaryModel /
+// TitleModel / DefaultModelID …）行尾以灰字提示被引用模型的名称；普通键、
+// 引用不到模型的键都不提示（提示样式为 TextMuted）。
+func TestConfigTreeDrawModelRefPreview(t *testing.T) {
+	cfg := `{
+		"Model": {"DefaultModelID": 1, "Models": {"1": {"ModelName": "Kimi"}}},
+		"Agent": {"GlobalPrompt": "hi", "SummaryModel": 1, "TitleModel": 7}
+	}`
+	ed := model.NewConfigEditor(json.RawMessage(cfg))
+	ed.Enter() // 根页序 Agent / Model → 进入 Agent：行序 GlobalPrompt / SummaryModel / TitleModel
+	const w, h = 60, 12
+	theme := renderer.DefaultTheme()
+	b := renderer.NewBuffer(w, h)
+	(&ConfigTree{Theme: theme, Tree: ed}).Draw(renderer.NewCanvas(b), renderer.NewRect(0, 0, w, h))
+
+	// SummaryModel 行（row2）：键名 + 值，行尾灰色模型名。
+	row := effortRowText(b, 2, w)
+	if !strings.Contains(row, "摘要模型 = 1") || !strings.Contains(row, "Kimi") {
+		t.Fatalf("SummaryModel row = %q, want 摘要模型 = 1 + Kimi hint", row)
+	}
+	x := renderer.StringWidth(row[:strings.Index(row, "Kimi")])
+	if got := b.Get(x, 2).Style; got != theme.Style(theme.TextMuted) {
+		t.Errorf("hint style = %+v, want TextMuted", got)
+	}
+	// 普通键行不提示。
+	if got := effortRowText(b, 1, w); strings.Contains(got, "Kimi") {
+		t.Errorf("GlobalPrompt row = %q, should not show a model hint", got)
+	}
+	// 引用不到模型（没有键 7）的行不提示。
+	if got := effortRowText(b, 3, w); strings.Contains(got, "Kimi") {
+		t.Errorf("TitleModel row = %q, want no hint for a dangling reference", got)
+	}
+}
+
+// TestConfigTreeDrawModelPick 验证"选择模型"的键按 Enter 后绘制模型选择框：
+// 候选项直接来自配置的 Model.Models（隐藏模型与 embedding 等类型都列出），
+// 当前值所在行高亮，面板底部提示换成选择框的按键说明。
+func TestConfigTreeDrawModelPick(t *testing.T) {
+	cfg := `{
+		"Model": {"DefaultModelID": 2, "Models": {
+			"1": {"ModelName": "Kimi", "ModelID": "kimi-k2"},
+			"2": {"ModelName": "Deepseek", "ModelID": "deepseek-v3"},
+			"3": {"ModelName": "Embed", "ModelID": "bge-m3", "Type": "embedding"},
+			"4": {"ModelName": "Hidden One", "ModelID": "h1", "Hide": true}
+		}}
+	}`
+	ed := model.NewConfigEditor(json.RawMessage(cfg))
+	ed.Focus([]string{"Model"}) // 选中 DefaultModelID（当前值 2）
+	if !ed.BeginModelPick() {
+		t.Fatal("BeginModelPick should open with models in config")
+	}
+	const w, h = 70, 14
+	theme := renderer.DefaultTheme()
+	b := renderer.NewBuffer(w, h)
+	(&ConfigTree{Theme: theme, Tree: ed}).Draw(renderer.NewCanvas(b), renderer.NewRect(0, 0, w, h))
+	rows := make([]string, h)
+	for y := range h {
+		rows[y] = effortRowText(b, y, w)
+	}
+	joined := strings.Join(rows, "\n")
+
+	// 标题是被编辑的键；候选行含键、显示名、ModelID、类型与隐藏标注。
+	for _, want := range []string{
+		"选择模型: 默认模型 ID",
+		"1  Kimi  — kimi-k2",
+		"3  Embed  — bge-m3  [embedding]",
+		"4  Hidden One  — h1 (隐藏)",
+		"↑↓ 选择    Enter 确认    e 手工输入    Esc 取消",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("model pick box missing %q:\n%s", want, joined)
+		}
+	}
+	// 当前值（模型 2）所在行是选中行（先于其他候选显示 ❯）。
+	var curRow, otherRow string
+	for _, row := range rows {
+		if strings.Contains(row, "Deepseek") {
+			curRow = row
+		} else if strings.Contains(row, "Kimi") {
+			otherRow = row
+		}
+	}
+	if !strings.Contains(curRow, "❯") {
+		t.Errorf("current model row = %q, want ❯ marker", curRow)
+	}
+	if strings.Contains(otherRow, "❯") {
+		t.Errorf("non-current row = %q, should not be marked", otherRow)
+	}
+	// 选择框打开时不再显示配置页的按键提示。
+	if strings.Contains(joined, "Enter 进入/编辑") {
+		t.Errorf("config page hint should be replaced by the pick hint:\n%s", joined)
+	}
+}
+
 func TestConfigTreeDrawAddRow(t *testing.T) {
 	ed := model.NewConfigEditor(configTreeAgentsSample())
 	// Agent → Agents：页面 [main, (新增)]。

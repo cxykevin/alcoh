@@ -71,8 +71,12 @@ func (ct *ConfigTree) draw(c *renderer.Canvas, r renderer.Rect, ed *model.Config
 		switch {
 		case i < len(rows):
 			line = marker + ct.rowText(rows[i])
-			// Model.Models 集合页行尾以灰色显示 ModelName 预览，便于辨认模型。
-			if pv, ok := rows[i].ModelPreview(); ok {
+			// 行尾灰色提示：引用模型的键（SummaryModel / AgentModel /
+			// DefaultModelID …）显示被引用模型的名称，便于确认指向哪个模型；
+			// Model.Models 集合页则显示各项 ModelName 预览，便于辨认模型。
+			if pv, ok := ed.ModelRefPreview(rows[i]); ok {
+				preview = pv
+			} else if pv, ok := rows[i].ModelPreview(); ok {
 				preview = pv
 			}
 		case i == addIdx:
@@ -113,6 +117,20 @@ func (ct *ConfigTree) draw(c *renderer.Canvas, r renderer.Rect, ed *model.Config
 			c.PutText(r.X, y, renderer.Truncate(line, r.W), st)
 		}
 		y++
+	}
+
+	// 模型选择框：为"选择模型"的键（SummaryModel / AgentModel / DefaultModelID …）
+	// 挑模型时覆盖在页面之上，底部提示换成选择框的按键说明。
+	if ed.PickingModel {
+		// 先清掉面包屑与底部提示之间的页面内容，避免页面文字与选择框混排。
+		if area := renderer.NewRect(r.X, r.Y+1, r.W, max(r.H-2, 0)); area.H > 0 {
+			c.Fill(area, renderer.CellSpace(renderer.DefaultStyle()))
+		}
+		ct.drawModelPick(c, r, ed)
+		if bottom := r.Y + r.H - 1; bottom > r.Y {
+			c.PutText(r.X, bottom, i18n.T("↑↓ 选择    Enter 确认    e 手工输入    Esc 取消"), t.Style(t.TextMuted))
+		}
+		return
 	}
 
 	// 底部：编辑/新增键输入框，或操作提示。
@@ -166,6 +184,78 @@ func (ct *ConfigTree) draw(c *renderer.Canvas, r renderer.Rect, ed *model.Config
 		return
 	}
 	c.PutText(r.X, bottomY, i18n.T("Esc 关闭   ↑↓ 选择   Enter 进入/编辑   ← 返回   r 刷新"), t.Style(t.TextMuted))
+}
+
+// drawModelPick 在配置树面板内居中绘制模型选择框：标题是被编辑的键，内容为
+// 候选模型列表。覆盖区取面包屑与底部提示之间的区域。
+func (ct *ConfigTree) drawModelPick(c *renderer.Canvas, r renderer.Rect, ed *model.ConfigEditor) {
+	area := renderer.NewRect(r.X, r.Y+1, r.W, max(r.H-2, 1))
+	title := i18n.T("选择模型")
+	if ed.PickNode != nil {
+		title = i18n.T("选择模型: %s", ed.PickNode.DisplayKey())
+	}
+	rows := len(ed.PickOptions)
+	if maxRows := max(area.H-2, 1); rows > maxRows {
+		rows = maxRows
+	}
+	box := widget.Modal{
+		Width:   min(area.W, 56),
+		Height:  rows + 2, // 上下边框 + 候选列表（按键提示在面板底部）
+		Title:   title,
+		Style:   ct.Theme.Style(ct.Theme.BorderActive),
+		Content: &ModelPickContent{Theme: ct.Theme, Options: ed.PickOptions, Selected: ed.PickSelected},
+	}
+	box.Draw(c, area)
+}
+
+// ModelPickContent 绘制模型选择框内容：候选直接来自配置的 Model.Models
+// （忽略 Hide 与 Type——隐藏模型与所有类型的模型都列出，隐藏项加标注）。
+// 选中行保持可见（先居中、越界收拢）；按键提示由 ConfigTree 画在面板底部。
+type ModelPickContent struct {
+	Theme    renderer.Theme
+	Options  []model.ModelPickOption
+	Selected int
+}
+
+// Draw 实现 widget.Widget 接口。
+func (mp *ModelPickContent) Draw(c *renderer.Canvas, r renderer.Rect) {
+	t := mp.Theme
+	if r.W <= 0 || r.H <= 0 {
+		return
+	}
+	// 覆盖在配置页之上：先用空格清掉框内的旧内容，避免页面文字透出。
+	c.Fill(r, renderer.CellSpace(renderer.DefaultStyle()))
+	if listH := r.H; listH > 0 && len(mp.Options) > 0 {
+		start := max(mp.Selected-listH/2, 0)
+		if maxStart := len(mp.Options) - listH; start > maxStart {
+			start = maxStart
+		}
+		start = max(start, 0)
+		y := r.Y
+		for i := start; i < start+listH && i < len(mp.Options); i++ {
+			opt := mp.Options[i]
+			st := t.Style(t.Text)
+			marker := "  "
+			if i == mp.Selected {
+				marker = "❯ "
+				st = t.Style(t.Primary).WithBold(true)
+			}
+			// 键（写回配置的引用值）+ 显示名 + 供应商模型 ID + 类型；隐藏模型
+			// 一并列出并标注，便于确认"配置里存在但选择入口看不到"的模型。
+			line := marker + opt.Key + "  " + opt.Name
+			if opt.ID != "" && opt.ID != opt.Name {
+				line += "  — " + opt.ID
+			}
+			if opt.Type != "" {
+				line += "  [" + opt.Type + "]"
+			}
+			if opt.Hide {
+				line += " (" + i18n.T("隐藏") + ")"
+			}
+			c.PutText(r.X, y, renderer.Truncate(line, r.W), st)
+			y++
+		}
+	}
 }
 
 // rowText 渲染当前页面的一行：对象/数组显示键名与箭头指示可进入，
