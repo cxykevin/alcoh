@@ -133,7 +133,9 @@ func (s *VTScreen) put(r rune) {
 	}
 	if r == '\t' {
 		// 走到下一个 8 列制表位：按显示列推进（宽字符同样算 2 列）。
-		for {
+		// 迭代上限 8：极窄屏幕（Width=1）上换行会把 col 归零，无上限的写法
+		// 会在这里空转不前进。
+		for i := 0; i < 8; i++ {
 			s.put(' ')
 			if s.col%8 == 0 {
 				break
@@ -143,6 +145,13 @@ func (s *VTScreen) put(r rune) {
 	}
 	// 按显示宽度换行：宽度不足时先换行再写，CJK 不会被当成 1 列而挤出整字。
 	rw := renderer.RuneWidth(r)
+	if rw == 0 {
+		// 零宽字符（组合记号、ZWJ、变体选择符等）不占列：既不写入单元格也不
+		// 推进光标。旧实现继续执行下面的写入，在行尾（X == Width）会写
+		// Cells[Y][Width] 直接越界 panic——服务端终端输出里带一个零宽字符
+		// 就能让整个 TUI 挂掉。
+		return
+	}
 	if s.col+rw > s.Width {
 		s.newline()
 	}

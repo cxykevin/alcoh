@@ -261,21 +261,22 @@ func (a *App) discardPreSession() {
 // deletePreSessionAtExit 在程序退出时删除主页预创建的空会话，避免服务端残留，
 // 并清空本地 PreSession 状态。带独立超时，不依赖 Run 的 runCtx（它已在退出时被取消）。
 func (a *App) deletePreSessionAtExit() {
-	a.modelMu.Lock()
 	var id string
-	if a.preSession != nil {
-		id = a.preSession.ID()
-		a.preSession = nil
-	} else if a.model.PreSession != nil {
-		id = a.model.PreSession.ID
-	}
-	support := a.model.SupportsSessionDelete()
-	if id != "" {
-		// 退出即丢弃预创建会话：清空本地状态；若服务端曾把它列入会话列表一并移除。
-		a.model.ClearPreSession()
-		a.model.RemoveSession(id)
-	}
-	a.modelMu.Unlock()
+	var support bool
+	a.withModel(func() {
+		if a.preSession != nil {
+			id = a.preSession.ID()
+			a.preSession = nil
+		} else if a.model.PreSession != nil {
+			id = a.model.PreSession.ID
+		}
+		support = a.model.SupportsSessionDelete()
+		if id != "" {
+			// 退出即丢弃预创建会话：清空本地状态；若服务端曾把它列入会话列表一并移除。
+			a.model.ClearPreSession()
+			a.model.RemoveSession(id)
+		}
+	})
 	if id == "" || !support {
 		return
 	}
@@ -304,9 +305,10 @@ func (a *App) goHome() {
 // 强度 → 操作教学）。引导期间不创建主页预创建会话；引导结束（完成/跳过）后
 // 经 goHome 创建。
 func (a *App) maybeStartOnboarding() {
-	a.modelMu.RLock()
-	onboarding := a.onboardingEnabled && a.model.SupportsAlkaid0()
-	a.modelMu.RUnlock()
+	onboarding := false
+	a.withModelRead(func() {
+		onboarding = a.onboardingEnabled && a.model.SupportsAlkaid0()
+	})
 	if !onboarding {
 		a.ensurePreSession()
 		return
@@ -452,6 +454,29 @@ func colorMode(value string) renderer.ColorMode {
 	}
 }
 
+// withModel 在持有模型锁的前提下执行 fn，并以 defer 解锁。
+// 主循环里模型/视图的任何 panic 都不会把锁留在锁定状态：旧写法（手工
+// Lock/Unlock）下 panic 展开会跳过 Unlock，Run 的退出清理随即死锁在
+// modelMu.Lock 上——进程永远卡在 panic 展开中，终端留在 raw + alternate
+// screen，用户只能关窗口。
+func (a *App) withModel(fn func()) {
+	a.modelMu.Lock()
+	defer a.modelMu.Unlock()
+	fn()
+}
+
+// withModelRead 与 withModel 相同，但只取读锁。
+func (a *App) withModelRead(fn func()) {
+	a.modelMu.RLock()
+	defer a.modelMu.RUnlock()
+	fn()
+}
+
+// shutdownCleanupTimeout 是退出清理（删除预创建会话/插件/后端关闭/命令回收）
+// 的总超时。这些步骤可能阻塞在 Windows 上没有超时的 I/O 上，超时后直接退出，
+// 不把进程永远留在退出路径里。
+const shutdownCleanupTimeout = 3 * time.Second
+
 // Run 启动事件循环，直到用户退出。结束时恢复终端。
 func (a *App) Run() error {
 	if err := a.term.EnterRaw(); err != nil {
@@ -460,19 +485,31 @@ func (a *App) Run() error {
 	a.runCtx, a.cancelRun = context.WithCancel(context.Background())
 	defer func() {
 		a.cancelRun()
-		// 程序退出时删除主页预创建的空会话，避免服务端残留。必须在 backend.Close()
-		// 之前执行（删除需要活动 transport），且不依赖任何 in-flight 命令。
-		a.deletePreSessionAtExit()
-		// 通知并回收全部插件进程（shutdown notification + 超时强杀）。
-		a.plugins.Close()
-		_ = a.backend.Close()
-		a.commandWG.Wait()
-		// 先把在途帧写完再恢复终端，避免最后一屏被丢弃；终端停摆时最多等
-		// frameFlushTimeout，不阻塞退出。
+		// 先写出在途帧（终端停摆时最多等 frameFlushTimeout），然后立刻恢复终端：
+		// 这两步都不依赖任何可能阻塞的清理逻辑，保证 panic / 后端卡死 / 插件卡死
+		// 等异常退出时终端一定被还原，而不是留在 raw + alternate screen 里。
 		if a.frames != nil {
 			a.frames.Close(frameFlushTimeout)
 		}
 		_ = a.term.ExitRaw()
+		// 其余清理是 best-effort：它们可能阻塞在无超时的后端/插件 I/O 上，因此
+		// 放进独立 goroutine 并设总超时；超时就让 Run 返回、进程退出（老代码里
+		// 这一步卡住会让退出永不完成，用户只能杀进程）。
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			// 删除主页预创建的空会话，避免服务端残留。必须在 backend.Close()
+			// 之前执行（删除需要活动 transport），且不依赖任何 in-flight 命令。
+			a.deletePreSessionAtExit()
+			// 通知并回收全部插件进程（shutdown notification + 超时强杀）。
+			a.plugins.Close()
+			_ = a.backend.Close()
+			a.commandWG.Wait()
+		}()
+		select {
+		case <-done:
+		case <-time.After(shutdownCleanupTimeout):
+		}
 	}()
 
 	// 先启动插件（握手带 3s 超时），再初始化后端：插件命令随即进入命令面板。
@@ -483,9 +520,9 @@ func (a *App) Run() error {
 	}
 	// 记录握手得到的服务端标识与能力声明，供按能力门控 /server 等命令使用。
 	// refreshSessions 内部自行加锁。
-	a.modelMu.Lock()
-	a.model.SetAgentInfo(a.backend.AgentInfo(), a.backend.AgentCapabilities())
-	a.modelMu.Unlock()
+	a.withModel(func() {
+		a.model.SetAgentInfo(a.backend.AgentInfo(), a.backend.AgentCapabilities())
+	})
 	// Initial refresh is asynchronous; the event loop applies its page result.
 	a.refreshSessions()
 	// 判断是否进入新手引导；否则按正常主页流程预创建一个会话（仅当服务端支持
@@ -518,23 +555,19 @@ func (a *App) Run() error {
 			if !ok {
 				return nil
 			}
-			a.modelMu.Lock()
-			a.handleTermEvent(ev)
-			a.modelMu.Unlock()
+			a.withModel(func() { a.handleTermEvent(ev) })
 			needsRender = true
 		case ev, ok := <-eventsCh:
 			if !ok {
 				eventsCh = nil
-				a.modelMu.Lock()
-				if a.model.Error == "" {
-					a.model.ShowError(i18n.T("ACP backend 已关闭"))
-				}
-				a.modelMu.Unlock()
+				a.withModel(func() {
+					if a.model.Error == "" {
+						a.model.ShowError(i18n.T("ACP backend 已关闭"))
+					}
+				})
 				needsRender = true
 			} else {
-				a.modelMu.Lock()
-				a.model.ApplyEvent(ev)
-				a.modelMu.Unlock()
+				a.withModel(func() { a.model.ApplyEvent(ev) })
 				// 事件观察 hook：异步广播给订阅的插件（不等待响应）。
 				a.plugins.NotifyUpdate(ev)
 				needsRender = true
@@ -543,15 +576,11 @@ func (a *App) Run() error {
 			if !ok {
 				a.pluginEvents = nil
 			} else {
-				a.modelMu.Lock()
-				a.applyPluginEvent(ev)
-				a.modelMu.Unlock()
+				a.withModel(func() { a.applyPluginEvent(ev) })
 				needsRender = true
 			}
 		case result := <-a.commands:
-			a.modelMu.Lock()
-			a.applyCommandResult(result)
-			a.modelMu.Unlock()
+			a.withModel(func() { a.applyCommandResult(result) })
 			needsRender = true
 		case <-ticker.C:
 			if anim {
@@ -560,25 +589,26 @@ func (a *App) Run() error {
 			}
 		}
 		// drain 积压后端事件，合并到一帧。
-		a.modelMu.Lock()
-		if a.drain(eventsCh) {
-			needsRender = true
-		}
-		// 清理已过期的底部提示（错误/临时信息）：3 秒后自动消失，不再一直残留。
-		if a.model.ExpireError(time.Now()) {
-			needsRender = true
-		}
-		// render 会同步部分模型字段（如 Scroll/FollowBottom，见 view/message_list.go），
-		// 必须在锁内执行，避免与测试的 snapshot 并发读产生 data race。
-		if needsRender {
-			a.frameDirty = true
-		}
-		if a.frameDirty {
-			// render 返回 false 表示上一帧还在写：保留 dirty，稍后重画。
-			a.frameDirty = !a.render()
-		}
-		quitting := a.model.Quitting
-		a.modelMu.Unlock()
+		quitting := false
+		a.withModel(func() {
+			if a.drain(eventsCh) {
+				needsRender = true
+			}
+			// 清理已过期的底部提示（错误/临时信息）：3 秒后自动消失，不再一直残留。
+			if a.model.ExpireError(time.Now()) {
+				needsRender = true
+			}
+			// render 会同步部分模型字段（如 Scroll/FollowBottom，见 view/message_list.go），
+			// 必须在锁内执行，避免与测试的 snapshot 并发读产生 data race。
+			if needsRender {
+				a.frameDirty = true
+			}
+			if a.frameDirty {
+				// render 返回 false 表示上一帧还在写：保留 dirty，稍后重画。
+				a.frameDirty = !a.render()
+			}
+			quitting = a.model.Quitting
+		})
 
 		if quitting {
 			break
@@ -989,9 +1019,7 @@ func (a *App) hasAnimation() bool {
 
 // refreshSessions 从头拉取会话列表；调用方通常在事件循环中持有 modelMu。
 func (a *App) refreshSessions() {
-	a.modelMu.Lock()
-	a.refreshSessionsLocked()
-	a.modelMu.Unlock()
+	a.withModel(a.refreshSessionsLocked)
 }
 
 // refreshSessionsLocked starts a first-page request while modelMu is held.

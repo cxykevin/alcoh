@@ -38,7 +38,12 @@ func (fw *frameWriter) loop() {
 	for {
 		select {
 		case b := <-fw.ch:
-			_ = fw.w(b) // 写出错误与同步路径一致：仅忽略（不中断会话）
+			// 写出 panic（终端实现内部错误）不能杀死整个进程：那会留下未还原
+			// 的终端。与写错误一样按"这一帧没写出去"处理，会话仍可正常退出。
+			func() {
+				defer func() { _ = recover() }()
+				_ = fw.w(b)
+			}()
 			fw.busy.Store(false)
 		case <-fw.done:
 			return
