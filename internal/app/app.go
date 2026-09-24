@@ -68,6 +68,13 @@ type App struct {
 	plugins      *plugin.Host
 	pluginEvents <-chan plugin.UIEvent
 
+	// frames 是异步帧写出器（见 framewriter.go）。终端写出不再阻塞事件循环：
+	// 终端停摆时只能跳过中间帧，不能连按键一起卡住。
+	frames *frameWriter
+	// frameDirty 表示有一帧需要重画但尚未提交（写入器忙时跳过，下一轮重试，
+	// 最迟由 100ms ticker 兜底重画，保证最终画面一定是最新状态）。
+	frameDirty bool
+
 	// cfgGetSeq 是 config/get 请求序号（仅事件循环主 goroutine 访问）。
 	// 每次发起 get 递增；结果带响应序号，晚回的旧序号结果被丢弃，避免覆盖
 	// 更新的配置（如新增写回后触发的重载被打开时较早发出的 get 晚回覆盖）。
@@ -460,6 +467,11 @@ func (a *App) Run() error {
 		a.plugins.Close()
 		_ = a.backend.Close()
 		a.commandWG.Wait()
+		// 先把在途帧写完再恢复终端，避免最后一屏被丢弃；终端停摆时最多等
+		// frameFlushTimeout，不阻塞退出。
+		if a.frames != nil {
+			a.frames.Close(frameFlushTimeout)
+		}
 		_ = a.term.ExitRaw()
 	}()
 
@@ -483,9 +495,13 @@ func (a *App) Run() error {
 	// One Shot 模式：自动进入会话视图并发送启动消息。
 	a.sendInitialPrompt()
 
+	// 帧写出放到独立 goroutine：Windows 控制台写没有超时，终端停止消费输出时
+	// 同步写会把按键处理一起拖死（见 framewriter.go）。
+	a.frames = newFrameWriter(a.term.Write)
+
 	w, h := a.term.Size()
 	a.resetBuffers(w, h)
-	a.render()
+	a.frameDirty = !a.render()
 
 	eventsCh := a.backend.Events()
 	ticker := time.NewTicker(100 * time.Millisecond)
@@ -555,7 +571,11 @@ func (a *App) Run() error {
 		// render 会同步部分模型字段（如 Scroll/FollowBottom，见 view/message_list.go），
 		// 必须在锁内执行，避免与测试的 snapshot 并发读产生 data race。
 		if needsRender {
-			a.render()
+			a.frameDirty = true
+		}
+		if a.frameDirty {
+			// render 返回 false 表示上一帧还在写：保留 dirty，稍后重画。
+			a.frameDirty = !a.render()
 		}
 		quitting := a.model.Quitting
 		a.modelMu.Unlock()
@@ -814,7 +834,7 @@ func (a *App) resize(w, h int) {
 	a.resetBuffers(w, h)
 	// resize 后 front 是 sentinel，render 会从左上角开始重写整屏，
 	// 同时清掉旧尺寸下所有不可达行列的残留。
-	a.render()
+	a.frameDirty = !a.render()
 }
 
 // resetBuffers 重新分配前后帧。首帧用"空哨兵"作为旧帧，
@@ -830,8 +850,12 @@ func (a *App) resetBuffers(w, h int) {
 	a.initialRender = false
 }
 
-// render 绘制一帧并输出差异。
-func (a *App) render() {
+// render 绘制一帧并输出差异。返回 false 表示终端还在写上一帧，本帧被跳过
+// （front 未交换、也没有提交）：调用方保留 dirty 状态，等写入器空闲后重画。
+func (a *App) render() bool {
+	if a.frames != nil && !a.frames.Ready() {
+		return false
+	}
 	w, h := a.front.W, a.front.H
 	a.back.Clear()
 	canvas := renderer.NewCanvas(a.back)
@@ -842,9 +866,21 @@ func (a *App) render() {
 
 	// 统一 diff：首帧时 front 是哨兵，等价于"从全空屏幕"开始 → 整屏输出；
 	// 之后 front 是上一帧，增量输出。
-	renderer.Render(a.front, a.back, a.mode, writerFunc(a.term.Write))
+	aw := renderer.NewAnsiWriter(a.mode)
+	renderer.Diff(a.front, a.back, aw)
+	if aw.Len() > 0 {
+		if a.frames != nil {
+			if !a.frames.TryFrame(aw.Bytes()) {
+				return false
+			}
+		} else {
+			// 无异步写出器（dump 模式/测试）：同步写。
+			_ = a.term.Write(aw.Bytes())
+		}
+	}
 	a.initialRender = true
 	a.front, a.back = a.back, a.front
+	return true
 }
 
 // applySelection 给行选择区域叠加反显样式，实现"所见即所得"的高亮。
@@ -949,16 +985,6 @@ func (a *App) hasAnimation() bool {
 		}
 	}
 	return false
-}
-
-// writerFunc 把 func(p []byte) error 适配为 io.Writer。
-type writerFunc func(p []byte) error
-
-func (f writerFunc) Write(p []byte) (int, error) {
-	if err := f(p); err != nil {
-		return 0, err
-	}
-	return len(p), nil
 }
 
 // refreshSessions 从头拉取会话列表；调用方通常在事件循环中持有 modelMu。

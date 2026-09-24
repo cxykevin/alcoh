@@ -5,12 +5,16 @@ package term
 import (
 	"errors"
 	"os"
+	"sync"
 	"time"
 
 	"golang.org/x/sys/windows"
 
 	"github.com/cxykevin/alcoh/internal/input"
 )
+
+// spuriousReadBackoff 是控制台"伪 EOF"后重新读取前的退避，避免极端情况下空转。
+const spuriousReadBackoff = 10 * time.Millisecond
 
 // winTerm 是 Windows 平台的 Terminal 实现。
 // 目标终端：Windows Terminal（WT）。WT 支持完整 VT（1049 alternate screen、
@@ -27,6 +31,9 @@ type winTerm struct {
 	stopCh chan struct{}
 	parser *input.Parser
 
+	// lastW/lastH 由 readLoop 与 pollLoop 两个 goroutine 经 checkResize 读写，
+	// 用 mutex 串行化（否则既是数据竞争，也可能丢掉尺寸事件）。
+	mu           sync.Mutex
 	lastW, lastH int
 }
 
@@ -103,7 +110,9 @@ func (t *winTerm) EnterRaw() error {
 	t.evCh = make(chan Event, 64)
 	t.stopCh = make(chan struct{})
 	t.parser = input.NewParser(t.stdin)
+	t.mu.Lock()
 	t.lastW, t.lastH = t.Size()
+	t.mu.Unlock()
 
 	go t.readLoop()
 	go t.pollLoop()
@@ -134,16 +143,44 @@ func (t *winTerm) CopyToClipboard(text string) error {
 	return err
 }
 
+// maxSpuriousReadRetries 是连续"伪 EOF"重试上限：超过则认为输入流真的坏了，
+// 交给主循环正常退出（而不是留在没有输入的界面里，让用户只能关窗口）。
+const maxSpuriousReadRetries = 100
+
 func (t *winTerm) readLoop() {
+	spurious := 0
 	for {
 		ev, err := t.parser.Next()
 		if err != nil {
+			if spurious < maxSpuriousReadRetries && t.consoleAlive() {
+				// 控制台仍然可用：这是一次"伪 EOF"，不是输入源关闭。
+				//
+				// Windows 控制台上 Go 的 ReadConsole 会在若干情况下返回 0 字节，
+				// 而 os.Stdin 的 ZeroReadIsEOF 会把它转换成 io.EOF：
+				//   - 按下 Ctrl+Z：Go 的 readConsole 把 0x1A 当作控制台 EOF
+				//     标记直接吃掉（internal/poll/fd_windows.go）；
+				//   - ReadConsole 返回 0 字符，或输入缓冲被 flush（输入积压时
+				//     控制台会丢弃/清空缓冲）。
+				// 这些都不代表输入源关闭，句柄仍可读：退避后继续读即可恢复。
+				spurious++
+				select {
+				case <-time.After(spuriousReadBackoff):
+				case <-t.stopCh:
+					return
+				}
+				continue
+			}
+			// 输入确实没了（控制台关闭/句柄失效，或持续伪 EOF）：可靠地投递
+			// 退出事件。绝不能用非阻塞 default 分支丢弃——一旦丢弃而 readLoop
+			// 已经退出，主循环会带着永不产生事件的终端继续运行：按键、鼠标、
+			// Ctrl+C 全部失效，只能关窗口，即用户报告的"卡死"。
 			select {
 			case t.evCh <- Event{Kind: EventQuit}:
-			default:
+			case <-t.stopCh:
 			}
 			return
 		}
+		spurious = 0
 		// 每次事件顺带检查一次尺寸（无 SIGWINCH，作为低成本检测）
 		t.checkResize()
 		select {
@@ -152,6 +189,12 @@ func (t *winTerm) readLoop() {
 			return
 		}
 	}
+}
+
+// consoleAlive 报告输入句柄是否还是可用控制台。句柄失效即输入源真正关闭。
+func (t *winTerm) consoleAlive() bool {
+	var mode uint32
+	return windows.GetConsoleMode(t.inHandle, &mode) == nil
 }
 
 // pollLoop 每 250ms 轮询尺寸变化（Windows 无 SIGWINCH）。
@@ -169,12 +212,19 @@ func (t *winTerm) pollLoop() {
 }
 
 func (t *winTerm) checkResize() {
+	t.mu.Lock()
 	w, h := t.Size()
-	if w != t.lastW || h != t.lastH {
-		t.lastW, t.lastH = w, h
-		select {
-		case t.evCh <- Event{Kind: EventResize, W: w, H: h}:
-		default:
-		}
+	if w == t.lastW && h == t.lastH {
+		t.mu.Unlock()
+		return
+	}
+	t.lastW, t.lastH = w, h
+	t.mu.Unlock()
+	// 尺寸事件必须送到：一旦丢弃，缓冲区尺寸就永远停留在旧值（终端与帧缓冲
+	// 不一致，画面错位/残留，看起来像卡死）。这里阻塞等待事件循环消费，
+	// 退出时由 stopCh 解除。
+	select {
+	case t.evCh <- Event{Kind: EventResize, W: w, H: h}:
+	case <-t.stopCh:
 	}
 }

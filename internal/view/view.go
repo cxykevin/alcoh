@@ -28,6 +28,23 @@ type AppView struct {
 	BodyToggles map[int]ToggleRef
 	// ShellPreviewRect records the screen area containing the terminal preview.
 	ShellPreviewRect renderer.Rect
+
+	// msgList 是复用的正文渲染器：它的按条目缓存跨帧保留，使帧耗时只与
+	// "本帧真正变化的条目"相关，而不是随会话长度线性增长（长会话流式输出时的
+	// 卡顿来源）。msgListSession 用于在切换会话时丢弃上一次会话的缓存。
+	msgList        MessageList
+	msgListSession string
+}
+
+// bodyMessageList 返回当前会话复用的正文渲染器（会话变化时清空缓存）。
+func (v *AppView) bodyMessageList(s *model.SessionState) *MessageList {
+	if v.msgListSession != s.ID {
+		v.msgList.ResetBodyCache()
+		v.msgListSession = s.ID
+	}
+	v.msgList.Theme = v.Theme
+	v.msgList.SpinFrame = v.SpinFrame
+	return &v.msgList
 }
 
 // NewAppView 创建视图。
@@ -355,7 +372,7 @@ func (v *AppView) drawSession(c *renderer.Canvas, r renderer.Rect, m *model.AppM
 	if m.Modal != model.NoModal {
 		msgH := r.H - planH
 		if msgH > 0 {
-			ml := &MessageList{Theme: v.Theme, SpinFrame: v.SpinFrame}
+			ml := v.bodyMessageList(s)
 			ml.Draw(c, renderer.NewRect(r.X, r.Y, r.W, msgH), s)
 			v.Body = ml.Body
 			v.BodyRect = renderer.NewRect(r.X, r.Y, r.W, msgH)
@@ -396,7 +413,7 @@ func (v *AppView) drawSession(c *renderer.Canvas, r renderer.Rect, m *model.AppM
 	planRect := renderer.NewRect(r.X, y, r.W, planH)
 	y += planH
 
-	ml := &MessageList{Theme: v.Theme, SpinFrame: v.SpinFrame}
+	ml := v.bodyMessageList(s)
 	ml.Draw(c, msgRect, s)
 	v.Body = ml.Body
 	v.BodyRect = msgRect

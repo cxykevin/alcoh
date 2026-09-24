@@ -12,6 +12,12 @@ import (
 // ErrClosed 表示输入流已关闭。
 var ErrClosed = errors.New("input closed")
 
+// maxPasteBytes 是括号粘贴内容的上限。正常粘贴远小于该值；一旦达到上限说明
+// 粘贴结束标记已经丢失（例如 Windows 控制台输入缓冲溢出被 flush），继续等待会
+// 把之后的所有按键都吞进粘贴缓冲、键盘永久失效，因此在此时截止并交回上层。
+// 测试可临时调小该值。
+var maxPasteBytes = 4 << 20
+
 // escapeWindow 是 ESC 之后等待序列后续字节的最长等待窗口。
 // 终端把 Alt+X 等组合键编码为 ESC 前缀，而独立的 Esc 键后面不跟任何字节，
 // 两者只能靠时限区分：窗口内没有后续字节即判定为独立 Esc 键
@@ -316,6 +322,10 @@ func (p *Parser) parseBracketedPaste() (Event, error) {
 		text = append(text, b)
 		if len(text) >= len(end) && string(text[len(text)-len(end):]) == end {
 			text = text[:len(text)-len(end)]
+			return KeyEventOf(KeyEvent{Type: KeyPaste, Text: string(text)}), nil
+		}
+		if len(text) >= maxPasteBytes {
+			// 结束标记丢失：把已收内容当作一次粘贴返回，避免无限吞掉后续按键。
 			return KeyEventOf(KeyEvent{Type: KeyPaste, Text: string(text)}), nil
 		}
 	}

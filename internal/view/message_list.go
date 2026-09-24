@@ -1,6 +1,7 @@
 package view
 
 import (
+	"encoding/binary"
 	"strings"
 
 	"github.com/cxykevin/alcoh/internal/acp"
@@ -63,6 +64,51 @@ type MessageList struct {
 	// Toggles 记录可点击切换展开/折叠的正文行（contentY → 目标，仅标题行），
 	// 由 Draw 每次重建，供鼠标点击命中测试使用。
 	Toggles map[int]ToggleRef
+
+	// cache 按 Timeline 条目 Key 缓存上一帧的渲染结果：条目内容没变时直接复用，
+	// 避免每帧对整段会话重做 markdown 解析 / 语法高亮 / 换行。长会话流式输出时
+	// 帧耗时本来与会话长度成正比（几百条消息可达数百毫秒），一旦超过动画帧间隔，
+	// 事件循环被绘制占满，按键长时间得不到处理，表现就是"卡死"。
+	cache      map[string]blockCacheEntry
+	cacheWidth int
+	cacheTheme renderer.Theme
+	cacheReady bool
+}
+
+// blockCacheEntry 是单个 Timeline 条目的渲染缓存：sig 变化即重绘该条目。
+type blockCacheEntry struct {
+	sig uint64
+	blk *block
+}
+
+// ResetBodyCache 丢弃正文渲染缓存（切换会话或主题变化时调用）。
+func (ml *MessageList) ResetBodyCache() {
+	ml.cache = nil
+	ml.cacheReady = false
+}
+
+// prepareBodyCache 在换行宽度或配色变化时整表失效并重建缓存表。
+func (ml *MessageList) prepareBodyCache(width int) {
+	if !ml.cacheReady || ml.cacheWidth != width || ml.cacheTheme != ml.Theme {
+		ml.cache = make(map[string]blockCacheEntry, 64)
+		ml.cacheWidth = width
+		ml.cacheTheme = ml.Theme
+		ml.cacheReady = true
+	}
+}
+
+// cached 命中缓存时返回上次的块，否则调用 build 重建并写回缓存。
+func (ml *MessageList) cached(key string, sig uint64, build func() *block) *block {
+	if ml.cache != nil && key != "" {
+		if e, ok := ml.cache[key]; ok && e.sig == sig {
+			return e.blk
+		}
+	}
+	blk := build()
+	if ml.cache != nil && key != "" {
+		ml.cache[key] = blockCacheEntry{sig: sig, blk: blk}
+	}
+	return blk
 }
 
 func (ml *MessageList) Draw(c *renderer.Canvas, r renderer.Rect, s *model.SessionState) {
@@ -70,6 +116,7 @@ func (ml *MessageList) Draw(c *renderer.Canvas, r renderer.Rect, s *model.Sessio
 	if width <= 0 {
 		return
 	}
+	ml.prepareBodyCache(width)
 	blocks := ml.buildBlocks(s, width)
 	total := 0
 	for _, blk := range blocks {
@@ -130,30 +177,158 @@ func (ml *MessageList) buildBlocks(s *model.SessionState, width int) []*block {
 		switch item.Kind {
 		case model.TimelineUserMessage, model.TimelineAssistantMessage:
 			if item.Message != nil {
-				blocks = append(blocks, ml.messageBlock(item.Message, width))
+				m := item.Message
+				blocks = append(blocks, ml.cached(item.Key, ml.messageSig(m, width), func() *block {
+					return ml.messageBlock(m, width)
+				}))
 			}
 		case model.TimelineThought:
 			if item.Message != nil {
-				blocks = append(blocks, ml.thoughtBlock(item.Message, width))
+				m := item.Message
+				blocks = append(blocks, ml.cached(item.Key, ml.thoughtSig(m, width), func() *block {
+					return ml.thoughtBlock(m, width)
+				}))
 			}
 		case model.TimelineToolCall:
 			if item.ToolCall != nil {
-				blocks = append(blocks, ml.toolBlock(item.ToolCall, width))
+				tc := item.ToolCall
+				blocks = append(blocks, ml.cached(item.Key, ml.toolSig(tc, width), func() *block {
+					return ml.toolBlock(tc, width)
+				}))
 			}
 		case model.TimelinePlan:
 			// 计划只由固定在输入框上方的 PlanPanel 绘制，不进入正文上下文。
 			continue
 		case model.TimelineTerminal:
 			if item.Terminal != nil {
-				blocks = append(blocks, ml.terminalBlock(item.Terminal, width))
+				ts := item.Terminal
+				blocks = append(blocks, ml.cached(item.Key, ml.terminalSig(ts, width), func() *block {
+					return ml.terminalBlock(ts, width)
+				}))
 			}
 		case model.TimelineSystemNotice:
 			if item.Notice != "" {
-				blocks = append(blocks, &block{lines: [][]Span{{{Text: item.Notice, Style: ml.Theme.Style(ml.Theme.TextMuted)}}}, raw: item.Notice})
+				notice := item.Notice
+				blocks = append(blocks, ml.cached(item.Key, ml.noticeSig(notice, width), func() *block {
+					return &block{lines: [][]Span{{{Text: notice, Style: ml.Theme.Style(ml.Theme.TextMuted)}}}, raw: notice}
+				}))
 			}
 		}
 	}
 	return blocks
+}
+
+// 渲染签名：把影响某个条目渲染结果的字段喂给 FNV-1a，任何变化都会换一个值。
+// 字符串按字节遍历、不复制（大段工具输出也不产生额外分配），只在宽度/配色
+// 变化时才整表失效。签名只需保证"不变→同值"，哈希碰撞只影响缓存命中。
+const (
+	sigOffset64 = 14695981039346656037
+	sigPrime64  = 1099511628211
+)
+
+type sigBuilder struct{ sum uint64 }
+
+func newSig() *sigBuilder { return &sigBuilder{sum: sigOffset64} }
+
+func (s *sigBuilder) bytes(bs []byte) *sigBuilder {
+	for _, b := range bs {
+		s.sum ^= uint64(b)
+		s.sum *= sigPrime64
+	}
+	return s
+}
+
+func (s *sigBuilder) num(v int) *sigBuilder {
+	var b [8]byte
+	binary.LittleEndian.PutUint64(b[:], uint64(v))
+	return s.bytes(b[:])
+}
+
+func (s *sigBuilder) bool(v bool) *sigBuilder {
+	if v {
+		return s.num(1)
+	}
+	return s.num(0)
+}
+
+// str 先写长度再写内容，避免相邻字段拼接歧义。
+func (s *sigBuilder) str(v string) *sigBuilder {
+	s.num(len(v))
+	for i := 0; i < len(v); i++ {
+		s.sum ^= uint64(v[i])
+		s.sum *= sigPrime64
+	}
+	return s
+}
+
+func (s *sigBuilder) ptrStr(v *string) *sigBuilder {
+	if v == nil {
+		return s.num(0)
+	}
+	s.num(1)
+	return s.str(*v)
+}
+
+func (s *sigBuilder) sum64() uint64 { return s.sum }
+
+// messageSig 覆盖 messageBlock 的输入：正文、用户/助手/思考类型、折叠态与宽度。
+func (ml *MessageList) messageSig(m *model.Message, width int) uint64 {
+	s := newSig()
+	s.num(int(m.Kind)).str(m.Text).bool(m.Expanded).bool(m.Done).num(width)
+	return s.sum64()
+}
+
+// thoughtSig 覆盖 thoughtBlock 的输入；未完成的思考标题带 spinner，随帧号变化。
+func (ml *MessageList) thoughtSig(m *model.Message, width int) uint64 {
+	s := newSig()
+	s.num(int(m.Kind)).str(m.Text).bool(m.Expanded).bool(m.Done).num(width).num(len(m.Lines()))
+	if !m.Done {
+		s.num(ml.SpinFrame)
+	}
+	return s.sum64()
+}
+
+// toolSig 覆盖 toolBlock 的输入（含展开后的 raw 输入输出、内容块与位置）。
+func (ml *MessageList) toolSig(tc *model.ToolCall, width int) uint64 {
+	s := newSig()
+	s.str(tc.ID).str(tc.Title).str(string(tc.Kind)).str(string(tc.Status)).bool(tc.Expanded)
+	s.str(tc.RawInput).str(tc.RawOutput).num(width)
+	for _, location := range tc.Locations {
+		s.str(location.Path)
+		if location.Line != nil {
+			s.num(int(*location.Line))
+		} else {
+			s.num(-1)
+		}
+	}
+	for _, ct := range tc.Content {
+		s.str(ct.Type).str(string(ct.Args)).str(ct.Name)
+		s.ptrStr(ct.Text)
+		if ct.Content != nil {
+			s.str(ct.Content.Type).ptrStr(ct.Content.Text).ptrStr(ct.Content.Name).
+				ptrStr(ct.Content.MimeType).ptrStr(ct.Content.URI).ptrStr(ct.Content.Title).
+				ptrStr(ct.Content.Data)
+		}
+	}
+	if tc.Running() {
+		s.num(ml.SpinFrame)
+	}
+	return s.sum64()
+}
+
+// terminalSig 覆盖 terminalBlock 的输入（标题/状态/展开态/内容）。
+func (ml *MessageList) terminalSig(t *model.TerminalState, width int) uint64 {
+	s := newSig()
+	s.str(t.ID).str(t.Title).str(t.Status).str(t.Command).bool(t.Expanded).
+		bool(t.Truncated).str(t.Transcript).num(width)
+	return s.sum64()
+}
+
+// noticeSig 覆盖系统提示块：正文 + 宽度（配色由整表失效覆盖）。
+func (ml *MessageList) noticeSig(notice string, width int) uint64 {
+	s := newSig()
+	s.str(notice).num(width)
+	return s.sum64()
 }
 
 // bodyBlocks 把 blocks 展平为按渲染行（contentY）索引的正文块目录。

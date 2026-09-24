@@ -76,6 +76,23 @@ func TestParserBracketedPaste(t *testing.T) {
 	}
 }
 
+// TestParserBracketedPasteTerminatorLost 验证粘贴结束标记丢失时（例如 Windows
+// 控制台输入缓冲溢出被 flush 而丢字节）不会无限吞掉后续输入：达到上限即截断
+// 返回，之后的字节按正常按键解析。
+func TestParserBracketedPasteTerminatorLost(t *testing.T) {
+	old := maxPasteBytes
+	maxPasteBytes = 8
+	defer func() { maxPasteBytes = old }()
+
+	p := feedParser([]byte("\x1b[200~0123456789ab"))
+	if got := nextKey(t, p); got != (KeyEvent{Type: KeyPaste, Text: "01234567"}) {
+		t.Fatalf("paste = %+v, want truncated 8 bytes", got)
+	}
+	if got := nextKey(t, p); got != RuneKey('8', ModNone) {
+		t.Fatalf("following key = %+v, want '8'", got)
+	}
+}
+
 func TestParserEscSequence(t *testing.T) {
 	// 序列形式的输入：\x1b[A 应立即解析为 Up（不能误判为孤立 Esc）
 	p := feedParser([]byte("\x1b[A"))
