@@ -555,10 +555,10 @@ func (m *AppModel) SetAgentInfo(info acp.AgentInfo, caps acp.AgentCapabilities) 
 	m.AgentCaps = caps
 	ordering := caps.Has(acp.Alkaid0CapabilityV04)
 	if m.Active != nil {
-		m.Active.SetAlkaid0MessageOrdering(ordering)
+		m.Active.SetAlkaid0V04(ordering)
 	}
 	if m.PreSession != nil {
-		m.PreSession.SetAlkaid0MessageOrdering(ordering)
+		m.PreSession.SetAlkaid0V04(ordering)
 	}
 }
 
@@ -1234,11 +1234,11 @@ func (m *AppModel) ActivateSession(id, title string) {
 		// 复用其状态对象，保留已应用的 config / commands，避免重建空状态丢失
 		// agent 在 session/new 响应前广播的初始元数据。
 		m.Active = m.PreSession
-		m.Active.SetAlkaid0MessageOrdering(m.SupportsAlkaid0())
+		m.Active.SetAlkaid0V04(m.SupportsAlkaid0())
 		m.PreSession = nil
 	} else {
 		m.Active = NewSession(id, title)
-		m.Active.SetAlkaid0MessageOrdering(m.SupportsAlkaid0())
+		m.Active.SetAlkaid0V04(m.SupportsAlkaid0())
 	}
 	m.View = ViewSession
 	m.Modal = NoModal

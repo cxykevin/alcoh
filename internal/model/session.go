@@ -186,6 +186,10 @@ type SessionState struct {
 	FollowBottom bool
 
 	Alkaid0MessageOrdering bool
+	// Alkaid0ToolCalls 为 true 时按 alkaid0 私有协议（v0.4）渲染工具调用：
+	// 标题由工具名与关键参数拼出（如 Edit(path)、Run shell*(cmd)），正文只
+	// 展开标题未消费的其余参数。
+	Alkaid0ToolCalls bool
 }
 
 func NewSession(id, title string) *SessionState {
@@ -319,6 +323,14 @@ func (s *SessionState) message(id string, thought, user bool) *Message {
 		s.sortMessagesByID()
 	}
 	return m
+}
+
+// SetAlkaid0V04 标记服务端声明 alkaid0 私有协议 v0.4：启用消息按 ID 排序与
+// 工具调用的私有渲染（正文只展开标题未消费的参数）。
+func (s *SessionState) SetAlkaid0V04(enabled bool) {
+	s.Alkaid0MessageOrdering = enabled
+	s.Alkaid0ToolCalls = enabled
+	s.sortMessagesByID()
 }
 
 func (s *SessionState) SetAlkaid0MessageOrdering(enabled bool) {

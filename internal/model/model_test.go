@@ -220,6 +220,30 @@ func TestServerCommandRequiresAlkaid0Capability(t *testing.T) {
 	}
 }
 
+// TestAlkaid0V04EnablesToolCallRendering 验证服务端声明 v0.4 能力后，活动
+// 会话启用工具调用私有渲染标志（SetAgentInfo 先于/晚于激活都要生效）。
+func TestAlkaid0V04EnablesToolCallRendering(t *testing.T) {
+	m := New()
+	m.SetAgentInfo(acp.AgentInfo{}, alkaid0Caps())
+	m.ActivateSession("s", "session")
+	if m.Active == nil || !m.Active.Alkaid0ToolCalls {
+		t.Fatal("Alkaid0ToolCalls should be enabled with v0.4 capability")
+	}
+
+	later := New()
+	later.ActivateSession("s", "session")
+	later.SetAgentInfo(acp.AgentInfo{}, alkaid0Caps())
+	if later.Active == nil || !later.Active.Alkaid0ToolCalls {
+		t.Fatal("Alkaid0ToolCalls should be enabled when v0.4 arrives after activation")
+	}
+
+	other := New()
+	other.ActivateSession("s", "session")
+	if other.Active == nil || other.Active.Alkaid0ToolCalls {
+		t.Fatal("Alkaid0ToolCalls should be off without v0.4 capability")
+	}
+}
+
 // slashDescription 返回命令在命令面板中的描述；命令不存在时判定测试失败。
 func slashDescription(t *testing.T, m *AppModel, command string) string {
 	t.Helper()

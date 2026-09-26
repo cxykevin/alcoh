@@ -192,8 +192,9 @@ func (ml *MessageList) buildBlocks(s *model.SessionState, width int) []*block {
 		case model.TimelineToolCall:
 			if item.ToolCall != nil {
 				tc := item.ToolCall
-				blocks = append(blocks, ml.cached(item.Key, ml.toolSig(tc, width), func() *block {
-					return ml.toolBlock(tc, width)
+				private := s.Alkaid0ToolCalls
+				blocks = append(blocks, ml.cached(item.Key, ml.toolSig(tc, width, private), func() *block {
+					return ml.toolBlock(tc, width, private)
 				}))
 			}
 		case model.TimelinePlan:
@@ -288,10 +289,11 @@ func (ml *MessageList) thoughtSig(m *model.Message, width int) uint64 {
 	return s.sum64()
 }
 
-// toolSig 覆盖 toolBlock 的输入（含展开后的 raw 输入输出、内容块与位置）。
-func (ml *MessageList) toolSig(tc *model.ToolCall, width int) uint64 {
+// toolSig 覆盖 toolBlock 的输入（含展开后的 raw 输入输出、内容块、位置与
+// alkaid0 私有渲染开关）。
+func (ml *MessageList) toolSig(tc *model.ToolCall, width int, alkaid0 bool) uint64 {
 	s := newSig()
-	s.str(tc.ID).str(tc.Title).str(string(tc.Kind)).str(string(tc.Status)).bool(tc.Expanded)
+	s.str(tc.ID).str(tc.Title).str(string(tc.Kind)).str(string(tc.Status)).bool(tc.Expanded).bool(alkaid0)
 	s.str(tc.RawInput).str(tc.RawOutput).num(width)
 	for _, location := range tc.Locations {
 		s.str(location.Path)
@@ -417,13 +419,21 @@ func (ml *MessageList) thoughtBlock(msg *model.Message, width int) *block {
 	return blk
 }
 
-func (ml *MessageList) toolBlock(tc *model.ToolCall, width int) *block {
+func (ml *MessageList) toolBlock(tc *model.ToolCall, width int, alkaid0 bool) *block {
 	t := ml.Theme
+	// alkaid0 v0.4：标题由工具名与关键参数拼出，正文只展开标题未消费的参数。
+	var call *alkaid0Call
+	if alkaid0 {
+		call = alkaid0ToolCall(tc)
+	}
 	// 工具内容不是 markdown，复制其原始文本（标题/输入输出/内容块/位置）。
-	blk := &block{raw: ml.toolRaw(tc), toggle: &ToggleRef{Kind: ToggleTool, ID: tc.ID}}
+	blk := &block{raw: ml.toolRaw(tc, call), toggle: &ToggleRef{Kind: ToggleTool, ID: tc.ID}}
 	title := tc.Title
 	if title == "" {
 		title = string(tc.Kind)
+	}
+	if call != nil {
+		title = call.Title
 	}
 	st := t.Style(t.ToolPending)
 	switch tc.Status {
@@ -459,6 +469,15 @@ func (ml *MessageList) toolBlock(tc *model.ToolCall, width int) *block {
 		}
 		blk.lines = append(blk.lines, []Span{{Text: "  at: " + truncateRune(place, width-8), Style: t.Style(t.Info)}})
 	}
+	if call != nil {
+		for _, ln := range alkaid0BodyArgs(call) {
+			for _, wl := range renderer.Wrap(ln, width-8) {
+				blk.lines = append(blk.lines, []Span{{Text: "  " + wl, Style: t.Style(t.MDCode)}})
+			}
+		}
+	}
+	// 私有渲染下服务端的首个文本块是完整参数的预览：标题已消费的参数不再重复展示。
+	skipArgsText := call != nil
 	for _, ct := range tc.Content {
 		switch ct.Type {
 		case "content":
@@ -466,6 +485,10 @@ func (ml *MessageList) toolBlock(tc *model.ToolCall, width int) *block {
 				continue
 			}
 			if ct.Content.Text != nil {
+				if skipArgsText {
+					skipArgsText = false
+					continue
+				}
 				for _, ln := range renderer.Wrap(*ct.Content.Text, width-8) {
 					blk.lines = append(blk.lines, []Span{{Text: "  " + ln, Style: t.Style(t.MDCode)}})
 				}
@@ -522,13 +545,21 @@ func (ml *MessageList) toolBlock(tc *model.ToolCall, width int) *block {
 }
 
 // toolRaw 拼接工具调用的原始文本（复制用），不含渲染前缀与样式。
-func (ml *MessageList) toolRaw(tc *model.ToolCall) string {
+func (ml *MessageList) toolRaw(tc *model.ToolCall, call *alkaid0Call) string {
 	var sb strings.Builder
 	title := tc.Title
 	if title == "" {
 		title = string(tc.Kind)
 	}
+	if call != nil {
+		title = call.Title
+	}
 	sb.WriteString(title)
+	if call != nil {
+		for _, ln := range alkaid0BodyArgs(call) {
+			sb.WriteString("\n" + ln)
+		}
+	}
 	if tc.RawInput != "" {
 		sb.WriteString("\n" + i18n.T("输入: ") + tc.RawInput)
 	}
@@ -542,10 +573,16 @@ func (ml *MessageList) toolRaw(tc *model.ToolCall) string {
 		}
 		sb.WriteString("\n" + i18n.T("位置: ") + place)
 	}
+	// 私有渲染下服务端的首个文本块是完整参数的预览：正文已用其余参数替代。
+	skipArgsText := call != nil
 	for _, ct := range tc.Content {
 		switch ct.Type {
 		case "content":
 			if ct.Content != nil && ct.Content.Text != nil {
+				if skipArgsText {
+					skipArgsText = false
+					continue
+				}
 				sb.WriteString("\n" + *ct.Content.Text)
 			}
 		case "diff", "terminal":
