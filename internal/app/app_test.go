@@ -671,6 +671,30 @@ func TestApplySelectionLine(t *testing.T) {
 	}
 }
 
+// TestApplyShellSelectionWideChar 回归：shells 预览选择落在宽字符续列时同样必须
+// 整字反显。只反续列会让 diff 的写入 run 从续列开始，光标推进丢失，
+// 后续字符整体左移一格——滚动预览时表现为行尾残留旧字符。
+func TestApplyShellSelectionWideChar(t *testing.T) {
+	ft := newFakeTerm()
+	a := New(ft, demo.New(true))
+	a.view.ShellPreviewRect = renderer.NewRect(0, 0, 80, 24)
+
+	a.back = renderer.NewBuffer(80, 24)
+	a.back.PutText(2, 1, "hello 世界", renderer.DefaultStyle(), 80)
+	// 选中"世"的续列（col9），应扩展到首列整字反显。
+	a.model.ShellSelection = &model.Selection{AnchorX: 9, AnchorY: 1, CurX: 9, CurY: 1}
+	a.applyShellSelection(a.back)
+	if c := a.back.Cells[a.back.Index(8, 1)]; !c.Style.Reverse {
+		t.Error("wide char first column should be reversed")
+	}
+	if c := a.back.Cells[a.back.Index(9, 1)]; !c.Style.Reverse {
+		t.Error("wide char continuation column should be reversed")
+	}
+	if c := a.back.Cells[a.back.Index(7, 1)]; c.Style.Reverse {
+		t.Error("cell before wide char should not be reversed")
+	}
+}
+
 // TestEffortCommandFlow 验证 /effort 两条路径：
 //   - 带参数：/effort high → session/set_config_option(thought_level=high)；
 //   - 无参数：/effort → 打开滑条弹窗 → 右移 → Enter 确认。

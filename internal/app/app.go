@@ -991,6 +991,12 @@ func (a *App) applyShellSelection(buf *renderer.Buffer) {
 		if hi >= r.X+r.W {
 			hi = r.X + r.W - 1
 		}
+		// 宽字符整字反显：与正文选择一致，只反半格会让 diff 的 run 从续列开始，
+		// 光标推进丢失、后续字符左移一格（滚动时行尾残留旧字符）。
+		lo, hi = wideCharBounds(buf, y, lo, hi)
+		if hi < 0 || lo > hi {
+			continue
+		}
 		for x := lo; x <= hi; x++ {
 			if i := buf.Index(x, y); i >= 0 {
 				buf.Cells[i].Style = buf.Cells[i].Style.WithReverse(true)

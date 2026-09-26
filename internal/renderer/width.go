@@ -3,7 +3,8 @@ package renderer
 // 字符列宽计算：不依赖第三方库，采用内建区间表。
 // 规则（对齐终端惯例）：
 //   - 组合记号 Mn/Me、ZWJ(U+200D)、变体选择符(FE00-FE0F)、零宽空格(U+200B) 等 → 0 列
-//   - CJK 统一表意/扩展A、片假名平假名、谚文音节、CJK 标点、全角形式、扩展B+、部分 emoji → 2 列
+//   - CJK 统一表意/扩展A、片假名平假名、谚文音节、CJK 标点、全角形式、扩展B+、易经/太玄经/算筹 → 2 列
+//   - Emoji_Presentation=Yes（✅❌✨ 等）按终端惯例 → 2 列（见 emojiWideRanges）
 //   - Ambiguous 宽度按窄（1 列）处理
 //   - 其余 → 1 列
 
@@ -215,6 +216,7 @@ var (
 		{0xFE00, 0xFE0F}, // 变体选择符
 		{0xFE20, 0xFE2F},
 		{0xFEFF, 0xFEFF}, // BOM / ZWNBSP
+		{0xFFA0, 0xFFA0}, // 半角谚文填充符（终端按零宽处理）
 		{0xFFF9, 0xFFFB},
 		{0x101FD, 0x101FD},
 		{0x102E0, 0x102E0},
@@ -318,13 +320,72 @@ var (
 		{0xE0100, 0xE01EF}, // 变体选择符补充
 	}
 
+	// emojiWideRanges 覆盖 EastAsianWidth=Neutral/Ambiguous、但 Emoji_Presentation=Yes 的
+	// 字符：终端（xterm/kitty/iTerm2/Windows Terminal、tmux、wcwidth）一律按 2 列渲染。
+	// 例如 ✅（U+2705）、❌（U+274C）、✨（U+2728）：本地表若按 1 列计算，整行后续列
+	// 都会比终端少前进 1 列，diff 写下的字符会整体左错位，行尾留下上一帧的残影——
+	// 滚动时表现为"中文行尾残留字符"。
+	// 注：区域指示符（U+1F1E6-1F1FF）不在此列：成对组成的旗帜在终端上只占 2 列，
+	// 按 2 列计算会得到 4 列，反而错位。
+	emojiWideRanges = []runeRange{
+		{0x231A, 0x231B}, // 手表、沙漏
+		{0x23E9, 0x23EC}, // 快进/快退
+		{0x23F0, 0x23F0}, // 闹钟
+		{0x23F3, 0x23F3}, // 流沙
+		{0x25FD, 0x25FE}, // 中小方块
+		{0x2614, 0x2615}, // 雨伞、热饮
+		{0x2630, 0x2637}, // 八卦（乾、兑…坤）
+		{0x2648, 0x2653}, // 十二星座
+		{0x267F, 0x267F}, // 轮椅
+		{0x268A, 0x268F}, // 易卦单卦/重卦
+		{0x2693, 0x2693}, // 锚
+		{0x26A1, 0x26A1}, // 高压闪电
+		{0x26AA, 0x26AB}, // 中白/中黑圆
+		{0x26BD, 0x26BE}, // 足球、棒球
+		{0x26C4, 0x26C5}, // 无雪雪人、太阳云
+		{0x26CE, 0x26CE}, // 蛇夫座
+		{0x26D4, 0x26D4}, // 禁止通行
+		{0x26EA, 0x26EA}, // 教堂
+		{0x26F2, 0x26F3}, // 喷泉、高尔夫
+		{0x26F5, 0x26F5}, // 帆船
+		{0x26FA, 0x26FA}, // 帐篷
+		{0x26FD, 0x26FD}, // 加油站
+		{0x2705, 0x2705}, // ✅ 白色重勾
+		{0x270A, 0x270B}, // 举拳、举手
+		{0x2728, 0x2728}, // ✨ 火花
+		{0x274C, 0x274C}, // ❌ 叉号
+		{0x274E, 0x274E}, // 方框叉号
+		{0x2753, 0x2755}, // 问号、叹号装饰
+		{0x2757, 0x2757}, // 重叹号
+		{0x2795, 0x2797}, // 加减除
+		{0x27B0, 0x27B0}, // 卷曲环
+		{0x27BF, 0x27BF}, // 双卷曲环
+		{0x2B1B, 0x2B1C}, // 大方块
+		{0x2B50, 0x2B50}, // ⭐ 星
+		{0x2B55, 0x2B55}, // 重圆圈
+		{0x1F6D8, 0x1F6D8},
+		{0x1FA89, 0x1FA8A},
+		{0x1FA8E, 0x1FA8F},
+		{0x1FABE, 0x1FABE},
+		{0x1FAC6, 0x1FAC6},
+		{0x1FAC8, 0x1FAC8},
+		{0x1FACD, 0x1FACD},
+		{0x1FADC, 0x1FADC},
+		{0x1FADF, 0x1FADF},
+		{0x1FAE9, 0x1FAEA},
+		{0x1FAEF, 0x1FAEF},
+	}
+
 	// wideRanges 覆盖的 Unicode 区间：宽（2 列）字符。
 	wideRanges = []runeRange{
 		{0x1100, 0x115F}, // 谚文 Jamo
 		{0x2329, 0x232A}, // 角括号
 		{0x2E80, 0x303E}, // CJK 部首、标点（含 3000-303F）
-		{0x3041, 0x33FF}, // 平假名、片假名、CJK 符号、全角罗马/片假名扩展
+		{0x3041, 0x3247}, // 平假名、片假名、CJK 符号、全角罗马/片假名扩展
+		// U+3248-324F 是 Ambiguous（按窄处理），不并入上面的宽区间。
+		{0x3250, 0x33FF},
 		{0x3400, 0x4DBF}, // CJK 扩展 A
+		{0x4DC0, 0x4DFF}, // 易经六十四卦符号
 		{0x4E00, 0x9FFF}, // CJK 统一表意
 		{0xA000, 0xA4CF}, // 彝文
 		{0xA960, 0xA97F}, // 谚文 Jamo 扩展 A
@@ -337,9 +398,18 @@ var (
 		{0xFF00, 0xFF60}, // 全角形式（含全角字母、全角片假名）
 		{0xFFE0, 0xFFE6}, // 全角符号
 		{0x16FE0, 0x16FE4},
+		{0x16FF2, 0x16FF6},
 		{0x17000, 0x187F7}, // 女书 / 楷书
+		{0x187F8, 0x187FF},
 		{0x18800, 0x18CD5},
+		{0x18CFF, 0x18D1E},
+		{0x18D80, 0x18DF2},
+		{0x1AFF0, 0x1AFF3}, // 片假名扩展（闽南语调符）
+		{0x1AFF5, 0x1AFFB},
+		{0x1AFFD, 0x1AFFE},
 		{0x1B000, 0x1B2FB}, // 假名补充
+		{0x1D300, 0x1D356}, // 太玄经符号
+		{0x1D360, 0x1D376}, // 算筹数字
 		{0x1F004, 0x1F004}, // 麻将牌（emoji 宽）
 		{0x1F0CF, 0x1F0CF},
 		{0x1F18E, 0x1F18E},
@@ -419,7 +489,7 @@ func runeWidth(r rune) int {
 		return 0 // 控制字符不输出
 	case inRanges(r, zeroWidth):
 		return 0
-	case inRanges(r, wideRanges):
+	case inRanges(r, wideRanges), inRanges(r, emojiWideRanges):
 		return 2
 	default:
 		return 1

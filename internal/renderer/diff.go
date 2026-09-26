@@ -34,7 +34,12 @@ func Diff(back, front *Buffer, aw *AnsiWriter) {
 				}
 				switch {
 				case f.Width == 0:
-					// 续列：由前一个宽字符自动覆盖，无需输出
+					// 续列不单独输出（由左侧宽字符覆盖）。但游标模型必须同步：
+					// run 从续列开始时 MoveTo 会把终端光标停在续列上，若不推进，
+					// 本 run 后续字符会整体左移一格，行尾留下上一帧的字符。
+					if x+1 < W {
+						aw.MoveTo(y, x+1)
+					}
 					x++
 				case f.Width == 2:
 					aw.WriteRune(f.R, 2, f.Style)

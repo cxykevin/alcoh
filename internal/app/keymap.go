@@ -1438,10 +1438,17 @@ func lineSelectionBounds(buf *renderer.Buffer, sel *model.Selection, y int) (int
 	if hi >= buf.W {
 		hi = buf.W - 1
 	}
+	return wideCharBounds(buf, y, lo, hi)
+}
+
+// wideCharBounds 把行区间 [lo,hi] 补齐成完整宽字符：lo 落在续列时回退到首列，
+// hi 落在宽字符首列时前进到续列。两半必须一起变样式——只改续列会让 diff 的
+// 写入 run 从续列开始，光标推进丢失，后续字符整体左移一格（行尾残留）。
+// 返回 hi=-1 表示空区间。
+func wideCharBounds(buf *renderer.Buffer, y, lo, hi int) (int, int) {
 	if hi < 0 || lo > hi {
 		return 0, -1
 	}
-	// 宽字符闭包：lo 落在续列时回退到该宽字符首列。
 	for lo > 0 {
 		i := buf.Index(lo, y)
 		if i < 0 || buf.Cells[i].Width != 0 {
@@ -1449,7 +1456,6 @@ func lineSelectionBounds(buf *renderer.Buffer, sel *model.Selection, y int) (int
 		}
 		lo--
 	}
-	// hi 落在宽字符首列时前进到续列，避免半字反显/复制。
 	if hi < buf.W-1 {
 		if i := buf.Index(hi, y); i >= 0 && buf.Cells[i].Width == 2 {
 			hi++
