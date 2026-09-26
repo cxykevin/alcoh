@@ -69,8 +69,8 @@ func TestAlkaid0ToolCallTitleEdit(t *testing.T) {
 	}
 }
 
-// TestAlkaid0ToolCallTitleRun 验证 run 标题为 Run {type}({command})，
-// 后台任务在 type 后加 *；正文只展开 reason/sandbox 等其余参数。
+// TestAlkaid0ToolCallTitleRun 验证 run 标题为 Run {type}({reason})，
+// 后台任务在 type 后加 *；正文只展开 command/sandbox 等其余参数。
 func TestAlkaid0ToolCallTitleRun(t *testing.T) {
 	s := alkaid0TestSession("s1")
 	applyAlkaid0ToolCall(t, s, "c1", "run", map[string]any{
@@ -78,23 +78,27 @@ func TestAlkaid0ToolCallTitleRun(t *testing.T) {
 		"background": true, "sandbox": false,
 	})
 	got := drawText(t, s, 100, 20)
-	if !strings.Contains(got, "Run shell*(npm run dev)") {
+	if !strings.Contains(got, "Run shell*(serve the app)") {
 		t.Fatalf("background run title should carry *:\n%s", got)
 	}
-	if !strings.Contains(got, "Reason: serve the app") || !strings.Contains(got, "Sandbox: false") {
+	if !strings.Contains(got, "Command: npm run dev") || !strings.Contains(got, "Sandbox: false") {
 		t.Fatalf("body should show remaining run args:\n%s", got)
 	}
-	if strings.Contains(got, "Command:") || strings.Contains(got, "Type:") || strings.Contains(got, "Background:") {
+	if strings.Contains(got, "Reason:") || strings.Contains(got, "Type:") || strings.Contains(got, "Background:") {
 		t.Fatalf("body should not repeat title args:\n%s", got)
 	}
 
-	// 前台 sleep：数字命令按 JSON 原样进标题，不带 *。
+	// 前台 sleep：标题用 reason，数字 command 按 JSON 原样进正文，不带 *。
 	s2 := alkaid0TestSession("s2")
 	applyAlkaid0ToolCall(t, s2, "c2", "run", map[string]any{
 		"type": "sleep", "reason": "wait", "command": 5,
 	})
-	if got := drawText(t, s2, 100, 20); !strings.Contains(got, "Run sleep(5)") {
-		t.Fatalf("foreground run title mismatch:\n%s", got)
+	got2 := drawText(t, s2, 100, 20)
+	if !strings.Contains(got2, "Run sleep(wait)") {
+		t.Fatalf("foreground run title mismatch:\n%s", got2)
+	}
+	if !strings.Contains(got2, "Command: 5") {
+		t.Fatalf("body should show command:\n%s", got2)
 	}
 }
 

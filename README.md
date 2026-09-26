@@ -25,7 +25,7 @@ alcoh 实现了大部分的 ACP v2 协议内容，因此可以通过命令行访
 - **服务端配置编辑器**：`/server` 经 alkaid0 扩展 RPC 浏览/编辑服务端配置，编辑即自动保存；模型集合行尾灰字显示模型名，选择模型的键（`SummaryModel`、`TitleModel`、`AgentModel`、`DefaultModelID` 等）行尾灰字提示当前指向的模型，按 Enter 弹出**模型选择框**（候选直接读配置的 `Model.Models`，忽略 `Hide`、不限类型）（只适配 alkaid0 后端）
 - **新手引导**：启动进入引导（与 `/connect` 向导同义：选服务商 → 填 key → 拉取模型列表 → 选模型 → 推理强度 → 操作教学）（只适配 alkaid0 后端）
 - **Shells 面板**：实时查看 agent 启动的终端，活跃 shell 在上、历史 shell 与内容在下（alkaid0 v0.5+）
-- **工具调用可读标题**：服务端声明 `alk.cxykevin.top/alkaid0/v0.4` 时，工具调用标题由工具名与关键参数拼出（如 `Edit(src/main.go)`、`Run shell*(npm run dev)`、`Search online(golang)`），展开后只显示标题未包含的其余参数（alkaid0 v0.4+）
+- **工具调用可读标题**：服务端声明 `alk.cxykevin.top/alkaid0/v0.4` 时，工具调用标题由工具名与关键参数拼出（如 `Edit(src/main.go)`、`Run shell*(serve the app)`、`Search online(golang)`），展开后只显示标题未包含的其余参数（alkaid0 v0.4+）
 - **跨平台**：Linux、macOS、Windows Terminal
 
 ## 安装

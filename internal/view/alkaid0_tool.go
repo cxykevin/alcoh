@@ -15,7 +15,7 @@ import (
 //
 // 服务端声明 alk.cxykevin.top/alkaid0/v0.4 后，工具调用标题不再是
 // "[Call <name>]<callId>"，而是由工具名与关键参数拼出的可读签名（如
-// Edit(src/main.go)、Run shell*(go test ./...)、Search online(golang)）；
+// Edit(src/main.go)、Run shell*(run the tests)、Search online(golang)）；
 // 正文（展开后）只展示标题没有消费的其余参数，服务端随 content 下发的
 // 全参数文本块不再重复渲染。参数来自 content 里的
 // alk.cxykevin.top/calling_info 块（alkaid0 不发 rawInput，见服务端
@@ -101,14 +101,14 @@ func alkaid0CallSignature(name string, args map[string]any) (string, map[string]
 	used := map[string]bool{}
 	switch name {
 	case "run":
-		// Run {type}({command})；后台任务在 type 后加 * 标记。
+		// Run {type}({reason})；后台任务在 type 后加 * 标记，command 留给正文。
 		star := ""
 		if alkaid0Bool(args["background"]) {
 			star = "*"
 		}
-		used["type"], used["command"], used["background"] = true, true, true
+		used["type"], used["reason"], used["background"] = true, true, true
 		return "Run " + alkaid0TitleValue(args["type"]) + star +
-			"(" + alkaid0TitleValue(args["command"]) + ")", used
+			"(" + alkaid0TitleValue(args["reason"]) + ")", used
 	case "search":
 		// Search({query})；联网搜索显示为 Search online({query})。
 		online := ""
