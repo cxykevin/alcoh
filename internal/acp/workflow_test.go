@@ -306,3 +306,52 @@ func TestWorkflowStatusSendsSessionAndBroadcasts(t *testing.T) {
 		t.Fatalf("requests = %v", ft.requests)
 	}
 }
+
+// TestWorkflowStatusGraphAcceptsNestedEnvelope 验证真实 alkaid0 的 workflow/status
+// 响应形状：graph 字段里塞的是 dynworkflow 的 graph 事件整体（{"graph":{…},"time":…}），
+// 比增量事件多包一层；解码后必须仍能拿到 nodes/edges/start。
+// 载荷形状取自真实服务（@temp/run/2：node1→node2→node3）。
+func TestWorkflowStatusGraphAcceptsNestedEnvelope(t *testing.T) {
+	raw := []byte(`{"runId":"@temp/run/2","terminalId":"@temp/run/2","status":"running",` +
+		`"workflow":{"runId":"@temp/run/2","status":"running","currentNode":"node3","lastSequence":11},` +
+		`"graph":{"graph":{"nodes":{"node1":{"name":"node1"},"node2":{"name":"node2"},"node3":{"name":"node3"}},` +
+		`"edges":{"node1":["node2"],"node2":["node3"],"node3":[]},"start":["node1"]},` +
+		`"time":"2026-09-27T08:36:44.866Z","type":"graph","workflow":"e2e-three-nodes"},` +
+		`"agentState":{"type":"node","nodeId":"node3","state":"running"},` +
+		`"logs":[{"sequence":1,"type":"graph","payload":{"graph":{"nodes":{"node1":{"name":"node1"}}}}}]}`)
+	var got WorkflowStatusResult
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Graph == nil || len(got.Graph.Nodes) != 3 || len(got.Graph.Edges) != 3 {
+		t.Fatalf("nested graph = %#v", got.Graph)
+	}
+	if got.Graph.Nodes["node2"].Name != "node2" || len(got.Graph.Edges["node2"]) != 1 ||
+		got.Graph.Edges["node2"][0] != "node3" || len(got.Graph.Start) != 1 || got.Graph.Start[0] != "node1" {
+		t.Fatalf("nested graph = %#v", got.Graph)
+	}
+	if got.Status != "running" || got.Workflow.CurrentNode != "node3" || len(got.Logs) != 1 {
+		t.Fatalf("status = %#v", got)
+	}
+}
+
+// TestWorkflowGraphShapeCompatibility 验证扁平结构（增量事件形状）与空图不受兼容处理影响。
+func TestWorkflowGraphShapeCompatibility(t *testing.T) {
+	var g WorkflowGraph
+	if err := json.Unmarshal([]byte(`{"nodes":{"a":{"name":"甲"}},"edges":{"a":[]},"start":["a"]}`), &g); err != nil {
+		t.Fatal(err)
+	}
+	if g.Empty() || len(g.Nodes) != 1 || g.Nodes["a"].Name != "甲" || len(g.Start) != 1 || g.Start[0] != "a" {
+		t.Fatalf("flat graph = %#v", &g)
+	}
+	// 启动阶段（没有 graph 或空对象）仍视为空图。
+	for _, raw := range []string{`{}`, `null`, `{"graph":null}`} {
+		var empty WorkflowGraph
+		if err := json.Unmarshal([]byte(raw), &empty); err != nil {
+			t.Fatalf("%s: %v", raw, err)
+		}
+		if !empty.Empty() {
+			t.Fatalf("%s = %#v, want empty", raw, &empty)
+		}
+	}
+}

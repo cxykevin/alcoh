@@ -53,6 +53,37 @@ func (g *WorkflowGraph) Empty() bool {
 	return g == nil || (len(g.Nodes) == 0 && len(g.Edges) == 0 && len(g.Start) == 0)
 }
 
+// UnmarshalJSON 兼容两种 graph 载荷：
+//   - 扁平结构 {"nodes": …, "edges": …, "start": …}：增量事件（update_graph）里的形状；
+//   - 嵌套信封 {"graph": {"nodes": …}, "time": …}：真实 alkaid0 的 workflow/status
+//     直接把 dynworkflow 的 graph 事件整体塞进 graph 字段，于是多包了一层。
+//
+// 扁平解析不出节点时再尝试解包内层图，两种形状最终得到相同的图。
+func (g *WorkflowGraph) UnmarshalJSON(data []byte) error {
+	type flat WorkflowGraph // 新类型不带本方法，避免递归
+	var direct flat
+	if err := json.Unmarshal(data, &direct); err != nil {
+		return err
+	}
+	parsed := WorkflowGraph(direct)
+	if !parsed.Empty() {
+		*g = parsed
+		return nil
+	}
+	var envelope struct {
+		Graph *flat `json:"graph"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return err
+	}
+	if envelope.Graph != nil {
+		*g = WorkflowGraph(*envelope.Graph)
+		return nil
+	}
+	*g = parsed
+	return nil
+}
+
 // WorkflowAgentState 是快照里的"当前 agent"状态。
 type WorkflowAgentState struct {
 	Type   string `json:"type"`
