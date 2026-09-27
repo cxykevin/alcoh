@@ -389,3 +389,140 @@ func TestWorkflowCellColorFallback(t *testing.T) {
 		t.Fatalf("running index = %v, want theme ToolRunning", got)
 	}
 }
+
+// workflowWideGraph 构造一张明显比分栏宽的图：6 节点长链、中文节点名与状态。
+// 图宽度远超预览框，左右平移才有内容可滚——宽字符错位只在能滚动的图上出现。
+func workflowWideGraph(t *testing.T) *model.AppModel {
+	t.Helper()
+	m := &model.AppModel{}
+	m.SetAgentInfo(acp.AgentInfo{}, acp.AgentCapabilities{
+		Raw: json.RawMessage(`{"alk.cxykevin.top/alkaid0/v0.5":{}}`),
+	})
+	m.ActivateSession("s1", "会话")
+	m.ShellPanel = true
+	m.ShellSelected = 0
+	ids := []string{"n1", "n2", "n3", "n4", "n5", "n6"}
+	names := []string{"采集输入", "清洗数据", "汇总统计", "生成报告", "复核结论", "归档结果"}
+	nodes := make(map[string]acp.WorkflowGraphNode, len(ids))
+	edges := make(map[string][]string, len(ids))
+	for i, id := range ids {
+		nodes[id] = acp.WorkflowGraphNode{Name: names[i]}
+		if i+1 < len(ids) {
+			edges[id] = []string{ids[i+1]}
+		}
+	}
+	apply := func(ev *acp.WorkflowEvent) {
+		ev.TerminalID = "@temp/run/9"
+		m.Active.ApplyWorkflowEvent(ev)
+	}
+	apply(&acp.WorkflowEvent{
+		Kind: acp.WorkflowKindSnapshot, RunID: "@temp/run/9",
+		Workflow: &acp.WorkflowInfo{Status: "running", CurrentNode: ids[0]},
+		Graph:    &acp.WorkflowGraph{Nodes: nodes, Edges: edges, Start: ids[:1]},
+	})
+	for i, id := range ids {
+		state := "wait"
+		if i > 0 {
+			state = "running"
+		}
+		apply(&acp.WorkflowEvent{Kind: acp.WorkflowKindNode, RunID: "@temp/run/9", NodeID: id, State: state})
+	}
+	return m
+}
+
+// paneColumns 返回缓冲一行按显示列铺开的文本：宽字符续列占位（Width=0）折叠成
+// 空格，这样拼起来的字符串与终端上"一格一列"的观感一致，可以直接比列。
+func paneColumns(b *renderer.Buffer, x, y, w int) []string {
+	cols := make([]string, w)
+	for i := 0; i < w; i++ {
+		cell := b.Get(x+i, y)
+		if cell.Width == 0 || cell.R == 0 {
+			cols[i] = " "
+			continue
+		}
+		cols[i] = string(cell.R)
+	}
+	return cols
+}
+
+// TestWorkflowGraphPanClipsColumns 验证图分栏的左右平移等价于"按列裁剪整张图"：
+// 平移量落在哪一列都成立，包括正好落在宽字符的续列上、以及右边界切在宽字符中间。
+// 做法是先把整张图完整画一次作为基准（分栏宽到不用裁剪），再逐个平移量比对分栏
+// 内容与基准的对应列。旧实现按本地列宽表累加 x、跳过续列时不推列号，平移量落在
+// 宽字符中间时该行会整行左移一格，这个用例就会失败。
+func TestWorkflowGraphPanClipsColumns(t *testing.T) {
+	useEnglish(t)
+	m := workflowWideGraph(t)
+	w := m.SelectedWorkflow()
+	const (
+		paneW = 44
+		paneH = 16
+	)
+	rect := renderer.NewRect(0, 0, paneW, paneH)
+	inner := renderer.NewRect(1, 1, paneW-2, paneH-2)
+	panel := &ShellPanel{Theme: renderer.DefaultTheme()}
+
+	graph := panel.workflowLayout(w)
+	if graph == nil {
+		t.Fatal("用例需要一张可布局的图")
+	}
+	grid := graph.Grid()
+	full := workflowGridWidth(grid)
+	if full <= inner.W {
+		t.Fatalf("图必须比分栏宽才能平移：grid=%d 分栏内宽=%d", full, inner.W)
+	}
+
+	// 基准画面：分栏宽度取整图宽度，此时平移量会被收敛到 0，画出来就是完整的图。
+	w.PanX, w.PanY = 0, 0
+	ref := renderer.NewBuffer(full+2, paneH)
+	panel.drawWorkflowGraph(renderer.NewCanvas(ref), renderer.NewRect(0, 0, full+2, paneH), w, m)
+	refRows := make([][]renderer.Cell, inner.H)
+	for row := 0; row < inner.H; row++ {
+		refRows[row] = make([]renderer.Cell, full)
+		for i := 0; i < full; i++ {
+			refRows[row][i] = ref.Get(1+i, 1+row)
+		}
+	}
+
+	// midGlyph 记录是否出现过"平移量正好落在宽字符续列上"的情形：这是旧实现
+	// 整行错位的触发条件，用例必须覆盖到。
+	midGlyph := false
+	for panX := 0; panX <= full-inner.W; panX++ {
+		w.PanX = panX
+		b := renderer.NewBuffer(paneW, paneH)
+		panel.drawWorkflowGraph(renderer.NewCanvas(b), rect, w, m)
+		for row := 0; row < len(grid) && row < inner.H; row++ {
+			for col := panX; col < len(grid[row]); col++ {
+				if grid[row][col].Ch == 0 && col > 0 && grid[row][col-1].Ch != 0 {
+					midGlyph = true
+				}
+			}
+		}
+		for row := 0; row < inner.H; row++ {
+			want := make([]string, inner.W)
+			for i := range want {
+				j := panX + i
+				switch {
+				case j >= full:
+					want[i] = " "
+				case refRows[row][j].Width == 0:
+					// 宽字符的右半列：分栏里只剩空格（整字落在窗口左边之外）。
+					want[i] = " "
+				case refRows[row][j].Width == 2 && j+1 >= panX+inner.W:
+					// 右边界放不下整个宽字符：不画，避免续列压到分栏边框上。
+					want[i] = " "
+				default:
+					want[i] = string(refRows[row][j].R)
+				}
+			}
+			gotRow := strings.TrimRight(strings.Join(paneColumns(b, inner.X, inner.Y+row, inner.W), ""), " ")
+			wantRow := strings.TrimRight(strings.Join(want, ""), " ")
+			if gotRow != wantRow {
+				t.Fatalf("PanX=%d 第 %d 行 = %q，应为基准画面的同列切片 %q", panX, row, gotRow, wantRow)
+			}
+		}
+	}
+	if !midGlyph {
+		t.Fatal("用例必须覆盖平移量落在宽字符中间的情形")
+	}
+}

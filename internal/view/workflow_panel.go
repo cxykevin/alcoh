@@ -99,6 +99,8 @@ func workflowPaneHeight(height int) int {
 
 // drawWorkflowGraph 绘制图分栏：按 PanY/PanX 平移 tflow 布局好的网格，
 // 选中节点用主题高亮底标出（节点级高亮本身就是"看哪里"的提示，分栏不再有焦点）。
+// 每格都按自己在网格里的列号落位、宽度也取自网格（见 workflowCellWidth），
+// 本地列宽表不用来推算位置与宽度——原因见下方循环里的说明。
 func (p *ShellPanel) drawWorkflowGraph(c *renderer.Canvas, r renderer.Rect, w *model.WorkflowState, m *model.AppModel) {
 	p.workflowPaneBox(c, r, workflowGraphTitle(w), nil)
 	inner := renderer.NewRect(r.X+1, r.Y+1, r.W-2, r.H-2)
@@ -136,16 +138,26 @@ func (p *ShellPanel) drawWorkflowGraph(c *renderer.Canvas, r renderer.Rect, w *m
 			break
 		}
 		cells := grid[source]
-		x := 0
-		for col := w.PanX; col < len(cells) && x < inner.W; col++ {
+		// 每格按自己在网格里的列号落位：tflow 的一列就是一显示列。这里刻意不累加
+		// 本地列宽表——tflow 的 charWidth 与本地表对全角符号、半角片假名等判断不同，
+		// 一旦累加，从那个字符起整行都会偏移；跳过宽字符续列时也必须照旧占掉那一列，
+		// 否则窗口左边界正好落在宽字符中间时会整行左移一格（左右平移时最明显）。
+		for col := w.PanX; col < len(cells); col++ {
+			x := col - w.PanX
+			if x >= inner.W {
+				break
+			}
 			cell := cells[col]
 			if cell.Ch == 0 {
-				// 宽字符的续列占位：前一格已经按两列写入，跳过。
+				// 宽字符的续列占位：左半在左边（可能在视野外）已经写好，跳过。
 				continue
+			}
+			if x+workflowCellWidth(cells, col) > inner.W {
+				// 右边界放不下整个宽字符：不画，避免续列压到分栏边框上。
+				break
 			}
 			style := renderer.Style{Fg: workflowCellColor(palette, cell.Fg), Bg: workflowCellColor(palette, cell.Bg)}
 			c.Put(inner.X+x, inner.Y+row, renderer.CellRune(cell.Ch, style))
-			x += renderer.RuneWidth(cell.Ch)
 		}
 	}
 }
@@ -313,6 +325,16 @@ func workflowGridWidth(grid [][]tflow.Cell) int {
 		}
 	}
 	return width
+}
+
+// workflowCellWidth 返回网格里一格占的显示列数：宽字符在网格里占两格，第二格是
+// 续列占位（Ch==0）。宽度直接读布局，不再用本地列宽表推算——本地表与 tflow 的
+// charWidth 规则对少数字符（全角符号、半角片假名等）判断不同，混用会让整行错位。
+func workflowCellWidth(cells []tflow.Cell, col int) int {
+	if col+1 < len(cells) && cells[col+1].Ch == 0 {
+		return 2
+	}
+	return 1
 }
 
 // drawWorkflowPane 绘制图下方那一栏：上边框里嵌两个页签（节点日志 / Agent 列表，

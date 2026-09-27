@@ -17,6 +17,14 @@ func TestRuneWidth(t *testing.T) {
 		{"katakana", 'ア', 2},
 		{"hangul", '한', 2},
 		{"cjk punct", '，', 2},
+		// 全角符号一律 2 列：全角标点、方框/带圈 CUV 符号、CJK 兼容形式、
+		// 越南语读音标记；半角片假名与 Ambiguous 标点按窄（终端惯例）。
+		{"fullwidth semicolon", '；', 2},
+		{"squared cm", '㎝', 2},
+		{"cjk compat form", '﹏', 2},
+		{"vietnamese reading mark", '\U00016FF0', 2},
+		{"halfwidth katakana", 'ﾊ', 1},
+		{"ambiguous dash", '—', 1},
 		{"accent e", 'é', 1},
 		{"cyrillic", 'Ж', 1},
 		{"emoji", '🚀', 2},
