@@ -93,7 +93,7 @@ type AppModel struct {
 	// 日志翻页按"一屏"步长，按键处理需要知道分栏有多大。对非 workflow 终端无意义。
 	ShellWorkflowCols    int // 图分栏内宽（列）
 	ShellWorkflowRows    int // 图分栏内高（行）
-	ShellWorkflowLogRows int // 节点日志分栏内高（行）
+	ShellWorkflowLogRows int // 图下方栏的内高（行）：两个页签共用，PgUp/PgDn 的翻页步长
 
 	Modal           ModalKind
 	Permission      *acp.PermissionRequest
@@ -722,12 +722,13 @@ func (m *AppModel) ResetShellPreviewScroll() {
 	if s := m.SelectedShell(); s != nil {
 		s.Scroll = 0
 		s.FollowBottom = true
-		// workflow 终端：画布平移与节点日志滚动也回到起点（节点选择保留，
-		// 便于在列表里来回比较同一个节点的输出）。
+		// workflow 终端：画布平移与下栏两个页签的滚动也回到起点（节点选择与
+		// 当前页签保留，便于在列表里来回比较同一个节点的输出）。
 		if s.Workflow != nil {
 			s.Workflow.PanX = 0
 			s.Workflow.PanY = 0
 			s.Workflow.LogScroll = 0
+			s.Workflow.AgentScroll = 0
 		}
 	}
 }

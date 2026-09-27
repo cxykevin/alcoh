@@ -111,8 +111,8 @@ func (s *workflowSession) WorkflowStatus(_ context.Context, runID string) (acp.W
 
 // TestWorkflowPanelFetchesStatusAndDrivesPanes 验证 shells 面板的 workflow 预览
 // 接线：打开面板会查询完整快照（workflow/status）并重建图 / 节点 / 日志，
-// Tab 换节点（Shift+Tab 反向），h/l（与 ←→ 同义）平移画布，PgUp/PgDn 翻节点
-// 日志，r 重新拉取。
+// Tab 换节点（Shift+Tab 反向），h/l（与 hjkl 同族）平移画布，←→ 切换下栏页签
+// （节点日志 / Agent 列表），PgUp/PgDn 翻当前页签，r 重新拉取。
 func TestWorkflowPanelFetchesStatusAndDrivesPanes(t *testing.T) {
 	setConfigDir(t)
 	ft := newFakeTerm()
@@ -172,17 +172,36 @@ func TestWorkflowPanelFetchesStatusAndDrivesPanes(t *testing.T) {
 	ft.sendKey(input.KeyEvent{Type: input.KeyTab, Mod: input.ModShift})
 	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.WorkflowSelected == "collect" })
 
-	// l/h 与 ←→ 同义：平移图画布（一次半个分栏），回到左边界收敛为 0。
+	// l/h 平移图画布（一次半个分栏），回到左边界收敛为 0。
 	ft.sendKey(input.RuneKey('l', input.ModNone))
-	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.WorkflowPanX > 0 })
-	ft.sendKey(input.SimpleKey(input.KeyLeft))
-	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.WorkflowPanX == 0 })
-	ft.sendKey(input.SimpleKey(input.KeyRight))
 	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.WorkflowPanX > 0 })
 	ft.sendKey(input.RuneKey('h', input.ModNone))
 	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.WorkflowPanX == 0 })
 
-	// PgUp/PgDn 翻一页节点日志，向下回到最新。
+	// 推送 agents_start：Agent 列表页要有足够多的行才翻得动（空页会被渲染层收敛回 0）。
+	b.push(&acp.WorkflowEvent{
+		SessionID: b.sessionID(), Kind: acp.WorkflowKindAgentsStart, RunID: workflowRunID,
+		NodeID: "collect", Count: 20,
+	})
+	// 事件落到选中节点上：快照里能看到这 20 个 agent（初始都是等待）。
+	waitSnapshot(t, a, func(s modelSnapshot) bool {
+		return len(s.WorkflowAgents) == 20 && s.WorkflowAgents[0] == "waiting"
+	})
+
+	// ←→ 切换下栏页签（环绕），PgUp/PgDn 只翻当前页签：Agent 页翻页不动节点日志。
+	ft.sendKey(input.SimpleKey(input.KeyRight))
+	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.WorkflowPane == 1 })
+	ft.sendKey(input.SimpleKey(input.KeyPageUp))
+	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.WorkflowAgentScroll > 0 })
+	if s := a.snapshot(); s.WorkflowLogScroll != 0 {
+		t.Fatalf("agent page scroll must not move the node log: logScroll=%d", s.WorkflowLogScroll)
+	}
+	ft.sendKey(input.SimpleKey(input.KeyPageDown))
+	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.WorkflowAgentScroll == 0 })
+	ft.sendKey(input.SimpleKey(input.KeyLeft))
+	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.WorkflowPane == 0 })
+
+	// 回到节点日志页：PgUp/PgDn 翻一页日志，向下回到最新。
 	ft.sendKey(input.SimpleKey(input.KeyPageUp))
 	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.WorkflowLogScroll > 0 })
 	ft.sendKey(input.SimpleKey(input.KeyPageDown))
@@ -208,7 +227,7 @@ func TestWorkflowPanelFetchesStatusAndDrivesPanes(t *testing.T) {
 	waitRun(t, done)
 }
 
-// workflowTestLogs 是预置快照里节点 collect 的日志行数（足够长，保证日志分栏
+// workflowTestLogs 是预置快照里节点 collect 的日志行数（足够长，保证节点日志页
 // 有可回看的行，k 不会被渲染层收敛回 0）。
 const workflowTestLogs = 40
 

@@ -387,12 +387,15 @@ type modelSnapshot struct {
 	HistoryTexts  []string // 历史段终端内容
 
 	// 选中 workflow 终端时的工作流状态（见 model/workflow.go）。
-	WorkflowNodes     []string // 节点 ID（按画布顺序）
-	WorkflowSelected  string   // 选中节点 ID
-	WorkflowPanX      int      // 图画布左上角的列偏移（h/l 平移）
-	WorkflowPanY      int      // 图画布左上角的行偏移（j/k 平移）
-	WorkflowLogScroll int      // 节点日志分栏向上回看的行数（PgUp/PgDn）
-	WorkflowLogs      []string // 选中节点的输出行（终值结果 + 日志）
+	WorkflowNodes       []string // 节点 ID（按画布顺序）
+	WorkflowSelected    string   // 选中节点 ID
+	WorkflowPanX        int      // 图画布左上角的列偏移（h/l 平移）
+	WorkflowPanY        int      // 图画布左上角的行偏移（j/k 平移）
+	WorkflowLogScroll   int      // 节点日志分栏向上回看的行数（PgUp/PgDn）
+	WorkflowPane        int      // 下栏当前页签（0 = 节点日志，1 = Agent 列表）
+	WorkflowAgentScroll int      // Agent 列表向上回看的行数
+	WorkflowAgents      []string // 选中节点各 agent 的状态（waiting / running / success / failure）
+	WorkflowLogs        []string // 选中节点的输出行（终值结果 + 日志）
 }
 
 // snapshot 返回当前模型状态快照，供测试在应用运行期间安全轮询。
@@ -431,11 +434,16 @@ func (a *App) snapshot() modelSnapshot {
 		s.WorkflowSelected = w.Selected
 		s.WorkflowPanX, s.WorkflowPanY = w.PanX, w.PanY
 		s.WorkflowLogScroll = w.LogScroll
+		s.WorkflowPane = int(w.Pane)
+		s.WorkflowAgentScroll = w.AgentScroll
 		for _, n := range w.OrderedNodes() {
 			s.WorkflowNodes = append(s.WorkflowNodes, n.ID)
 		}
 		if n := w.SelectedNode(); n != nil {
 			s.WorkflowLogs = append(s.WorkflowLogs, n.Logs...)
+			for _, agent := range n.Agents {
+				s.WorkflowAgents = append(s.WorkflowAgents, agent.State)
+			}
 		}
 	}
 	if a.model.Active != nil {

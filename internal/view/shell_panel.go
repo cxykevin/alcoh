@@ -300,14 +300,14 @@ func cutToWidth(s string, w int) string {
 	return sb.String()
 }
 
-// footer 绘制面板底部提示行。workflow 为 true 时追加图/节点日志分栏的按键说明。
+// footer 绘制面板底部提示行。workflow 为 true 时追加图/下栏页签的按键说明。
 func (p *ShellPanel) footer(c *renderer.Canvas, r renderer.Rect, workflow bool) {
 	if r.H <= 0 {
 		return
 	}
 	hint := i18n.T("x 结束  r 刷新  PgUp/PgDn 滚动  Esc 返回")
 	if workflow {
-		hint = i18n.T("Tab 节点  hjkl 平移  PgUp/PgDn 日志  x 结束  r 刷新  Esc 返回")
+		hint = i18n.T("Tab 节点  ←→ 页签  hjkl 平移  PgUp/PgDn 翻页  x 结束  r 刷新  Esc 返回")
 	}
 	c.PutText(r.X+1, r.Y+r.H-1, renderer.Truncate(hint, max(r.W-2, 1)), p.Theme.Style(p.Theme.TextMuted).WithDim(true))
 }

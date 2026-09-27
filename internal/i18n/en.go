@@ -115,6 +115,11 @@ var en = map[string]string{
 	"图 %d/%d 完成":     "graph %d/%d done",
 	"节点日志":           "node log",
 	"节点日志: %s":       "node log: %s",
+	"Agent 列表":       "agent list",
+	"Agent 列表: %s":   "agent list: %s",
+	"（暂无 Agent）":     "(no agents yet)",
+	"第 %d 次尝试":       "attempt %d",
+	"（第 %d 次尝试）":     " (attempt %d)",
 	"等待 workflow 图…": "waiting for the workflow graph…",
 	"选择节点后显示其输出":     "select a node to see its output",
 	"（暂无输出）":         "(no output yet)",
@@ -123,7 +128,7 @@ var en = map[string]string{
 	"未运行":            "idle",
 	"缓存":             "cached",
 	"agent %d/%d":    "agent %d/%d",
-	"Tab 节点  hjkl 平移  PgUp/PgDn 日志  x 结束  r 刷新  Esc 返回": "Tab node  hjkl pan  PgUp/PgDn log  x kill  r refresh  esc return",
+	"Tab 节点  ←→ 页签  hjkl 平移  PgUp/PgDn 翻页  x 结束  r 刷新  Esc 返回": "Tab node  ←→ tab  hjkl pan  PgUp/PgDn scroll  x kill  r refresh  esc return",
 
 	// ---- 会话/提示 ----
 	"已复制 %d 个字符":    "Copied %d characters",

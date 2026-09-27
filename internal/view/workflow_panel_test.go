@@ -58,8 +58,8 @@ func drawWorkflowPanel(t *testing.T, m *model.AppModel) (*renderer.Buffer, rende
 	return b, renderer.NewRect(left+1, 0, workflowTestW-left-1, workflowTestH-1)
 }
 
-// workflowPreviewPanes 返回（图分栏, 日志分栏）在缓冲里的区域：与
-// drawWorkflowPreview 的分栏规则一致（日志约占三分之一，其余给图）。
+// workflowPreviewPanes 返回（图分栏, 下栏）在缓冲里的区域：与
+// drawWorkflowPreview 的分栏规则一致（下栏约占三分之一，其余给图）。
 func workflowPreviewPanes(t *testing.T, b *renderer.Buffer, preview renderer.Rect) (renderer.Rect, renderer.Rect) {
 	t.Helper()
 	inner := renderer.NewRect(preview.X+1, preview.Y+1, preview.W-2, preview.H-2)
@@ -67,12 +67,12 @@ func workflowPreviewPanes(t *testing.T, b *renderer.Buffer, preview renderer.Rec
 	if content.H < 1 || content.W < 1 {
 		t.Fatalf("preview content too small: %#v", content)
 	}
-	logH := workflowLogPaneHeight(content.H)
-	if logH == 0 {
-		t.Fatalf("log pane must be drawn at %d rows", content.H)
+	paneH := workflowPaneHeight(content.H)
+	if paneH == 0 {
+		t.Fatalf("lower pane must be drawn at %d rows", content.H)
 	}
-	return renderer.NewRect(content.X, content.Y, content.W, content.H-logH),
-		renderer.NewRect(content.X, content.Y+content.H-logH, content.W, logH)
+	return renderer.NewRect(content.X, content.Y, content.W, content.H-paneH),
+		renderer.NewRect(content.X, content.Y+content.H-paneH, content.W, paneH)
 }
 
 // regionRows 把缓冲区域按行拼成文本（跳过宽字符续列），与 bufferText 同构。
@@ -93,14 +93,15 @@ func regionRows(b *renderer.Buffer, r renderer.Rect) []string {
 }
 
 // TestWorkflowPreviewRendersGraphAndLogPanes 验证 workflow 终端的预览被替换成
-// 上下分栏：上分栏为图（节点显示名）、下分栏为选中节点的终值结果与输出行；
-// 两个分栏都不带焦点标记，并把分栏内尺寸写回模型（半屏平移/翻页步长要用）。
+// 上下分栏：上分栏为图（节点显示名）、下栏是页签条 + 激活页正文（默认节点日志：
+// 选中节点的终值结果与输出行）；两个分栏都不带焦点标记，并把分栏内尺寸写回模型
+// （半屏平移/翻页步长要用）。
 func TestWorkflowPreviewRendersGraphAndLogPanes(t *testing.T) {
 	useEnglish(t)
 	m := workflowPreview(t)
 	b, preview := drawWorkflowPanel(t, m)
-	graphRect, logRect := workflowPreviewPanes(t, b, preview)
-	graphRows, logRows := regionRows(b, graphRect), regionRows(b, logRect)
+	graphRect, paneRect := workflowPreviewPanes(t, b, preview)
+	graphRows, paneRows := regionRows(b, graphRect), regionRows(b, paneRect)
 
 	if !strings.Contains(strings.Join(graphRows, "\n"), "采集") {
 		t.Fatalf("graph pane must show node labels: %q", graphRows)
@@ -108,18 +109,18 @@ func TestWorkflowPreviewRendersGraphAndLogPanes(t *testing.T) {
 	if !strings.Contains(strings.Join(graphRows, "\n"), "汇总") {
 		t.Fatalf("graph pane must show the second node: %q", graphRows)
 	}
-	// 日志分栏：标题带节点名，正文是 "→ 终值" 与输出行。
-	if !strings.Contains(logRows[0], "采集") {
-		t.Fatalf("log pane title must name the selected node: %q", logRows[0])
+	// 下栏首行是页签条：每个页签都带上选中节点的名字。
+	if !strings.Contains(paneRows[0], "采集") {
+		t.Fatalf("pane tab strip must name the selected node: %q", paneRows[0])
 	}
-	logText := strings.Join(logRows, "\n")
+	paneText := strings.Join(paneRows, "\n")
 	for _, want := range []string{"→ 42", "第一行", "第二行"} {
-		if !strings.Contains(logText, want) {
-			t.Fatalf("log pane missing %q: %q", want, logRows)
+		if !strings.Contains(paneText, want) {
+			t.Fatalf("log page missing %q: %q", want, paneRows)
 		}
 	}
-	// 没有"焦点分栏"：两栏都不带 "▸" 标记，图与日志随时可操作。
-	for name, rows := range map[string][]string{"graph": graphRows, "log": logRows} {
+	// 没有"焦点分栏"：两栏都不带 "▸" 标记，图与下栏随时可操作。
+	for name, rows := range map[string][]string{"graph": graphRows, "pane": paneRows} {
 		if strings.Contains(rows[0], "▸") {
 			t.Fatalf("%s pane must not carry a focus marker: %q", name, rows[0])
 		}
@@ -129,8 +130,74 @@ func TestWorkflowPreviewRendersGraphAndLogPanes(t *testing.T) {
 		t.Fatalf("graph pane inner size = %dx%d, want %dx%d",
 			m.ShellWorkflowCols, m.ShellWorkflowRows, graphRect.W-2, graphRect.H-2)
 	}
-	if m.ShellWorkflowLogRows != logRect.H-2 {
-		t.Fatalf("log pane inner height = %d, want %d", m.ShellWorkflowLogRows, logRect.H-2)
+	if m.ShellWorkflowLogRows != paneRect.H-2 {
+		t.Fatalf("lower pane inner height = %d, want %d", m.ShellWorkflowLogRows, paneRect.H-2)
+	}
+}
+
+// TestWorkflowPaneTabsAndAgentList 验证下栏的页签条与 Agent 列表页：默认激活
+// "节点日志"（页签名带方括号），←→ 切页后正文换成 agent 行——序号、本地化状态
+// 与提示词摘要（重试过附上尝试次数），日志内容不再出现。
+func TestWorkflowPaneTabsAndAgentList(t *testing.T) {
+	useEnglish(t)
+	m := workflowPreview(t)
+	apply := func(ev *acp.WorkflowEvent) {
+		ev.TerminalID = "@temp/run/7"
+		m.Active.ApplyWorkflowEvent(ev)
+	}
+	apply(&acp.WorkflowEvent{
+		Kind: acp.WorkflowKindAgentsStart, RunID: "@temp/run/7", NodeID: "collect",
+		Count: 2, Prompts: []string{"甲", "乙"},
+	})
+	apply(&acp.WorkflowEvent{
+		Kind: acp.WorkflowKindAgent, RunID: "@temp/run/7", NodeID: "collect",
+		AgentIndex: 1, AgentCount: 2, State: "success", Attempt: 2,
+	})
+
+	b, preview := drawWorkflowPanel(t, m)
+	_, paneRect := workflowPreviewPanes(t, b, preview)
+	rows := regionRows(b, paneRect)
+	if !strings.Contains(rows[0], "[node log: 采集]") || !strings.Contains(rows[0], "agent list: 采集") {
+		t.Fatalf("log page must be active in the tab strip: %q", rows[0])
+	}
+	if text := strings.Join(rows, "\n"); !strings.Contains(text, "第一行") {
+		t.Fatalf("log page content = %q", rows)
+	}
+
+	// 切到 Agent 列表页：方括号跟着搬家，正文换成 agent 行。
+	if !m.SwitchWorkflowPane(1) {
+		t.Fatal("switching the pane tab must be handled")
+	}
+	b, preview = drawWorkflowPanel(t, m)
+	_, paneRect = workflowPreviewPanes(t, b, preview)
+	rows = regionRows(b, paneRect)
+	if !strings.Contains(rows[0], "[agent list: 采集]") || strings.Contains(rows[0], "[node log: 采集]") {
+		t.Fatalf("agent page must be active in the tab strip: %q", rows[0])
+	}
+	text := strings.Join(rows, "\n")
+	for _, want := range []string{"#1", "waiting", "甲", "#2", "finished", "(attempt 2)"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("agent page missing %q: %q", want, rows)
+		}
+	}
+	if strings.Contains(text, "第一行") {
+		t.Fatalf("agent page must not show the node log: %q", rows)
+	}
+}
+
+// TestWorkflowAgentPageEmptyHint 验证 Agent 列表页在节点还没有 agent 时的占位提示
+// （页签仍可切换，正文给一句提示而不是空白页）。
+func TestWorkflowAgentPageEmptyHint(t *testing.T) {
+	useEnglish(t)
+	m := workflowPreview(t)
+	if !m.SwitchWorkflowPane(1) {
+		t.Fatal("switching the pane tab must be handled")
+	}
+	b, preview := drawWorkflowPanel(t, m)
+	_, paneRect := workflowPreviewPanes(t, b, preview)
+	text := strings.Join(regionRows(b, paneRect), "\n")
+	if !strings.Contains(text, i18n.T("（暂无 Agent）")) {
+		t.Fatalf("agent page must hint that no agent started yet: %q", text)
 	}
 }
 
@@ -248,18 +315,18 @@ func TestWorkflowGraphPaneWaitingHint(t *testing.T) {
 	}
 }
 
-// TestWorkflowLogPaneHeight 验证日志分栏高度规则：预览太矮时只画图，
+// TestWorkflowPaneHeight 验证下栏高度规则：预览太矮时只画图，
 // 否则约占三分之一且至少 4 行（同时给图分栏留 3 行）。
-func TestWorkflowLogPaneHeight(t *testing.T) {
+func TestWorkflowPaneHeight(t *testing.T) {
 	cases := map[int]int{0: 0, 5: 0, 6: 3, 12: 4, 20: 6, 21: 7}
 	for height, want := range cases {
-		if got := workflowLogPaneHeight(height); got != want {
-			t.Fatalf("workflowLogPaneHeight(%d) = %d, want %d", height, got, want)
+		if got := workflowPaneHeight(height); got != want {
+			t.Fatalf("workflowPaneHeight(%d) = %d, want %d", height, got, want)
 		}
 	}
 }
 
-// TestWorkflowNodeOutputOrdersResultBeforeLogs 验证日志分栏内容：终值结果按行
+// TestWorkflowNodeOutputOrdersResultBeforeLogs 验证节点日志页内容：终值结果按行
 // 铺开并加 "→ " 前缀（算作结果行），节点输出行附在其后。
 func TestWorkflowNodeOutputOrdersResultBeforeLogs(t *testing.T) {
 	lines, resultLines := workflowNodeOutput(&model.WorkflowNode{

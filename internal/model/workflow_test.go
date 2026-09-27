@@ -251,8 +251,8 @@ func TestWorkflowStatusKeepsCursorAndDropsStaleNodes(t *testing.T) {
 }
 
 // TestWorkflowCursorControls 验证面板按键对应的游标操作：hjkl 按半屏平移画布、
-// PgUp/PgDn 翻一页节点日志、Tab 换节点（环绕）并在换节点后把日志回到最新；
-// 平移与日志滚动都不为负。
+// PgUp/PgDn 翻一页下栏当前页签的内容、Tab 换节点（环绕）并在换节点后把下栏
+// 回到最新；平移与滚动都不为负。
 func TestWorkflowCursorControls(t *testing.T) {
 	m := workflowModel()
 	applyWorkflow(m, &acp.WorkflowEvent{
@@ -281,30 +281,30 @@ func TestWorkflowCursorControls(t *testing.T) {
 	}
 	w.PanX, w.PanY = 0, 0
 
-	// PgUp/PgDn 翻一页日志：步长取日志分栏内高留一行重叠；向上不为负。
+	// PgUp/PgDn 翻一页日志：步长取下栏内高留一行重叠；向上不为负。
 	m.ShellWorkflowLogRows = 8
-	if !m.ScrollWorkflowLogPage(1) || w.LogScroll != 7 {
+	if !m.ScrollWorkflowPanePage(1) || w.LogScroll != 7 {
 		t.Fatalf("log page scroll = %d, want 7", w.LogScroll)
 	}
 	// 滚轮按行微调。
-	if !m.ScrollWorkflowLog(3) || w.LogScroll != 10 {
+	if !m.ScrollWorkflowPane(3) || w.LogScroll != 10 {
 		t.Fatalf("log line scroll = %d, want 10", w.LogScroll)
 	}
-	m.ScrollWorkflowLogPage(-10)
+	m.ScrollWorkflowPanePage(-10)
 	if w.LogScroll != 0 {
 		t.Fatalf("log scroll must clamp at 0, got %d", w.LogScroll)
 	}
-	// 日志分栏尺寸未知时退化为单行，不会静默不动作。
+	// 下栏尺寸未知时退化为单行，不会静默不动作。
 	m.ShellWorkflowLogRows = 0
-	if !m.ScrollWorkflowLogPage(1) || w.LogScroll != 1 {
+	if !m.ScrollWorkflowPanePage(1) || w.LogScroll != 1 {
 		t.Fatalf("unknown log pane size must scroll one line, got %d", w.LogScroll)
 	}
 	w.LogScroll = 0
 
-	// 节点选择环绕，并在换节点时把日志滚回最新。
-	w.LogScroll = 5
-	if !m.SelectWorkflowNode(1) || w.Selected != "merge" || w.LogScroll != 0 {
-		t.Fatalf("selection = %q logScroll = %d", w.Selected, w.LogScroll)
+	// 节点选择环绕，并在换节点时把下栏两个页签的滚动都回到最新。
+	w.LogScroll, w.AgentScroll = 5, 4
+	if !m.SelectWorkflowNode(1) || w.Selected != "merge" || w.LogScroll != 0 || w.AgentScroll != 0 {
+		t.Fatalf("selection = %q logScroll = %d agentScroll = %d", w.Selected, w.LogScroll, w.AgentScroll)
 	}
 	if !m.SelectWorkflowNode(-1) || w.Selected != "collect" {
 		t.Fatalf("selection = %q", w.Selected)
@@ -316,6 +316,91 @@ func TestWorkflowCursorControls(t *testing.T) {
 	m.SelectWorkflowNode(1)
 	if m.SelectedWorkflow().Selected != "solo" {
 		t.Fatalf("selected = %q", m.SelectedWorkflow().Selected)
+	}
+}
+
+// TestWorkflowPaneTabsAndAgentScroll 验证下栏的两个页签：←/→ 在节点日志与
+// Agent 列表间环绕切换，两个页签各自记住滚动位置，翻页/滚轮只作用在当前页签，
+// 换节点时两个页签都回到最新。
+func TestWorkflowPaneTabsAndAgentScroll(t *testing.T) {
+	m := workflowModel()
+	applyWorkflow(m, &acp.WorkflowEvent{
+		Kind: acp.WorkflowKindSnapshot, RunID: "@temp/run/7", TerminalID: "@temp/run/7", Graph: workflowGraph(),
+	})
+	applyWorkflow(m, &acp.WorkflowEvent{
+		Kind: acp.WorkflowKindAgentsStart, RunID: "@temp/run/7", NodeID: "collect", Count: 3, Prompts: []string{"甲", "乙", "丙"},
+	})
+	w := m.SelectedWorkflow()
+	if w.Pane != WorkflowPaneLog {
+		t.Fatalf("pane = %v, want the log page", w.Pane)
+	}
+	// 右到底再右一次环绕回日志页，左键同理反向环绕。
+	if !m.SwitchWorkflowPane(1) || w.Pane != WorkflowPaneAgents {
+		t.Fatalf("pane = %v, want the agent page", w.Pane)
+	}
+	if !m.SwitchWorkflowPane(1) || w.Pane != WorkflowPaneLog {
+		t.Fatalf("pane must wrap forward to logs, got %v", w.Pane)
+	}
+	if !m.SwitchWorkflowPane(-1) || w.Pane != WorkflowPaneAgents {
+		t.Fatalf("pane must wrap backward to agents, got %v", w.Pane)
+	}
+
+	// Agent 页上翻页/滚轮只动 Agent 列表，日志偏移保持原样。
+	m.ShellWorkflowLogRows = 8
+	w.LogScroll = 3
+	if !m.ScrollWorkflowPanePage(-1) || w.AgentScroll != 0 || w.LogScroll != 3 {
+		t.Fatalf("agent pane must clamp at 0: agentScroll=%d logScroll=%d", w.AgentScroll, w.LogScroll)
+	}
+	if !m.ScrollWorkflowPanePage(1) || w.AgentScroll != 7 || w.LogScroll != 3 {
+		t.Fatalf("agent page scroll = %d logScroll = %d", w.AgentScroll, w.LogScroll)
+	}
+	if !m.ScrollWorkflowPane(2) || w.AgentScroll != 9 {
+		t.Fatalf("agent line scroll = %d", w.AgentScroll)
+	}
+	// 切回日志页后同样的按键落在日志上。
+	if !m.SwitchWorkflowPane(-1) || w.Pane != WorkflowPaneLog {
+		t.Fatalf("pane = %v, want back on logs", w.Pane)
+	}
+	if !m.ScrollWorkflowPane(4) || w.LogScroll != 7 || w.AgentScroll != 9 {
+		t.Fatalf("log scroll = %d agentScroll = %d", w.LogScroll, w.AgentScroll)
+	}
+	// 换节点：图下方栏整体回到最新状态。
+	if !m.SelectWorkflowNode(1) || w.LogScroll != 0 || w.AgentScroll != 0 {
+		t.Fatalf("node switch must reset both pages: log=%d agents=%d", w.LogScroll, w.AgentScroll)
+	}
+}
+
+// TestWorkflowPreviewResetOnTerminalSwitch 验证切走再切回 workflow 终端时预览
+// 回到起点：画布平移与下栏两个页签的滚动都清零，选中节点与当前页签保留
+// （便于在列表里来回比较同一个节点）。
+func TestWorkflowPreviewResetOnTerminalSwitch(t *testing.T) {
+	m := workflowModel()
+	applyWorkflow(m, &acp.WorkflowEvent{
+		Kind: acp.WorkflowKindSnapshot, RunID: "@temp/run/7", TerminalID: "@temp/run/7", Graph: workflowGraph(),
+	})
+	m.Active.ApplyTerminalInfo(acp.TerminalInfo{TerminalID: "@temp/run/1", Kind: "shell", Command: "make", Status: "running"})
+	m.ShellPanel = true
+	// 普通 shell 后并入，排在活动段最前：选中第 1 项才是 workflow 终端。
+	m.ShellSelected = 1
+	w := m.SelectedWorkflow()
+	if w == nil {
+		t.Fatal("workflow terminal must be selected")
+	}
+	w.PanX, w.PanY, w.LogScroll, w.AgentScroll = 3, 2, 5, 4
+	w.Pane = WorkflowPaneAgents
+
+	// 先在普通 shell 上停留，再切回 workflow 终端。
+	m.ShellSelected = 0
+	if m.SelectedWorkflow() != nil {
+		t.Fatal("plain shell must not expose workflow state")
+	}
+	m.ShellSelected = 1
+	m.ResetShellPreviewScroll()
+	if w.PanX != 0 || w.PanY != 0 || w.LogScroll != 0 || w.AgentScroll != 0 {
+		t.Fatalf("switch must reset the preview: pan=%d,%d log=%d agents=%d", w.PanX, w.PanY, w.LogScroll, w.AgentScroll)
+	}
+	if w.Selected != "collect" || w.Pane != WorkflowPaneAgents {
+		t.Fatalf("selection and tab must survive a switch: selected=%q pane=%v", w.Selected, w.Pane)
 	}
 }
 
@@ -336,7 +421,8 @@ func TestWorkflowControlsIgnorePlainTerminals(t *testing.T) {
 	if m.SelectedWorkflow() != nil {
 		t.Fatal("plain shell must not expose workflow state")
 	}
-	if m.SelectWorkflowNode(1) || m.PanWorkflow(1, 1) || m.ScrollWorkflowLog(3) || m.ScrollWorkflowLogPage(1) {
+	if m.SelectWorkflowNode(1) || m.PanWorkflow(1, 1) || m.ScrollWorkflowPane(3) ||
+		m.ScrollWorkflowPanePage(1) || m.SwitchWorkflowPane(1) {
 		t.Fatal("workflow controls must be ignored for plain shells")
 	}
 	// 普通 shell 的 IsWorkflow 为 false（避免面板误走 workflow 渲染）。

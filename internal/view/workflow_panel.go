@@ -63,43 +63,44 @@ func workflowCellColor(palette map[int]renderer.Color, idx int) renderer.Color {
 	return renderer.ColorDefault
 }
 
-// drawWorkflowPreview 渲染 workflow 终端的预览内容区：图分栏（上）与选中节点的
-// 日志分栏（下）。两个分栏没有"焦点"概念——画布随时可用 h/j/k/l 平移、日志随时
-// 可用 PgUp/PgDn 翻页，因此不需要高亮边框来提示当前作用在哪个分栏。
+// drawWorkflowPreview 渲染 workflow 终端的预览内容区：图分栏（上）与下栏（下）。
+// 下栏是选中节点的两个页签——节点日志与 Agent 列表，←→ 切换（见 drawWorkflowPane）；
+// 分栏没有"焦点"概念：画布随时可用 h/j/k/l 平移、下栏随时可用 PgUp/PgDn 翻页，
+// 因此不需要高亮边框来提示当前作用在哪个分栏。
 // 绘制时顺带把分栏内尺寸写回模型，供"半屏平移 / 一屏翻页"的步长使用。
 func (p *ShellPanel) drawWorkflowPreview(c *renderer.Canvas, r renderer.Rect, s *model.TerminalState, m *model.AppModel) {
 	w := s.Workflow
 	if w == nil || r.W < 2 || r.H < 2 {
 		return
 	}
-	logHeight := workflowLogPaneHeight(r.H)
-	graphHeight := r.H - logHeight
+	paneHeight := workflowPaneHeight(r.H)
+	graphHeight := r.H - paneHeight
 	p.drawWorkflowGraph(c, renderer.NewRect(r.X, r.Y, r.W, graphHeight), w, m)
-	if logHeight > 0 {
-		p.drawWorkflowLog(c, renderer.NewRect(r.X, r.Y+graphHeight, r.W, logHeight), w, m)
+	if paneHeight > 0 {
+		p.drawWorkflowPane(c, renderer.NewRect(r.X, r.Y+graphHeight, r.W, paneHeight), w, m)
 	}
 }
 
-// workflowLogPaneHeight 返回日志分栏高度：约占预览的三分之一，太矮时干脆只画图
-// （预览框小到分栏会互相挤占时不留日志分栏）。
-func workflowLogPaneHeight(height int) int {
+// workflowPaneHeight 返回图下方那一栏的高度：约占预览的三分之一，太矮时干脆只画图
+// （预览框小到分栏会互相挤占时不留该栏）。
+func workflowPaneHeight(height int) int {
 	if height < 6 {
 		return 0
 	}
-	logHeight := height / 3
-	if logHeight < 4 {
-		logHeight = 4
+	paneHeight := height / 3
+	if paneHeight < 4 {
+		paneHeight = 4
 	}
-	if logHeight > height-3 {
-		logHeight = height - 3
+	if paneHeight > height-3 {
+		paneHeight = height - 3
 	}
-	return logHeight
+	return paneHeight
 }
 
 // drawWorkflowGraph 绘制图分栏：按 PanY/PanX 平移 tflow 布局好的网格，
 // 选中节点用主题高亮底标出（节点级高亮本身就是"看哪里"的提示，分栏不再有焦点）。
 func (p *ShellPanel) drawWorkflowGraph(c *renderer.Canvas, r renderer.Rect, w *model.WorkflowState, m *model.AppModel) {
-	p.workflowPaneBox(c, r, workflowGraphTitle(w))
+	p.workflowPaneBox(c, r, workflowGraphTitle(w), nil)
 	inner := renderer.NewRect(r.X+1, r.Y+1, r.W-2, r.H-2)
 	if inner.W < 1 || inner.H < 1 {
 		return
@@ -314,20 +315,16 @@ func workflowGridWidth(grid [][]tflow.Cell) int {
 	return width
 }
 
-// drawWorkflowLog 绘制日志分栏：显示选中节点的终值结果与输出行，按 LogScroll
-// 从末尾往回看（0 = 停在最新一行）。
-func (p *ShellPanel) drawWorkflowLog(c *renderer.Canvas, r renderer.Rect, w *model.WorkflowState, m *model.AppModel) {
+// drawWorkflowPane 绘制图下方那一栏：上边框里嵌两个页签（节点日志 / Agent 列表，
+// 类似 notebook 的两个页面，←→ 切换），正文按当前页签渲染选中节点的内容。
+func (p *ShellPanel) drawWorkflowPane(c *renderer.Canvas, r renderer.Rect, w *model.WorkflowState, m *model.AppModel) {
 	node := w.SelectedNode()
-	title := i18n.T("节点日志")
-	if node != nil {
-		title = i18n.T("节点日志: %s", node.Label())
-	}
-	p.workflowPaneBox(c, r, title)
+	p.workflowPaneBox(c, r, "", workflowPaneTabs(w, node))
 	inner := renderer.NewRect(r.X+1, r.Y+1, r.W-2, r.H-2)
 	if inner.W < 1 || inner.H < 1 {
 		return
 	}
-	// 日志翻页（PgUp/PgDn）的步长是"一屏"：同样把分栏内高记回模型。
+	// 下栏翻页（PgUp/PgDn）的步长是"一屏"：把分栏内高记回模型。
 	if m != nil {
 		m.ShellWorkflowLogRows = inner.H
 	}
@@ -335,6 +332,37 @@ func (p *ShellPanel) drawWorkflowLog(c *renderer.Canvas, r renderer.Rect, w *mod
 		c.PutText(inner.X, inner.Y, renderer.Truncate(i18n.T("选择节点后显示其输出"), inner.W), p.Theme.Style(p.Theme.TextMuted).WithDim(true))
 		return
 	}
+	if w.Pane == model.WorkflowPaneAgents {
+		p.drawWorkflowAgents(c, inner, w, node)
+		return
+	}
+	p.drawWorkflowLog(c, inner, w, node)
+}
+
+// workflowPaneTabs 生成下栏的页签：节点日志与 Agent 列表，激活页带方括号标记
+// （见 workflowTabStrip）；页签名带上选中节点，切页后一眼能看出在看哪个节点。
+func workflowPaneTabs(w *model.WorkflowState, node *model.WorkflowNode) []workflowTab {
+	label := ""
+	if node != nil {
+		label = node.Label()
+	}
+	tab := func(name string, active bool) workflowTab {
+		if label != "" {
+			// 用 "页签名: %s" 这种整键查表，英文下才能整条换成 "node log: 采集"；
+			// 拼 "%s: %s" 会绕过词条表，让中文页签名漏进英文界面。
+			name = i18n.T(name+": %s", label)
+		}
+		return workflowTab{Title: name, Active: active}
+	}
+	return []workflowTab{
+		tab(i18n.T("节点日志"), w.Pane == model.WorkflowPaneLog),
+		tab(i18n.T("Agent 列表"), w.Pane == model.WorkflowPaneAgents),
+	}
+}
+
+// drawWorkflowLog 绘制日志页正文：选中节点的终值结果与输出行，按 LogScroll
+// 从末尾往回看（0 = 停在最新一行）。
+func (p *ShellPanel) drawWorkflowLog(c *renderer.Canvas, inner renderer.Rect, w *model.WorkflowState, node *model.WorkflowNode) {
 	lines, resultLines := workflowNodeOutput(node)
 	if len(lines) == 0 {
 		c.PutText(inner.X, inner.Y, renderer.Truncate(i18n.T("（暂无输出）"), inner.W), p.Theme.Style(p.Theme.TextMuted).WithDim(true))
@@ -345,7 +373,7 @@ func (p *ShellPanel) drawWorkflowLog(c *renderer.Canvas, r renderer.Rect, w *mod
 	}
 	start := max(len(lines)-inner.H-w.LogScroll, 0)
 	textWidth := inner.W
-	if len(lines) > inner.H {
+	if len(lines) > inner.H && inner.W > 1 {
 		// 内容超出时最右一列留给滚动条。
 		textWidth = inner.W - 1
 	}
@@ -356,16 +384,111 @@ func (p *ShellPanel) drawWorkflowLog(c *renderer.Canvas, r renderer.Rect, w *mod
 		}
 		c.PutText(inner.X, inner.Y+i, renderer.Truncate(lines[start+i], textWidth), style)
 	}
-	if textWidth < inner.W {
-		(&widget.Scrollbar{
-			Total: len(lines), View: inner.H, Top: start,
-			Track: p.Theme.Style(p.Theme.BorderSubtle),
-			Thumb: p.Theme.Style(p.Theme.Border),
-		}).Draw(c, renderer.NewRect(inner.X+inner.W-1, inner.Y, 1, inner.H))
+	p.workflowScrollbar(c, inner, len(lines), start, textWidth)
+}
+
+// drawWorkflowAgents 绘制 Agent 列表页：选中节点启动的每个 agent 一行——序号、
+// 状态（按状态着色）与提示词摘要；行数超出时按 AgentScroll 从末尾往回看。
+func (p *ShellPanel) drawWorkflowAgents(c *renderer.Canvas, inner renderer.Rect, w *model.WorkflowState, node *model.WorkflowNode) {
+	if len(node.Agents) == 0 {
+		c.PutText(inner.X, inner.Y, renderer.Truncate(i18n.T("（暂无 Agent）"), inner.W), p.Theme.Style(p.Theme.TextMuted).WithDim(true))
+		return
+	}
+	if maxScroll := max(len(node.Agents)-inner.H, 0); w.AgentScroll > maxScroll {
+		w.AgentScroll = maxScroll
+	}
+	start := max(len(node.Agents)-inner.H-w.AgentScroll, 0)
+	textWidth := inner.W
+	if len(node.Agents) > inner.H && inner.W > 1 {
+		textWidth = inner.W - 1
+	}
+	palette := workflowPalette(p.Theme)
+	for i := 0; i < inner.H && start+i < len(node.Agents); i++ {
+		p.drawWorkflowAgentRow(c, inner.X, inner.Y+i, textWidth, node.Agents[start+i], palette)
+	}
+	p.workflowScrollbar(c, inner, len(node.Agents), start, textWidth)
+}
+
+// Agent 列表页的列位：序号占 0 列起，状态对齐到第 4 列，提示词从第 12 列起——
+// 状态文案最长 6 列，中英文都不会与提示词挤在一起。
+const (
+	workflowAgentStateColumn  = 4
+	workflowAgentPromptColumn = 12
+)
+
+// drawWorkflowAgentRow 画一行 agent：序号（暗色）、状态（按状态着色）、提示词摘要。
+func (p *ShellPanel) drawWorkflowAgentRow(c *renderer.Canvas, x, y, width int, agent model.WorkflowAgent, palette map[int]renderer.Color) {
+	c.PutText(x, y, renderer.Truncate(fmt.Sprintf("#%d", agent.Index+1), width), p.Theme.Style(p.Theme.TextMuted))
+	if width > workflowAgentStateColumn {
+		style := p.Theme.Style(workflowCellColor(palette, workflowAgentColor(agent.State)))
+		c.PutText(x+workflowAgentStateColumn, y,
+			renderer.Truncate(workflowAgentStateLabel(agent.State), width-workflowAgentStateColumn), style)
+	}
+	if width <= workflowAgentPromptColumn {
+		return
+	}
+	if detail := workflowAgentDetail(agent); detail != "" {
+		c.PutText(x+workflowAgentPromptColumn, y,
+			renderer.Truncate(detail, width-workflowAgentPromptColumn), p.Theme.Style(p.Theme.Text))
 	}
 }
 
-// workflowNodeOutput 返回节点日志分栏的行：终值结果在前（多行按行铺开、加 "→ "
+// workflowAgentStateLabel 把 agent 状态映射为本地化文案。
+func workflowAgentStateLabel(state string) string {
+	switch state {
+	case "running":
+		return i18n.T("运行中")
+	case "success":
+		return i18n.T("已完成")
+	case "failure":
+		return i18n.T("失败")
+	default:
+		return i18n.T("等待")
+	}
+}
+
+// workflowAgentColor 按 agent 状态取色号（等待 / 运行中 / 成功 / 失败）。
+func workflowAgentColor(state string) int {
+	switch state {
+	case "running":
+		return wfColorRunning
+	case "success":
+		return wfColorDone
+	case "failure":
+		return wfColorError
+	default:
+		return wfColorWaiting
+	}
+}
+
+// workflowAgentDetail 返回 agent 行的提示词摘要：压成一行（换行与连续空白折叠），
+// 过长由渲染层截断；重试过的调用附上尝试次数。
+func workflowAgentDetail(agent model.WorkflowAgent) string {
+	text := strings.Join(strings.Fields(agent.Prompt), " ")
+	if agent.Attempt > 1 {
+		if text == "" {
+			return i18n.T("第 %d 次尝试", agent.Attempt)
+		}
+		// 译文自带前导空格（中英排版需要），这里不再补空格，否则英文会出现双空格。
+		return text + i18n.T("（第 %d 次尝试）", agent.Attempt)
+	}
+	return text
+}
+
+// workflowScrollbar 在分栏最右一列画滚动条：只有内容确实超出（渲染层把正文宽度
+// 让出了一列）时才画，避免占满内容时右侧多出一条线。
+func (p *ShellPanel) workflowScrollbar(c *renderer.Canvas, inner renderer.Rect, total, top, textWidth int) {
+	if textWidth >= inner.W || inner.W < 1 {
+		return
+	}
+	(&widget.Scrollbar{
+		Total: total, View: inner.H, Top: top,
+		Track: p.Theme.Style(p.Theme.BorderSubtle),
+		Thumb: p.Theme.Style(p.Theme.Border),
+	}).Draw(c, renderer.NewRect(inner.X+inner.W-1, inner.Y, 1, inner.H))
+}
+
+// workflowNodeOutput 返回节点日志页的行：终值结果在前（多行按行铺开、加 "→ "
 // 前缀），随后是节点线程的输出行。resultLines 是结果行数，用于区分文字样式。
 func workflowNodeOutput(node *model.WorkflowNode) (lines []string, resultLines int) {
 	if node.Result != "" {
@@ -396,9 +519,16 @@ func workflowGraphTitle(w *model.WorkflowState) string {
 	return title
 }
 
-// workflowPaneBox 画 workflow 预览的分栏边框，标题嵌在上边框里。两个分栏用同一套
-// 弱边框与标题样式：不再有"焦点分栏"，图与日志都可以随时操作。
-func (p *ShellPanel) workflowPaneBox(c *renderer.Canvas, r renderer.Rect, title string) {
+// workflowTab 是下栏的一个页签：标题与是否处于激活态。
+type workflowTab struct {
+	Title  string
+	Active bool
+}
+
+// workflowPaneBox 画 workflow 预览的分栏边框，标题嵌在上边框里。tabs 非空时标题
+// 位置改画页签条（见 workflowTabStrip）；两个分栏用同一套弱边框与标题样式：
+// 不再有"焦点分栏"，图与下栏的页签都可以随时操作。
+func (p *ShellPanel) workflowPaneBox(c *renderer.Canvas, r renderer.Rect, title string, tabs []workflowTab) {
 	if r.W < 2 || r.H < 2 {
 		return
 	}
@@ -416,6 +546,10 @@ func (p *ShellPanel) workflowPaneBox(c *renderer.Canvas, r renderer.Rect, title 
 		c.Put(r.X, y, renderer.CellRune('│', borderStyle))
 		c.Put(r.X+r.W-1, y, renderer.CellRune('│', borderStyle))
 	}
+	if len(tabs) > 0 {
+		p.workflowTabStrip(c, r, tabs)
+		return
+	}
 	if title == "" || r.W <= 6 {
 		return
 	}
@@ -424,4 +558,31 @@ func (p *ShellPanel) workflowPaneBox(c *renderer.Canvas, r renderer.Rect, title 
 		return
 	}
 	c.PutText(r.X+1, r.Y, label, titleStyle)
+}
+
+// workflowTabStrip 在上边框里画页签条：激活页用方括号与常规文字色标出，其余页
+// 暗色；一次性铺满整条上边框的可用宽度，放不下的页签从右往左截断。
+func (p *ShellPanel) workflowTabStrip(c *renderer.Canvas, r renderer.Rect, tabs []workflowTab) {
+	if r.W <= 6 {
+		return
+	}
+	activeStyle := p.Theme.Style(p.Theme.Text).WithBold(true)
+	idleStyle := p.Theme.Style(p.Theme.TextMuted).WithDim(true)
+	// 每个页签前留一格与左/上一个页签分隔：图下方的栏不画标题，页签条就是标题。
+	x, limit := r.X+1, r.X+r.W-1
+	for _, tab := range tabs {
+		if x >= limit {
+			return
+		}
+		text, style := tab.Title, idleStyle
+		if tab.Active {
+			text, style = "["+tab.Title+"]", activeStyle
+		}
+		text = renderer.Truncate(" "+text, limit-x)
+		if text == "" {
+			return
+		}
+		c.PutText(x, r.Y, text, style)
+		x += renderer.StringWidth(text)
+	}
 }

@@ -17,6 +17,20 @@ import (
 // 更早的行被丢弃，避免长跑 workflow 的日志无限占用内存。
 const workflowNodeLogLines = 200
 
+// WorkflowPane 是图下方那一栏的页签（类似 notebook 的两个页面）：节点日志与该
+// 节点启动的 Agent 列表，一次只显示一页，←→ 切换。
+type WorkflowPane int
+
+const (
+	// WorkflowPaneLog 是节点日志页：终值结果 + 节点输出行。
+	WorkflowPaneLog WorkflowPane = iota
+	// WorkflowPaneAgents 是 Agent 列表页：该节点启动的每个 agent 的状态。
+	WorkflowPaneAgents
+)
+
+// workflowPaneCount 是页签数量（切页时用于环绕）。
+const workflowPaneCount = int(WorkflowPaneAgents) + 1
+
 // WorkflowAgent 是节点内一次 Agent 调用的状态（agent 事件）。
 type WorkflowAgent struct {
 	Index   int
@@ -102,8 +116,9 @@ func (n *WorkflowNode) agent(index int) *WorkflowAgent {
 }
 
 // WorkflowState 是一个 workflow 终端的图状态与视图游标（挂在 TerminalState 上）。
-// 前一组字段来自协议快照/事件，后一组（Selected/PanX/PanY/LogScroll）是用户在
-// shells 面板里的浏览位置：与终端预览的 Scroll 同类，跨帧与跨刷新保留。
+// 前一组字段来自协议快照/事件，后一组（Selected/PanX/PanY/Pane/LogScroll/
+// AgentScroll）是用户在 shells 面板里的浏览位置：与终端预览的 Scroll 同类，
+// 跨帧与跨刷新保留。
 type WorkflowState struct {
 	RunID        string
 	FlowID       string // dynworkflow 的 flow id（事件 workflow 字段，缺省时服务端填 run id）
@@ -120,7 +135,7 @@ type WorkflowState struct {
 	graph *acp.WorkflowGraph
 	order []string
 
-	// Selected 是当前选中节点的 ID（日志分栏显示它的输出）。
+	// Selected 是当前选中节点的 ID（下栏两个页签显示它的内容）。
 	Selected string
 	// PanX / PanY 是图画布左上角在整张图里的偏移（列 / 行）：视图从该处开始
 	// 取窗口，因此值越大看到的越靠右下。
@@ -128,6 +143,10 @@ type WorkflowState struct {
 	PanY int
 	// LogScroll 是选中节点日志向上回看的行数（0 = 停在末尾）。
 	LogScroll int
+	// Pane 是下栏当前显示的页签（节点日志 / Agent 列表），←→ 切换。
+	Pane WorkflowPane
+	// AgentScroll 是 Agent 列表向上回看的行数（0 = 停在末尾）。
+	AgentScroll int
 }
 
 // EnsureWorkflow 返回终端的 workflow 状态，尚未建立时创建空状态。
@@ -221,8 +240,46 @@ func (w *WorkflowState) MoveSelection(delta int) {
 		return
 	}
 	w.Selected = w.order[next]
-	// 换节点后日志分栏回到最新输出（与切换终端时的预览行为一致）。
+	// 换节点后下栏的日志与 Agent 列表都回到最新输出（与切换终端时的预览行为一致）。
 	w.LogScroll = 0
+	w.AgentScroll = 0
+}
+
+// SwitchPane 切换下栏的页签（←→，带环绕）：节点日志 ⇄ Agent 列表。
+func (w *WorkflowState) SwitchPane(delta int) {
+	if w == nil || delta == 0 {
+		return
+	}
+	pane := (int(w.Pane) + delta) % workflowPaneCount
+	if pane < 0 {
+		pane += workflowPaneCount
+	}
+	w.Pane = WorkflowPane(pane)
+}
+
+// ScrollPane 按下栏当前页签滚动内容（滚轮按行、PgUp/PgDn 按屏）：delta>0 表示
+// 向上回看。两个页签各有自己的滚动偏移，来回切页不会互相影响。
+func (w *WorkflowState) ScrollPane(delta int) {
+	if w == nil || delta == 0 {
+		return
+	}
+	if w.Pane == WorkflowPaneAgents {
+		w.ScrollAgents(delta)
+		return
+	}
+	w.ScrollLog(delta)
+}
+
+// ScrollAgents 向上（delta>0）或向下调整 Agent 列表的滚动偏移；
+// 上限由渲染层按列表长度收敛。
+func (w *WorkflowState) ScrollAgents(delta int) {
+	if w == nil {
+		return
+	}
+	w.AgentScroll += delta
+	if w.AgentScroll < 0 {
+		w.AgentScroll = 0
+	}
 }
 
 // ScrollLog 向上（delta>0）或向下调整选中节点日志的滚动偏移；
@@ -627,20 +684,31 @@ func (m *AppModel) PanWorkflow(dirX, dirY int) bool {
 	return true
 }
 
-// ScrollWorkflowLog 按行滚动选中节点的日志（滚轮等小步调整）：delta>0 表示向上
-// 回看。选中终端不是 workflow 时返回 false。
-func (m *AppModel) ScrollWorkflowLog(delta int) bool {
+// SwitchWorkflowPane 切换图下方栏的页签（←→）：节点日志 ⇄ Agent 列表；
+// 选中终端不是 workflow 时返回 false。
+func (m *AppModel) SwitchWorkflowPane(delta int) bool {
 	w := m.SelectedWorkflow()
 	if w == nil || delta == 0 {
 		return false
 	}
-	w.ScrollLog(delta)
+	w.SwitchPane(delta)
 	return true
 }
 
-// ScrollWorkflowLogPage 翻一页选中节点的日志（PgUp / PgDn）：dir>0 表示向上回看。
-// 步长取日志分栏的内高（一屏），分栏尺寸还没测到时退化为单行。
-func (m *AppModel) ScrollWorkflowLogPage(dir int) bool {
+// ScrollWorkflowPane 按行滚动下栏当前页签的内容（滚轮等小步调整）：delta>0 表示
+// 向上回看。选中终端不是 workflow 时返回 false。
+func (m *AppModel) ScrollWorkflowPane(delta int) bool {
+	w := m.SelectedWorkflow()
+	if w == nil || delta == 0 {
+		return false
+	}
+	w.ScrollPane(delta)
+	return true
+}
+
+// ScrollWorkflowPanePage 翻一页下栏当前页签的内容（PgUp / PgDn）：dir>0 表示向上
+// 回看。步长取下栏的内高（一屏），尺寸还没测到时退化为单行。
+func (m *AppModel) ScrollWorkflowPanePage(dir int) bool {
 	if dir == 0 {
 		return false
 	}
@@ -648,7 +716,7 @@ func (m *AppModel) ScrollWorkflowLogPage(dir int) bool {
 	if step < 1 {
 		step = 1
 	}
-	return m.ScrollWorkflowLog(dir * step)
+	return m.ScrollWorkflowPane(dir * step)
 }
 
 // workflowPanStep 把分栏尺寸换算成一次平移的步长：半个分栏，至少 1 格。
