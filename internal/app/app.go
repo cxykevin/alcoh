@@ -392,7 +392,7 @@ type modelSnapshot struct {
 	WorkflowPanX        int      // 图画布左上角的列偏移（h/l 平移）
 	WorkflowPanY        int      // 图画布左上角的行偏移（j/k 平移）
 	WorkflowLogScroll   int      // 节点日志分栏向上回看的行数（PgUp/PgDn）
-	WorkflowPane        int      // 下栏当前页签（0 = 节点日志，1 = Agent 列表）
+	WorkflowPane        int      // 下栏当前页签（0 = Agent 列表，1 = 节点日志）
 	WorkflowAgentScroll int      // Agent 列表向上回看的行数
 	WorkflowAgents      []string // 选中节点各 agent 的状态（waiting / running / success / failure）
 	WorkflowLogs        []string // 选中节点的输出行（终值结果 + 日志）

@@ -368,6 +368,8 @@ func TestWorkflowCursorControls(t *testing.T) {
 	w.PanX, w.PanY = 0, 0
 
 	// PgUp/PgDn 翻一页日志：步长取下栏内高留一行重叠；向上不为负。
+	// 下栏默认页是 Agent 列表，这里先切到日志页再验日志翻页。
+	w.Pane = WorkflowPaneLog
 	m.ShellWorkflowLogRows = 8
 	if !m.ScrollWorkflowPanePage(1) || w.LogScroll != 7 {
 		t.Fatalf("log page scroll = %d, want 7", w.LogScroll)
@@ -405,9 +407,9 @@ func TestWorkflowCursorControls(t *testing.T) {
 	}
 }
 
-// TestWorkflowPaneTabsAndAgentScroll 验证下栏的两个页签：←/→ 在节点日志与
-// Agent 列表间环绕切换，两个页签各自记住滚动位置，翻页/滚轮只作用在当前页签，
-// 换节点时两个页签都回到最新。
+// TestWorkflowPaneTabsAndAgentScroll 验证下栏的两个页签：默认停在 Agent 列表页，
+// ←/→ 在 Agent 列表与节点日志间环绕切换，两个页签各自记住滚动位置，翻页/滚轮只
+// 作用在当前页签，换节点时两个页签都回到最新。
 func TestWorkflowPaneTabsAndAgentScroll(t *testing.T) {
 	m := workflowModel()
 	applyWorkflow(m, &acp.WorkflowEvent{
@@ -417,15 +419,19 @@ func TestWorkflowPaneTabsAndAgentScroll(t *testing.T) {
 		Kind: acp.WorkflowKindAgentsStart, RunID: "@temp/run/7", NodeID: "collect", Count: 3, Prompts: []string{"甲", "乙", "丙"},
 	})
 	w := m.SelectedWorkflow()
-	if w.Pane != WorkflowPaneLog {
-		t.Fatalf("pane = %v, want the log page", w.Pane)
-	}
-	// 右到底再右一次环绕回日志页，左键同理反向环绕。
-	if !m.SwitchWorkflowPane(1) || w.Pane != WorkflowPaneAgents {
+	// 默认页是 Agent 列表（列表在前）：打开面板先看到该节点启动了哪些 agent。
+	if w.Pane != WorkflowPaneAgents {
 		t.Fatalf("pane = %v, want the agent page", w.Pane)
 	}
+	// 右到底再右一次环绕回 Agent 列表页，左键同理反向环绕。
 	if !m.SwitchWorkflowPane(1) || w.Pane != WorkflowPaneLog {
-		t.Fatalf("pane must wrap forward to logs, got %v", w.Pane)
+		t.Fatalf("pane = %v, want the log page", w.Pane)
+	}
+	if !m.SwitchWorkflowPane(1) || w.Pane != WorkflowPaneAgents {
+		t.Fatalf("pane must wrap forward to agents, got %v", w.Pane)
+	}
+	if !m.SwitchWorkflowPane(-1) || w.Pane != WorkflowPaneLog {
+		t.Fatalf("pane must wrap backward to logs, got %v", w.Pane)
 	}
 	if !m.SwitchWorkflowPane(-1) || w.Pane != WorkflowPaneAgents {
 		t.Fatalf("pane must wrap backward to agents, got %v", w.Pane)

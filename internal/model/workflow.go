@@ -17,19 +17,20 @@ import (
 // 更早的行被丢弃，避免长跑 workflow 的日志无限占用内存。
 const workflowNodeLogLines = 200
 
-// WorkflowPane 是图下方那一栏的页签（类似 notebook 的两个页面）：节点日志与该
-// 节点启动的 Agent 列表，一次只显示一页，←→ 切换。
+// WorkflowPane 是图下方那一栏的页签（类似 notebook 的两个页面）：该节点启动的
+// Agent 列表与节点日志，一次只显示一页，←→ 切换。列表在前，所以零值（默认页）
+// 就是 Agent 列表页。
 type WorkflowPane int
 
 const (
+	// WorkflowPaneAgents 是 Agent 列表页（默认页）：该节点启动的每个 agent 的状态。
+	WorkflowPaneAgents WorkflowPane = iota
 	// WorkflowPaneLog 是节点日志页：终值结果 + 节点输出行。
-	WorkflowPaneLog WorkflowPane = iota
-	// WorkflowPaneAgents 是 Agent 列表页：该节点启动的每个 agent 的状态。
-	WorkflowPaneAgents
+	WorkflowPaneLog
 )
 
 // workflowPaneCount 是页签数量（切页时用于环绕）。
-const workflowPaneCount = int(WorkflowPaneAgents) + 1
+const workflowPaneCount = int(WorkflowPaneLog) + 1
 
 // WorkflowAgent 是节点内一次 Agent 调用的状态（agent 事件）。
 type WorkflowAgent struct {
@@ -143,7 +144,7 @@ type WorkflowState struct {
 	PanY int
 	// LogScroll 是选中节点日志向上回看的行数（0 = 停在末尾）。
 	LogScroll int
-	// Pane 是下栏当前显示的页签（节点日志 / Agent 列表），←→ 切换。
+	// Pane 是下栏当前显示的页签（Agent 列表 / 节点日志），←→ 切换；零值即默认页。
 	Pane WorkflowPane
 	// AgentScroll 是 Agent 列表向上回看的行数（0 = 停在末尾）。
 	AgentScroll int
@@ -245,7 +246,7 @@ func (w *WorkflowState) MoveSelection(delta int) {
 	w.AgentScroll = 0
 }
 
-// SwitchPane 切换下栏的页签（←→，带环绕）：节点日志 ⇄ Agent 列表。
+// SwitchPane 切换下栏的页签（←→，带环绕）：Agent 列表 ⇄ 节点日志。
 func (w *WorkflowState) SwitchPane(delta int) {
 	if w == nil || delta == 0 {
 		return
@@ -688,7 +689,7 @@ func (m *AppModel) PanWorkflow(dirX, dirY int) bool {
 	return true
 }
 
-// SwitchWorkflowPane 切换图下方栏的页签（←→）：节点日志 ⇄ Agent 列表；
+// SwitchWorkflowPane 切换图下方栏的页签（←→）：Agent 列表 ⇄ 节点日志；
 // 选中终端不是 workflow 时返回 false。
 func (m *AppModel) SwitchWorkflowPane(delta int) bool {
 	w := m.SelectedWorkflow()

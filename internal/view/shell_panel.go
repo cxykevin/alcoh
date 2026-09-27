@@ -187,8 +187,8 @@ func (p *ShellPanel) preview(c *renderer.Canvas, r renderer.Rect, s *model.Termi
 		m.ShellPreviewRows = content.H
 	}
 	if s.Workflow != nil && s.Workflow.HasGraph() {
-		// workflow 终端：图 + 节点日志替代原始输出。预览框最后一列留给 VT
-		// 侧边滚动条，这里用不上（滚动条由分栏自己按需绘制）。
+		// workflow 终端：图 + 下栏（Agent 列表 / 节点日志）替代原始输出。预览框
+		// 最后一列留给 VT 侧边滚动条，这里用不上（滚动条由分栏自己按需绘制）。
 		p.drawWorkflowPreview(c, renderer.NewRect(r.X, r.Y+1, r.W, r.H-1), s, m)
 		return
 	}

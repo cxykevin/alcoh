@@ -106,12 +106,16 @@ func agentRow(rows []string, index int) string {
 }
 
 // TestWorkflowPreviewRendersGraphAndLogPanes 验证 workflow 终端的预览被替换成
-// 上下分栏：上分栏为图（节点显示名）、下栏是页签条 + 激活页正文（默认节点日志：
-// 选中节点的终值结果与输出行）；两个分栏都不带焦点标记，并把分栏内尺寸写回模型
-// （半屏平移/翻页步长要用）。
+// 上下分栏：上分栏为图（节点显示名）、下栏是页签条 + 激活页正文（这里切到节点
+// 日志页：选中节点的终值结果与输出行）；两个分栏都不带焦点标记，并把分栏内尺寸
+// 写回模型（半屏平移/翻页步长要用）。
 func TestWorkflowPreviewRendersGraphAndLogPanes(t *testing.T) {
 	useEnglish(t)
 	m := workflowPreview(t)
+	// 下栏默认停在 Agent 列表页：这个用例验日志页正文，先切过去。
+	if !m.SwitchWorkflowPane(1) {
+		t.Fatal("switching the pane tab must be handled")
+	}
 	b, preview := drawWorkflowPanel(t, m)
 	graphRect, paneRect := workflowPreviewPanes(t, b, preview)
 	graphRows, paneRows := regionRows(b, graphRect), regionRows(b, paneRect)
@@ -149,8 +153,8 @@ func TestWorkflowPreviewRendersGraphAndLogPanes(t *testing.T) {
 }
 
 // TestWorkflowPaneTabsAndAgentList 验证下栏的页签条与 Agent 列表页：默认激活
-// "节点日志"（页签名带方括号），←→ 切页后正文换成 agent 行——序号、本地化状态
-// 与提示词摘要（重试过附上尝试次数），日志内容不再出现。
+// "Agent 列表"（页签名带方括号），正文是 agent 行——序号、本地化状态与提示词摘要
+// （重试过附上尝试次数），日志内容不再出现；← 切到节点日志页后正文换成节点输出。
 func TestWorkflowPaneTabsAndAgentList(t *testing.T) {
 	useEnglish(t)
 	m := workflowPreview(t)
@@ -175,21 +179,7 @@ func TestWorkflowPaneTabsAndAgentList(t *testing.T) {
 	b, preview := drawWorkflowPanel(t, m)
 	_, paneRect := workflowPreviewPanes(t, b, preview)
 	rows := regionRows(b, paneRect)
-	if !strings.Contains(rows[0], "[node log: 采集]") || !strings.Contains(rows[0], "agent list: 采集") {
-		t.Fatalf("log page must be active in the tab strip: %q", rows[0])
-	}
-	if text := strings.Join(rows, "\n"); !strings.Contains(text, "第一行") {
-		t.Fatalf("log page content = %q", rows)
-	}
-
-	// 切到 Agent 列表页：方括号跟着搬家，正文换成 agent 行。
-	if !m.SwitchWorkflowPane(1) {
-		t.Fatal("switching the pane tab must be handled")
-	}
-	b, preview = drawWorkflowPanel(t, m)
-	_, paneRect = workflowPreviewPanes(t, b, preview)
-	rows = regionRows(b, paneRect)
-	if !strings.Contains(rows[0], "[agent list: 采集]") || strings.Contains(rows[0], "[node log: 采集]") {
+	if !strings.Contains(rows[0], "[agent list: 采集]") || !strings.Contains(rows[0], "node log: 采集") {
 		t.Fatalf("agent page must be active in the tab strip: %q", rows[0])
 	}
 	text := strings.Join(rows, "\n")
@@ -207,16 +197,27 @@ func TestWorkflowPaneTabsAndAgentList(t *testing.T) {
 	if strings.Contains(text, "第一行") {
 		t.Fatalf("agent page must not show the node log: %q", rows)
 	}
+
+	// 切到节点日志页：方括号跟着搬家，正文换成节点输出。
+	if !m.SwitchWorkflowPane(-1) {
+		t.Fatal("switching the pane tab must be handled")
+	}
+	b, preview = drawWorkflowPanel(t, m)
+	_, paneRect = workflowPreviewPanes(t, b, preview)
+	rows = regionRows(b, paneRect)
+	if !strings.Contains(rows[0], "[node log: 采集]") || strings.Contains(rows[0], "[agent list: 采集]") {
+		t.Fatalf("log page must be active in the tab strip: %q", rows[0])
+	}
+	if text := strings.Join(rows, "\n"); !strings.Contains(text, "第一行") {
+		t.Fatalf("log page content = %q", rows)
+	}
 }
 
-// TestWorkflowAgentPageEmptyHint 验证 Agent 列表页在节点还没有 agent 时的占位提示
-// （页签仍可切换，正文给一句提示而不是空白页）。
+// TestWorkflowAgentPageEmptyHint 验证 Agent 列表页（下栏默认页）在节点还没有 agent
+// 时的占位提示（页签仍可切换，正文给一句提示而不是空白页）。
 func TestWorkflowAgentPageEmptyHint(t *testing.T) {
 	useEnglish(t)
 	m := workflowPreview(t)
-	if !m.SwitchWorkflowPane(1) {
-		t.Fatal("switching the pane tab must be handled")
-	}
 	b, preview := drawWorkflowPanel(t, m)
 	_, paneRect := workflowPreviewPanes(t, b, preview)
 	text := strings.Join(regionRows(b, paneRect), "\n")

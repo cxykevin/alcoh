@@ -393,8 +393,8 @@ func (a *App) sessionKey(ke input.KeyEvent) {
 			}
 			return
 		case input.KeyTab:
-			// workflow 终端：Tab 换到下一个节点（Shift+Tab 回上一个），节点日志
-			// 分栏跟随选中；其它终端忽略。
+			// workflow 终端：Tab 换到下一个节点（Shift+Tab 回上一个），图下方
+			// 那一栏跟随选中；其它终端忽略。
 			delta := 1
 			if ke.IsShift() {
 				delta = -1
@@ -402,7 +402,7 @@ func (a *App) sessionKey(ke input.KeyEvent) {
 			m.SelectWorkflowNode(delta)
 			return
 		case input.KeyLeft:
-			// ←→ 切换图下方那一栏的页签：节点日志 ⇄ Agent 列表（画布平移走 hjkl）。
+			// ←→ 切换图下方那一栏的页签：Agent 列表 ⇄ 节点日志（画布平移走 hjkl）。
 			m.SwitchWorkflowPane(-1)
 			return
 		case input.KeyRight:

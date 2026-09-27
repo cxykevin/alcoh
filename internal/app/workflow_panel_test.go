@@ -112,7 +112,7 @@ func (s *workflowSession) WorkflowStatus(_ context.Context, runID string) (acp.W
 // TestWorkflowPanelFetchesStatusAndDrivesPanes 验证 shells 面板的 workflow 预览
 // 接线：打开面板会查询完整快照（workflow/status）并重建图 / 节点 / 日志，
 // Tab 换节点（Shift+Tab 反向），h/l（与 hjkl 同族）平移画布，←→ 切换下栏页签
-// （节点日志 / Agent 列表），PgUp/PgDn 翻当前页签，r 重新拉取。
+// （默认 Agent 列表 ⇄ 节点日志），PgUp/PgDn 翻当前页签，r 重新拉取。
 func TestWorkflowPanelFetchesStatusAndDrivesPanes(t *testing.T) {
 	setConfigDir(t)
 	ft := newFakeTerm()
@@ -188,9 +188,10 @@ func TestWorkflowPanelFetchesStatusAndDrivesPanes(t *testing.T) {
 		return len(s.WorkflowAgents) == 20 && s.WorkflowAgents[0] == "waiting"
 	})
 
-	// ←→ 切换下栏页签（环绕），PgUp/PgDn 只翻当前页签：Agent 页翻页不动节点日志。
-	ft.sendKey(input.SimpleKey(input.KeyRight))
-	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.WorkflowPane == 1 })
+	// 下栏默认停在 Agent 列表页：PgUp/PgDn 只翻当前页签，不动节点日志。
+	if s := a.snapshot(); s.WorkflowPane != 0 {
+		t.Fatalf("the lower pane must open on the agent list: pane=%d", s.WorkflowPane)
+	}
 	ft.sendKey(input.SimpleKey(input.KeyPageUp))
 	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.WorkflowAgentScroll > 0 })
 	if s := a.snapshot(); s.WorkflowLogScroll != 0 {
@@ -198,14 +199,16 @@ func TestWorkflowPanelFetchesStatusAndDrivesPanes(t *testing.T) {
 	}
 	ft.sendKey(input.SimpleKey(input.KeyPageDown))
 	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.WorkflowAgentScroll == 0 })
-	ft.sendKey(input.SimpleKey(input.KeyLeft))
-	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.WorkflowPane == 0 })
 
-	// 回到节点日志页：PgUp/PgDn 翻一页日志，向下回到最新。
+	// → 切到节点日志页（再按 → 环绕回 Agent 列表页）：PgUp/PgDn 翻一页日志。
+	ft.sendKey(input.SimpleKey(input.KeyRight))
+	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.WorkflowPane == 1 })
 	ft.sendKey(input.SimpleKey(input.KeyPageUp))
 	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.WorkflowLogScroll > 0 })
 	ft.sendKey(input.SimpleKey(input.KeyPageDown))
 	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.WorkflowLogScroll == 0 })
+	ft.sendKey(input.SimpleKey(input.KeyRight))
+	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.WorkflowPane == 0 })
 
 	// r：重新拉取完整快照（刷新面板）。
 	before := b.statusCallCount()

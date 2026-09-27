@@ -64,7 +64,7 @@ func workflowCellColor(palette map[int]renderer.Color, idx int) renderer.Color {
 }
 
 // drawWorkflowPreview 渲染 workflow 终端的预览内容区：图分栏（上）与下栏（下）。
-// 下栏是选中节点的两个页签——节点日志与 Agent 列表，←→ 切换（见 drawWorkflowPane）；
+// 下栏是选中节点的两个页签——Agent 列表与节点日志，←→ 切换（见 drawWorkflowPane）；
 // 分栏没有"焦点"概念：画布随时可用 h/j/k/l 平移、下栏随时可用 PgUp/PgDn 翻页，
 // 因此不需要高亮边框来提示当前作用在哪个分栏。
 // 绘制时顺带把分栏内尺寸写回模型，供"半屏平移 / 一屏翻页"的步长使用。
@@ -337,7 +337,7 @@ func workflowCellWidth(cells []tflow.Cell, col int) int {
 	return 1
 }
 
-// drawWorkflowPane 绘制图下方那一栏：上边框里嵌两个页签（节点日志 / Agent 列表，
+// drawWorkflowPane 绘制图下方那一栏：上边框里嵌两个页签（Agent 列表 / 节点日志，
 // 类似 notebook 的两个页面，←→ 切换），正文按当前页签渲染选中节点的内容。
 func (p *ShellPanel) drawWorkflowPane(c *renderer.Canvas, r renderer.Rect, w *model.WorkflowState, m *model.AppModel) {
 	node := w.SelectedNode()
@@ -361,8 +361,9 @@ func (p *ShellPanel) drawWorkflowPane(c *renderer.Canvas, r renderer.Rect, w *mo
 	p.drawWorkflowLog(c, inner, w, node)
 }
 
-// workflowPaneTabs 生成下栏的页签：节点日志与 Agent 列表，激活页带方括号标记
-// （见 workflowTabStrip）；页签名带上选中节点，切页后一眼能看出在看哪个节点。
+// workflowPaneTabs 生成下栏的页签：Agent 列表与节点日志（列表在前，与默认页一致），
+// 激活页带方括号标记（见 workflowTabStrip）；页签名带上选中节点，切页后一眼能看出
+// 在看哪个节点。
 func workflowPaneTabs(w *model.WorkflowState, node *model.WorkflowNode) []workflowTab {
 	label := ""
 	if node != nil {
@@ -377,8 +378,8 @@ func workflowPaneTabs(w *model.WorkflowState, node *model.WorkflowNode) []workfl
 		return workflowTab{Title: name, Active: active}
 	}
 	return []workflowTab{
-		tab(i18n.T("节点日志"), w.Pane == model.WorkflowPaneLog),
 		tab(i18n.T("Agent 列表"), w.Pane == model.WorkflowPaneAgents),
+		tab(i18n.T("节点日志"), w.Pane == model.WorkflowPaneLog),
 	}
 }
 
