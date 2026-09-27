@@ -307,7 +307,7 @@ func (p *ShellPanel) footer(c *renderer.Canvas, r renderer.Rect, workflow bool) 
 	}
 	hint := i18n.T("x 结束  r 刷新  PgUp/PgDn 滚动  Esc 返回")
 	if workflow {
-		hint = i18n.T("Tab 分栏  ←→ 节点  j/k 滚动  x 结束  r 刷新  Esc 返回")
+		hint = i18n.T("Tab 节点  hjkl 平移  PgUp/PgDn 日志  x 结束  r 刷新  Esc 返回")
 	}
 	c.PutText(r.X+1, r.Y+r.H-1, renderer.Truncate(hint, max(r.W-2, 1)), p.Theme.Style(p.Theme.TextMuted).WithDim(true))
 }

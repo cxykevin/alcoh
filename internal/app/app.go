@@ -387,10 +387,11 @@ type modelSnapshot struct {
 	HistoryTexts  []string // 历史段终端内容
 
 	// 选中 workflow 终端时的工作流状态（见 model/workflow.go）。
-	ShellWorkflowLog  bool     // workflow 预览焦点是否在节点日志分栏
 	WorkflowNodes     []string // 节点 ID（按画布顺序）
 	WorkflowSelected  string   // 选中节点 ID
-	WorkflowLogScroll int      // 节点日志分栏向上回看的行数
+	WorkflowPanX      int      // 图画布左上角的列偏移（h/l 平移）
+	WorkflowPanY      int      // 图画布左上角的行偏移（j/k 平移）
+	WorkflowLogScroll int      // 节点日志分栏向上回看的行数（PgUp/PgDn）
 	WorkflowLogs      []string // 选中节点的输出行（终值结果 + 日志）
 }
 
@@ -427,8 +428,8 @@ func (a *App) snapshot() modelSnapshot {
 		s.HistoryTexts = append(s.HistoryTexts, t.Transcript)
 	}
 	if w := a.model.SelectedWorkflow(); w != nil {
-		s.ShellWorkflowLog = a.model.WorkflowFocusedOnLog()
 		s.WorkflowSelected = w.Selected
+		s.WorkflowPanX, s.WorkflowPanY = w.PanX, w.PanY
 		s.WorkflowLogScroll = w.LogScroll
 		for _, n := range w.OrderedNodes() {
 			s.WorkflowNodes = append(s.WorkflowNodes, n.ID)

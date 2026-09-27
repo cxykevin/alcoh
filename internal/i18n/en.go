@@ -123,7 +123,7 @@ var en = map[string]string{
 	"未运行":            "idle",
 	"缓存":             "cached",
 	"agent %d/%d":    "agent %d/%d",
-	"Tab 分栏  ←→ 节点  j/k 滚动  x 结束  r 刷新  Esc 返回": "Tab pane  ←→ node  j/k scroll  x kill  r refresh  esc return",
+	"Tab 节点  hjkl 平移  PgUp/PgDn 日志  x 结束  r 刷新  Esc 返回": "Tab node  hjkl pan  PgUp/PgDn log  x kill  r refresh  esc return",
 
 	// ---- 会话/提示 ----
 	"已复制 %d 个字符":    "Copied %d characters",

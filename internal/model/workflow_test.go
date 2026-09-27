@@ -250,40 +250,57 @@ func TestWorkflowStatusKeepsCursorAndDropsStaleNodes(t *testing.T) {
 	}
 }
 
-// TestWorkflowCursorControls 验证面板按键对应的游标操作：节点选择环绕、换节点
-// 后日志回到最新、日志滚动不为负、焦点只在 workflow 终端间切换。
+// TestWorkflowCursorControls 验证面板按键对应的游标操作：hjkl 按半屏平移画布、
+// PgUp/PgDn 翻一页节点日志、Tab 换节点（环绕）并在换节点后把日志回到最新；
+// 平移与日志滚动都不为负。
 func TestWorkflowCursorControls(t *testing.T) {
 	m := workflowModel()
 	applyWorkflow(m, &acp.WorkflowEvent{
 		Kind: acp.WorkflowKindSnapshot, RunID: "@temp/run/7", TerminalID: "@temp/run/7", Graph: workflowGraph(),
 	})
 	w := m.SelectedWorkflow()
-	if !m.ToggleWorkflowFocus() || !m.WorkflowFocusedOnLog() {
-		t.Fatal("toggle must switch focus to the log pane for a workflow terminal")
+
+	// 画布平移步长取分栏内尺寸的一半（视图绘制时写回模型）。
+	m.ShellWorkflowCols, m.ShellWorkflowRows = 40, 20
+	if !m.PanWorkflow(1, 0) || w.PanX != 20 {
+		t.Fatalf("pan right must move half a pane: panX = %d, want 20", w.PanX)
 	}
-	if !m.ToggleWorkflowFocus() || m.WorkflowFocusedOnLog() {
-		t.Fatal("toggle must switch focus back to the graph pane")
+	if !m.PanWorkflow(0, 1) || w.PanY != 10 {
+		t.Fatalf("pan down must move half a pane: panY = %d, want 10", w.PanY)
 	}
-	// 焦点在图上时 j/k 平移画布（不滚日志）：delta<0 往下看、>0 回顶部。
-	w.LogScroll = 1
-	if !m.ScrollWorkflowPane(-3) || w.PanY != 3 || w.LogScroll != 1 {
-		t.Fatalf("graph pane scroll: panY=%d logScroll=%d", w.PanY, w.LogScroll)
+	if !m.PanWorkflow(-1, 0) || w.PanX != 0 {
+		t.Fatalf("panX must return to the left edge, got %d", w.PanX)
 	}
-	if !m.ScrollWorkflowPane(3) || w.PanY != 0 {
-		t.Fatalf("panY must return to the top, got %d", w.PanY)
+	if !m.PanWorkflow(-1, -1) || w.PanX != 0 || w.PanY != 0 {
+		t.Fatalf("pan must clamp at 0: panX=%d panY=%d", w.PanX, w.PanY)
 	}
-	if !m.PanWorkflow(2) || w.PanX != 2 || !m.PanWorkflow(-5) || w.PanX != 0 {
-		t.Fatalf("panX = %d", w.PanX)
+	// 还没有画过一帧（分栏尺寸未知）时步长退化为 1 格，不会"按了不动"。
+	m.ShellWorkflowCols, m.ShellWorkflowRows = 0, 0
+	if !m.PanWorkflow(1, 1) || w.PanX != 1 || w.PanY != 1 {
+		t.Fatalf("unknown pane size must still move one cell: panX=%d panY=%d", w.PanX, w.PanY)
 	}
-	// 焦点在日志上时 j/k 滚日志，且不为负。
-	m.ToggleWorkflowFocus()
-	if !m.ScrollWorkflowPane(3) || w.LogScroll != 4 {
-		t.Fatalf("log scroll = %d", w.LogScroll)
+	w.PanX, w.PanY = 0, 0
+
+	// PgUp/PgDn 翻一页日志：步长取日志分栏内高留一行重叠；向上不为负。
+	m.ShellWorkflowLogRows = 8
+	if !m.ScrollWorkflowLogPage(1) || w.LogScroll != 7 {
+		t.Fatalf("log page scroll = %d, want 7", w.LogScroll)
 	}
-	m.ScrollWorkflowPane(-10)
+	// 滚轮按行微调。
+	if !m.ScrollWorkflowLog(3) || w.LogScroll != 10 {
+		t.Fatalf("log line scroll = %d, want 10", w.LogScroll)
+	}
+	m.ScrollWorkflowLogPage(-10)
 	if w.LogScroll != 0 {
 		t.Fatalf("log scroll must clamp at 0, got %d", w.LogScroll)
 	}
+	// 日志分栏尺寸未知时退化为单行，不会静默不动作。
+	m.ShellWorkflowLogRows = 0
+	if !m.ScrollWorkflowLogPage(1) || w.LogScroll != 1 {
+		t.Fatalf("unknown log pane size must scroll one line, got %d", w.LogScroll)
+	}
+	w.LogScroll = 0
+
 	// 节点选择环绕，并在换节点时把日志滚回最新。
 	w.LogScroll = 5
 	if !m.SelectWorkflowNode(1) || w.Selected != "merge" || w.LogScroll != 0 {
@@ -319,11 +336,8 @@ func TestWorkflowControlsIgnorePlainTerminals(t *testing.T) {
 	if m.SelectedWorkflow() != nil {
 		t.Fatal("plain shell must not expose workflow state")
 	}
-	if m.ToggleWorkflowFocus() || m.SelectWorkflowNode(1) || m.ScrollWorkflowPane(3) || m.PanWorkflow(1) {
+	if m.SelectWorkflowNode(1) || m.PanWorkflow(1, 1) || m.ScrollWorkflowLog(3) || m.ScrollWorkflowLogPage(1) {
 		t.Fatal("workflow controls must be ignored for plain shells")
-	}
-	if m.WorkflowFocusedOnLog() {
-		t.Fatal("focus must stay unchanged for plain shells")
 	}
 	// 普通 shell 的 IsWorkflow 为 false（避免面板误走 workflow 渲染）。
 	if m.Active.Terminal("@temp/run/1").IsWorkflow() {

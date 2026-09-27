@@ -393,34 +393,31 @@ func (a *App) sessionKey(ke input.KeyEvent) {
 			}
 			return
 		case input.KeyTab:
-			// workflow 终端：在"图"与"节点日志"之间切换焦点分栏；其它终端忽略。
-			m.ToggleWorkflowFocus()
+			// workflow 终端：Tab 换到下一个节点（Shift+Tab 回上一个），节点日志
+			// 分栏跟随选中；其它终端忽略。
+			delta := 1
+			if ke.IsShift() {
+				delta = -1
+			}
+			m.SelectWorkflowNode(delta)
 			return
 		case input.KeyLeft:
-			if ke.IsShift() {
-				// Shift+←→ 平移图画布：查看图的左侧 / 右侧。
-				m.PanWorkflow(-1)
-				return
-			}
-			// ←→ 在 workflow 图里移动选中节点（节点日志分栏跟随选中）。
-			m.SelectWorkflowNode(-1)
+			// ←→ 与 h/l 同义：平移图画布（一次半个分栏）。
+			m.PanWorkflow(-1, 0)
 			return
 		case input.KeyRight:
-			if ke.IsShift() {
-				m.PanWorkflow(1)
-				return
-			}
-			m.SelectWorkflowNode(1)
+			m.PanWorkflow(1, 0)
 			return
 		case input.KeyPageUp:
-			// PgUp/PgDn 滚动预览内容（回看历史输出）；workflow 终端翻当前焦点分栏。
-			if m.ScrollWorkflowPane(m.ShellPreviewHeight()) {
+			// PgUp/PgDn 滚动预览内容（回看历史输出）：workflow 终端翻选中节点的
+			// 日志分栏（一屏），其它终端滚动终端内容。
+			if m.ScrollWorkflowLogPage(1) {
 				return
 			}
 			m.ScrollShellPreview(m.ShellPreviewHeight())
 			return
 		case input.KeyPageDown:
-			if m.ScrollWorkflowPane(-m.ShellPreviewHeight()) {
+			if m.ScrollWorkflowLogPage(-1) {
 				return
 			}
 			m.ScrollShellPreview(-m.ShellPreviewHeight())
@@ -437,16 +434,17 @@ func (a *App) sessionKey(ke input.KeyEvent) {
 				a.refreshShellPanel()
 				return
 			case 'h':
-				m.SelectWorkflowNode(-1)
+				// hjkl 与方向键同义：平移 workflow 图画布（一次半个分栏）。
+				m.PanWorkflow(-1, 0)
 				return
 			case 'l':
-				m.SelectWorkflowNode(1)
+				m.PanWorkflow(1, 0)
 				return
 			case 'j':
-				m.ScrollWorkflowPane(-3)
+				m.PanWorkflow(0, 1)
 				return
 			case 'k':
-				m.ScrollWorkflowPane(3)
+				m.PanWorkflow(0, -1)
 				return
 			}
 		}
@@ -1174,13 +1172,13 @@ func (a *App) dispatchMouse(me input.MouseEvent) {
 	// 滚轮位于预览框内时滚动终端内容（回看历史输出）。
 	if me.IsWheel() && me.Action == input.MousePress && a.model.ShellPanel && a.model.Modal == model.NoModal {
 		if r := a.view.ShellPreviewRect; r.W > 0 && me.X >= r.X && me.X < r.X+r.W && me.Y >= r.Y && me.Y < r.Y+r.H {
-			// workflow 终端的预览分栏有自己的滚动游标（图平移 / 节点日志）。
+			// workflow 终端：滚轮按行滚动选中节点的日志（画布平移交给 hjkl / ←→）。
 			if me.Button == input.MouseWheelUp {
-				if !a.model.ScrollWorkflowPane(3) {
+				if !a.model.ScrollWorkflowLog(3) {
 					a.model.ScrollShellPreview(3)
 				}
 			} else if me.Button == input.MouseWheelDown {
-				if !a.model.ScrollWorkflowPane(-3) {
+				if !a.model.ScrollWorkflowLog(-3) {
 					a.model.ScrollShellPreview(-3)
 				}
 			}

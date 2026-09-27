@@ -17,16 +17,6 @@ import (
 // 更早的行被丢弃，避免长跑 workflow 的日志无限占用内存。
 const workflowNodeLogLines = 200
 
-// WorkflowFocus 是 shells 面板 workflow 预览的焦点分栏。
-type WorkflowFocus int
-
-const (
-	// WorkflowFocusGraph 焦点在图上分栏（j/k 平移画布）。
-	WorkflowFocusGraph WorkflowFocus = iota
-	// WorkflowFocusLog 焦点在节点日志下分栏（j/k 滚动日志）。
-	WorkflowFocusLog
-)
-
 // WorkflowAgent 是节点内一次 Agent 调用的状态（agent 事件）。
 type WorkflowAgent struct {
 	Index   int
@@ -608,26 +598,8 @@ func (m *AppModel) SelectedWorkflow() *WorkflowState {
 	return s.Workflow
 }
 
-// WorkflowFocusedOnLog 报告 workflow 预览的焦点是否在节点日志分栏。
-func (m *AppModel) WorkflowFocusedOnLog() bool {
-	return m.ShellWorkflowFocus == WorkflowFocusLog
-}
-
-// ToggleWorkflowFocus 在图分栏与节点日志分栏之间切换焦点；选中终端不是 workflow
-// 时不动并返回 false。
-func (m *AppModel) ToggleWorkflowFocus() bool {
-	if m.SelectedWorkflow() == nil {
-		return false
-	}
-	if m.ShellWorkflowFocus == WorkflowFocusLog {
-		m.ShellWorkflowFocus = WorkflowFocusGraph
-	} else {
-		m.ShellWorkflowFocus = WorkflowFocusLog
-	}
-	return true
-}
-
-// SelectWorkflowNode 按画布顺序选择上/下一个节点；选中终端不是 workflow 时返回 false。
+// SelectWorkflowNode 按画布顺序选择上/下一个节点（Tab / Shift+Tab）；选中终端不是
+// workflow 时返回 false。
 func (m *AppModel) SelectWorkflowNode(delta int) bool {
 	w := m.SelectedWorkflow()
 	if w == nil {
@@ -637,34 +609,60 @@ func (m *AppModel) SelectWorkflowNode(delta int) bool {
 	return true
 }
 
-// ScrollWorkflowPane 滚动 workflow 预览：焦点在日志分栏时滚动选中节点的日志，
-// 否则平移图画布。delta>0 表示向上。返回是否消费该按键。
-func (m *AppModel) ScrollWorkflowPane(delta int) bool {
+// PanWorkflow 平移图画布：dirX / dirY 取 -1 / 0 / 1 表示方向（h ← 向左、l → 向右、
+// k ↑ 向上、j ↓ 向下）。图通常比预览分栏大得多，所以一次走半个分栏——按几下就能
+// 浏览完整张图，也不会因为步长过小而"按了像没反应"。
+// 上/左边界在这里收敛到 0；右/下边界由渲染层按整张图的尺寸收敛。
+func (m *AppModel) PanWorkflow(dirX, dirY int) bool {
 	w := m.SelectedWorkflow()
-	if w == nil || delta == 0 {
+	if w == nil || (dirX == 0 && dirY == 0) {
 		return false
 	}
-	if m.ShellWorkflowFocus == WorkflowFocusLog {
-		w.ScrollLog(delta)
-		return true
+	if dirX != 0 {
+		w.PanX = clampWorkflowPan(w.PanX + dirX*workflowPanStep(m.ShellWorkflowCols))
 	}
-	// delta>0 表示向上：画布窗口上移一行（PanY 是窗口顶边在整张图里的行号）。
-	w.PanY -= delta
-	if w.PanY < 0 {
-		w.PanY = 0
+	if dirY != 0 {
+		w.PanY = clampWorkflowPan(w.PanY + dirY*workflowPanStep(m.ShellWorkflowRows))
 	}
 	return true
 }
 
-// PanWorkflow 左右平移图画布（dx>0 向右）；选中终端不是 workflow 时返回 false。
-func (m *AppModel) PanWorkflow(dx int) bool {
+// ScrollWorkflowLog 按行滚动选中节点的日志（滚轮等小步调整）：delta>0 表示向上
+// 回看。选中终端不是 workflow 时返回 false。
+func (m *AppModel) ScrollWorkflowLog(delta int) bool {
 	w := m.SelectedWorkflow()
-	if w == nil || dx == 0 {
+	if w == nil || delta == 0 {
 		return false
 	}
-	w.PanX += dx
-	if w.PanX < 0 {
-		w.PanX = 0
-	}
+	w.ScrollLog(delta)
 	return true
+}
+
+// ScrollWorkflowLogPage 翻一页选中节点的日志（PgUp / PgDn）：dir>0 表示向上回看。
+// 步长取日志分栏的内高（一屏），分栏尺寸还没测到时退化为单行。
+func (m *AppModel) ScrollWorkflowLogPage(dir int) bool {
+	if dir == 0 {
+		return false
+	}
+	step := m.ShellWorkflowLogRows - 1
+	if step < 1 {
+		step = 1
+	}
+	return m.ScrollWorkflowLog(dir * step)
+}
+
+// workflowPanStep 把分栏尺寸换算成一次平移的步长：半个分栏，至少 1 格。
+func workflowPanStep(size int) int {
+	if size <= 1 {
+		return 1
+	}
+	return size / 2
+}
+
+// clampWorkflowPan 收敛平移偏移的上/左边界（0）。
+func clampWorkflowPan(offset int) int {
+	if offset < 0 {
+		return 0
+	}
+	return offset
 }

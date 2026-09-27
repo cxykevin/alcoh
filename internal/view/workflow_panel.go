@@ -64,18 +64,19 @@ func workflowCellColor(palette map[int]renderer.Color, idx int) renderer.Color {
 }
 
 // drawWorkflowPreview 渲染 workflow 终端的预览内容区：图分栏（上）与选中节点的
-// 日志分栏（下）。焦点所在分栏用高亮边框标出。
+// 日志分栏（下）。两个分栏没有"焦点"概念——画布随时可用 h/j/k/l 平移、日志随时
+// 可用 PgUp/PgDn 翻页，因此不需要高亮边框来提示当前作用在哪个分栏。
+// 绘制时顺带把分栏内尺寸写回模型，供"半屏平移 / 一屏翻页"的步长使用。
 func (p *ShellPanel) drawWorkflowPreview(c *renderer.Canvas, r renderer.Rect, s *model.TerminalState, m *model.AppModel) {
 	w := s.Workflow
 	if w == nil || r.W < 2 || r.H < 2 {
 		return
 	}
-	logFocused := m != nil && m.WorkflowFocusedOnLog()
 	logHeight := workflowLogPaneHeight(r.H)
 	graphHeight := r.H - logHeight
-	p.drawWorkflowGraph(c, renderer.NewRect(r.X, r.Y, r.W, graphHeight), w, !logFocused)
+	p.drawWorkflowGraph(c, renderer.NewRect(r.X, r.Y, r.W, graphHeight), w, m)
 	if logHeight > 0 {
-		p.drawWorkflowLog(c, renderer.NewRect(r.X, r.Y+graphHeight, r.W, logHeight), w, logFocused)
+		p.drawWorkflowLog(c, renderer.NewRect(r.X, r.Y+graphHeight, r.W, logHeight), w, m)
 	}
 }
 
@@ -96,12 +97,17 @@ func workflowLogPaneHeight(height int) int {
 }
 
 // drawWorkflowGraph 绘制图分栏：按 PanY/PanX 平移 tflow 布局好的网格，
-// 选中节点用主题高亮底标出。
-func (p *ShellPanel) drawWorkflowGraph(c *renderer.Canvas, r renderer.Rect, w *model.WorkflowState, focused bool) {
-	p.workflowPaneBox(c, r, workflowGraphTitle(w), focused)
+// 选中节点用主题高亮底标出（节点级高亮本身就是"看哪里"的提示，分栏不再有焦点）。
+func (p *ShellPanel) drawWorkflowGraph(c *renderer.Canvas, r renderer.Rect, w *model.WorkflowState, m *model.AppModel) {
+	p.workflowPaneBox(c, r, workflowGraphTitle(w))
 	inner := renderer.NewRect(r.X+1, r.Y+1, r.W-2, r.H-2)
 	if inner.W < 1 || inner.H < 1 {
 		return
+	}
+	// 画布平移的步长是"半个分栏"：把分栏内尺寸记回模型。绘制先于按键处理，
+	// 所以按键时读到的总是当前这一帧的尺寸。
+	if m != nil {
+		m.ShellWorkflowCols, m.ShellWorkflowRows = inner.W, inner.H
 	}
 	if !w.HasGraph() {
 		c.PutText(inner.X, inner.Y, renderer.Truncate(i18n.T("等待 workflow 图…"), inner.W), p.Theme.Style(p.Theme.TextMuted).WithDim(true))
@@ -310,16 +316,20 @@ func workflowGridWidth(grid [][]tflow.Cell) int {
 
 // drawWorkflowLog 绘制日志分栏：显示选中节点的终值结果与输出行，按 LogScroll
 // 从末尾往回看（0 = 停在最新一行）。
-func (p *ShellPanel) drawWorkflowLog(c *renderer.Canvas, r renderer.Rect, w *model.WorkflowState, focused bool) {
+func (p *ShellPanel) drawWorkflowLog(c *renderer.Canvas, r renderer.Rect, w *model.WorkflowState, m *model.AppModel) {
 	node := w.SelectedNode()
 	title := i18n.T("节点日志")
 	if node != nil {
 		title = i18n.T("节点日志: %s", node.Label())
 	}
-	p.workflowPaneBox(c, r, title, focused)
+	p.workflowPaneBox(c, r, title)
 	inner := renderer.NewRect(r.X+1, r.Y+1, r.W-2, r.H-2)
 	if inner.W < 1 || inner.H < 1 {
 		return
+	}
+	// 日志翻页（PgUp/PgDn）的步长是"一屏"：同样把分栏内高记回模型。
+	if m != nil {
+		m.ShellWorkflowLogRows = inner.H
 	}
 	if node == nil {
 		c.PutText(inner.X, inner.Y, renderer.Truncate(i18n.T("选择节点后显示其输出"), inner.W), p.Theme.Style(p.Theme.TextMuted).WithDim(true))
@@ -386,18 +396,14 @@ func workflowGraphTitle(w *model.WorkflowState) string {
 	return title
 }
 
-// workflowPaneBox 画 workflow 预览的分栏边框，标题嵌在上边框里；
-// focused 为 true 时用高亮边框与 "▸" 标记当前焦点分栏。
-func (p *ShellPanel) workflowPaneBox(c *renderer.Canvas, r renderer.Rect, title string, focused bool) {
+// workflowPaneBox 画 workflow 预览的分栏边框，标题嵌在上边框里。两个分栏用同一套
+// 弱边框与标题样式：不再有"焦点分栏"，图与日志都可以随时操作。
+func (p *ShellPanel) workflowPaneBox(c *renderer.Canvas, r renderer.Rect, title string) {
 	if r.W < 2 || r.H < 2 {
 		return
 	}
 	borderStyle := p.Theme.Style(p.Theme.BorderSubtle)
 	titleStyle := p.Theme.Style(p.Theme.TextMuted).WithDim(true)
-	if focused {
-		borderStyle = p.Theme.Style(p.Theme.BorderActive)
-		titleStyle = p.Theme.Style(p.Theme.Text).WithBold(true)
-	}
 	for x := r.X + 1; x < r.X+r.W-1; x++ {
 		c.Put(x, r.Y, renderer.CellRune('─', borderStyle))
 		c.Put(x, r.Y+r.H-1, renderer.CellRune('─', borderStyle))
@@ -414,9 +420,6 @@ func (p *ShellPanel) workflowPaneBox(c *renderer.Canvas, r renderer.Rect, title 
 		return
 	}
 	label := " " + renderer.Truncate(title, r.W-4) + " "
-	if focused {
-		label = " ▸ " + renderer.Truncate(title, r.W-6) + " "
-	}
 	if renderer.StringWidth(label) > r.W-2 {
 		return
 	}

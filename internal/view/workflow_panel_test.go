@@ -93,8 +93,8 @@ func regionRows(b *renderer.Buffer, r renderer.Rect) []string {
 }
 
 // TestWorkflowPreviewRendersGraphAndLogPanes 验证 workflow 终端的预览被替换成
-// 上下分栏：上分栏为图（节点显示名）、下分栏为选中节点的终值结果与输出行，
-// 焦点所在分栏带 "▸" 标记（Tab 切换后标记换到另一栏）。
+// 上下分栏：上分栏为图（节点显示名）、下分栏为选中节点的终值结果与输出行；
+// 两个分栏都不带焦点标记，并把分栏内尺寸写回模型（半屏平移/翻页步长要用）。
 func TestWorkflowPreviewRendersGraphAndLogPanes(t *testing.T) {
 	useEnglish(t)
 	m := workflowPreview(t)
@@ -118,23 +118,19 @@ func TestWorkflowPreviewRendersGraphAndLogPanes(t *testing.T) {
 			t.Fatalf("log pane missing %q: %q", want, logRows)
 		}
 	}
-	// 焦点默认在图分栏：只有图分栏的上边框带 "▸"。
-	if !strings.Contains(graphRows[0], "▸") {
-		t.Fatalf("graph pane must carry the focus marker: %q", graphRows[0])
+	// 没有"焦点分栏"：两栏都不带 "▸" 标记，图与日志随时可操作。
+	for name, rows := range map[string][]string{"graph": graphRows, "log": logRows} {
+		if strings.Contains(rows[0], "▸") {
+			t.Fatalf("%s pane must not carry a focus marker: %q", name, rows[0])
+		}
 	}
-	if strings.Contains(logRows[0], "▸") {
-		t.Fatalf("log pane must not carry the focus marker: %q", logRows[0])
+	// 绘制时把分栏内尺寸写回模型：hjkl 的半屏平移与 PgUp/PgDn 的翻页步长都要用。
+	if m.ShellWorkflowCols != graphRect.W-2 || m.ShellWorkflowRows != graphRect.H-2 {
+		t.Fatalf("graph pane inner size = %dx%d, want %dx%d",
+			m.ShellWorkflowCols, m.ShellWorkflowRows, graphRect.W-2, graphRect.H-2)
 	}
-	// 焦点转到日志分栏（Tab）：标记跟着走。
-	m.ShellWorkflowFocus = model.WorkflowFocusLog
-	b, preview = drawWorkflowPanel(t, m)
-	graphRect, logRect = workflowPreviewPanes(t, b, preview)
-	graphRows, logRows = regionRows(b, graphRect), regionRows(b, logRect)
-	if strings.Contains(graphRows[0], "▸") {
-		t.Fatalf("graph pane must lose the focus marker: %q", graphRows[0])
-	}
-	if !strings.Contains(logRows[0], "▸") {
-		t.Fatalf("log pane must carry the focus marker: %q", logRows[0])
+	if m.ShellWorkflowLogRows != logRect.H-2 {
+		t.Fatalf("log pane inner height = %d, want %d", m.ShellWorkflowLogRows, logRect.H-2)
 	}
 }
 
@@ -194,7 +190,7 @@ func TestWorkflowPreviewHighlightsSelectedNode(t *testing.T) {
 }
 
 // TestWorkflowPreviewWithoutGraphFallsBackToOutput 验证图尚未到达（workflow 只
-// 广播了元信息）时预览仍走原始输出：此时没有分栏与焦点标记，不会画出空图。
+// 广播了元信息）时预览仍走原始输出：此时不画分栏，也不会画出一张空图。
 func TestWorkflowPreviewWithoutGraphFallsBackToOutput(t *testing.T) {
 	useEnglish(t)
 	m := &model.AppModel{}
@@ -218,8 +214,8 @@ func TestWorkflowPreviewWithoutGraphFallsBackToOutput(t *testing.T) {
 	if !strings.Contains(text, "workflow starting") {
 		t.Fatalf("preview must fall back to raw output: %q", text)
 	}
-	if strings.Contains(text, "▸") {
-		t.Fatalf("no workflow pane (and no focus marker) before the graph arrives: %q", text)
+	if strings.Contains(text, i18n.T("等待 workflow 图…")) {
+		t.Fatalf("preview must not draw an empty graph pane before the graph arrives: %q", text)
 	}
 }
 
@@ -245,7 +241,7 @@ func TestWorkflowGraphPaneWaitingHint(t *testing.T) {
 	}
 	b := renderer.NewBuffer(46, 8)
 	(&ShellPanel{Theme: renderer.DefaultTheme()}).drawWorkflowGraph(
-		renderer.NewCanvas(b), renderer.NewRect(0, 0, 46, 8), w, true)
+		renderer.NewCanvas(b), renderer.NewRect(0, 0, 46, 8), w, m)
 	text := strings.Join(regionRows(b, renderer.NewRect(0, 0, 46, 8)), "\n")
 	if !strings.Contains(text, i18n.T("等待 workflow 图…")) {
 		t.Fatalf("graph pane must show the waiting hint: %q", text)

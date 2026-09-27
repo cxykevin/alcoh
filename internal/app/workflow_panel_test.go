@@ -111,8 +111,8 @@ func (s *workflowSession) WorkflowStatus(_ context.Context, runID string) (acp.W
 
 // TestWorkflowPanelFetchesStatusAndDrivesPanes 验证 shells 面板的 workflow 预览
 // 接线：打开面板会查询完整快照（workflow/status）并重建图 / 节点 / 日志，
-// Tab 在图上与节点日志之间切焦点，↑↓ 与 hjkl 切换选中节点、k/j 回看日志，
-// r 重新拉取。
+// Tab 换节点（Shift+Tab 反向），h/l（与 ←→ 同义）平移画布，PgUp/PgDn 翻节点
+// 日志，r 重新拉取。
 func TestWorkflowPanelFetchesStatusAndDrivesPanes(t *testing.T) {
 	setConfigDir(t)
 	ft := newFakeTerm()
@@ -135,7 +135,8 @@ func TestWorkflowPanelFetchesStatusAndDrivesPanes(t *testing.T) {
 		RunID: workflowRunID, TerminalID: workflowRunID,
 		Workflow: &acp.WorkflowInfo{WorkflowID: "w1", Status: "running", CurrentNode: "collect"},
 		Graph: &acp.WorkflowGraph{
-			Nodes: map[string]acp.WorkflowGraphNode{"collect": {Name: "采集"}, "merge": {Name: "汇总"}},
+			// 节点名取得足够长，让图画布宽于预览分栏——这样 h/l 平移才有可观察的效果。
+			Nodes: map[string]acp.WorkflowGraphNode{"collect": {Name: "采集阶段：抓取全部来源的数据"}, "merge": {Name: "汇总阶段：合并并校验结果"}},
 			Edges: map[string][]string{"collect": {"merge"}},
 			Start: []string{"collect"},
 		},
@@ -161,29 +162,31 @@ func TestWorkflowPanelFetchesStatusAndDrivesPanes(t *testing.T) {
 	if snap.WorkflowLogs[0] != "log-1" || snap.WorkflowLogs[workflowTestLogs-1] != "log-"+strconv.Itoa(workflowTestLogs) {
 		t.Fatalf("node logs = %v", snap.WorkflowLogs)
 	}
-	if snap.ShellWorkflowLog {
-		t.Fatal("focus must start on the graph pane")
+	if snap.WorkflowPanX != 0 || snap.WorkflowPanY != 0 {
+		t.Fatalf("pan must start at the top-left: panX=%d panY=%d", snap.WorkflowPanX, snap.WorkflowPanY)
 	}
 
-	// Tab：焦点转到节点日志分栏，k/j 回看 / 回到最新。
+	// Tab 换到下一个节点（环绕），Shift+Tab 退回上一个。
 	ft.sendKey(input.SimpleKey(input.KeyTab))
-	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.ShellWorkflowLog })
-	ft.sendKey(input.RuneKey('k', input.ModNone))
-	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.WorkflowLogScroll == 3 })
-	ft.sendKey(input.RuneKey('j', input.ModNone))
-	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.WorkflowLogScroll == 0 })
+	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.WorkflowSelected == "merge" })
+	ft.sendKey(input.KeyEvent{Type: input.KeyTab, Mod: input.ModShift})
+	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.WorkflowSelected == "collect" })
 
-	// Tab 回图分栏：←→ 与 hl（与 ←→ 同义）切换选中节点。
-	ft.sendKey(input.SimpleKey(input.KeyTab))
-	waitSnapshot(t, a, func(s modelSnapshot) bool { return !s.ShellWorkflowLog })
-	ft.sendKey(input.SimpleKey(input.KeyRight))
-	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.WorkflowSelected == "merge" })
-	ft.sendKey(input.RuneKey('h', input.ModNone))
-	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.WorkflowSelected == "collect" })
+	// l/h 与 ←→ 同义：平移图画布（一次半个分栏），回到左边界收敛为 0。
 	ft.sendKey(input.RuneKey('l', input.ModNone))
-	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.WorkflowSelected == "merge" })
+	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.WorkflowPanX > 0 })
 	ft.sendKey(input.SimpleKey(input.KeyLeft))
-	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.WorkflowSelected == "collect" })
+	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.WorkflowPanX == 0 })
+	ft.sendKey(input.SimpleKey(input.KeyRight))
+	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.WorkflowPanX > 0 })
+	ft.sendKey(input.RuneKey('h', input.ModNone))
+	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.WorkflowPanX == 0 })
+
+	// PgUp/PgDn 翻一页节点日志，向下回到最新。
+	ft.sendKey(input.SimpleKey(input.KeyPageUp))
+	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.WorkflowLogScroll > 0 })
+	ft.sendKey(input.SimpleKey(input.KeyPageDown))
+	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.WorkflowLogScroll == 0 })
 
 	// r：重新拉取完整快照（刷新面板）。
 	before := b.statusCallCount()
@@ -228,7 +231,7 @@ func workflowStatusResult(t *testing.T) acp.WorkflowStatusResult {
 		Status:   "running",
 		Workflow: acp.WorkflowInfo{WorkflowID: "w1", Status: "running", CurrentNode: "collect"},
 		Graph: &acp.WorkflowGraph{
-			Nodes: map[string]acp.WorkflowGraphNode{"collect": {Name: "采集"}, "merge": {Name: "汇总"}},
+			Nodes: map[string]acp.WorkflowGraphNode{"collect": {Name: "采集阶段：抓取全部来源的数据"}, "merge": {Name: "汇总阶段：合并并校验结果"}},
 			Edges: map[string][]string{"collect": {"merge"}},
 			Start: []string{"collect"},
 		},

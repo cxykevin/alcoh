@@ -89,9 +89,11 @@ type AppModel struct {
 	// ShellPreviewRows 是 shells 面板预览视口高度（视图绘制时写入，用于翻页）。
 	ShellPreviewRows int
 	ShellSelected    int
-	// ShellWorkflowFocus 是 workflow 预览的焦点分栏（图 / 节点日志，Tab 切换）；
-	// 对非 workflow 终端无意义。
-	ShellWorkflowFocus WorkflowFocus
+	// workflow 预览分栏的可见尺寸（视图绘制时写入）：画布平移按"半屏"步长、节点
+	// 日志翻页按"一屏"步长，按键处理需要知道分栏有多大。对非 workflow 终端无意义。
+	ShellWorkflowCols    int // 图分栏内宽（列）
+	ShellWorkflowRows    int // 图分栏内高（行）
+	ShellWorkflowLogRows int // 节点日志分栏内高（行）
 
 	Modal           ModalKind
 	Permission      *acp.PermissionRequest
