@@ -42,6 +42,8 @@ const (
 	MethodTerminalStop   = "alk.cxykevin.top/session/terminal/stop"
 	// MethodTerminalHistory 查询已结束终端的内容（alkaid0 v0.6）。
 	MethodTerminalHistory = "alk.cxykevin.top/session/terminal/history"
+	// MethodWorkflowStatus 查询 workflow 的完整快照与事件日志（alkaid0 v0.5）。
+	MethodWorkflowStatus = "alk.cxykevin.top/session/terminal/workflow/status"
 )
 
 // ConfigGetResult 是 alk.cxykevin.top/config/get 的响应。Config 为完整的
@@ -319,6 +321,14 @@ type TerminalHistoryParams struct {
 // （finished / killed）终端，按 createdAt（再按 terminalId）升序。
 type TerminalHistoryResult struct {
 	Terminals []TerminalInfo `json:"terminals"`
+}
+
+// WorkflowStatusParams 是 alkaid0 v0.5 workflow/status request 参数。
+// RunID 是 workflow 的 run id（@temp/run/<n>，与 terminal ID 同值）；
+// 响应类型见 WorkflowStatusResult（workflow.go）。
+type WorkflowStatusParams struct {
+	SessionID string `json:"sessionId"`
+	RunID     string `json:"runId"`
 }
 
 // TerminalStopResult 是 terminal/stop response。

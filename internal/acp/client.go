@@ -618,6 +618,36 @@ func (s *clientSession) TerminalHistory(ctx context.Context, id string) ([]Termi
 	return result.Terminals, nil
 }
 
+// WorkflowStatus 查询 workflow 的完整快照（v0.5）。runID 是 workflow 的 run id
+// （@temp/run/<n>，与 terminal ID 同值）；workflow 已结束或不在内存中时同样可查，
+// 响应含当前状态、完整图与按 sequence 排序的事件日志（见 extension.md §3.2）。
+func (s *clientSession) WorkflowStatus(ctx context.Context, runID string) (WorkflowStatusResult, error) {
+	if !s.backend.AgentCapabilities().Has(Alkaid0CapabilityV05) {
+		return WorkflowStatusResult{}, errors.New("alkaid0 v0.5 workflow protocol is not supported")
+	}
+	if runID == "" {
+		return WorkflowStatusResult{}, errors.New("workflow run id is empty")
+	}
+	t, err := s.backend.readyTransport()
+	if err != nil {
+		return WorkflowStatusResult{}, err
+	}
+	var result WorkflowStatusResult
+	if err := t.Request(ctx, MethodWorkflowStatus, WorkflowStatusParams{SessionID: s.id, RunID: runID}, &result); err != nil {
+		return WorkflowStatusResult{}, err
+	}
+	if result.RunID == "" {
+		result.RunID = runID
+	}
+	if result.TerminalID == "" {
+		result.TerminalID = result.RunID
+	}
+	// 结果同样以事件形式广播：与 terminal/history 同构，模型与应用层不必为
+	// 查询结果单独接线，刷新/进入面板时直接复用同一条事件通道。
+	s.backend.emit(&WorkflowStatusEvent{SessionID: s.id, Result: result})
+	return result, nil
+}
+
 func (s *clientSession) SetConfigOption(ctx context.Context, configID, configType, value string) error {
 	if configID == "" || value == "" {
 		return errors.New("ACP set config option requires configId and value")

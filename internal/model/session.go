@@ -112,6 +112,9 @@ type TerminalState struct {
 	// Restored 标记该终端来自服务端的持久化副本（服务端重启后内存中已无它），
 	// 此时只有内容可信，命令/类型等元数据为空。
 	Restored bool
+	// Workflow 是 workflow 终端的图状态（图、节点/agent 状态、节点日志与
+	// 浏览游标）；非 workflow 终端为 nil（见 workflow.go）。
+	Workflow *WorkflowState
 	// Screen 是预览用的 VT 屏幕（尺寸由视图按预览框调整）；ScreenRows 是内容
 	// 换行后的总行数，ScreenViewH 是构建时的可见视口高度。
 	Screen      *term.VTScreen

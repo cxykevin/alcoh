@@ -1,0 +1,368 @@
+package model
+
+import (
+	"encoding/json"
+	"strconv"
+	"testing"
+
+	"github.com/cxykevin/alcoh/internal/acp"
+)
+
+// workflowModel 返回一个已进入会话、声明 v0.5 的模型：workflow 事件按会话归属，
+// 声明缺失时模型会丢弃事件。
+func workflowModel() *AppModel {
+	m := New()
+	m.SetAgentInfo(acp.AgentInfo{}, acp.AgentCapabilities{
+		Raw: json.RawMessage(`{"alk.cxykevin.top/alkaid0/v0.5":{}}`),
+	})
+	m.ActivateSession("s", "session")
+	return m
+}
+
+// workflowGraph 是测试用的图：collect → merge。
+func workflowGraph() *acp.WorkflowGraph {
+	return &acp.WorkflowGraph{
+		Nodes: map[string]acp.WorkflowGraphNode{
+			"collect": {Name: "采集"},
+			"merge":   {Name: "汇总"},
+		},
+		Edges: map[string][]string{"collect": {"merge"}},
+		Start: []string{"collect"},
+	}
+}
+
+// applyWorkflow 把一条 workflow 事件推给模型（模拟 backend 事件通道）。
+func applyWorkflow(m *AppModel, ev *acp.WorkflowEvent) {
+	ev.SessionID = "s"
+	m.ApplyEvent(ev)
+}
+
+// TestWorkflowSnapshotBuildsTerminalGraphAndSelection 验证快照通知建立 workflow
+// 终端、图与选中节点：终端在面板里可见（kind=workflow），画布顺序取图的深度优先
+// 顺序，选中节点默认为当前节点。
+func TestWorkflowSnapshotBuildsTerminalGraphAndSelection(t *testing.T) {
+	m := workflowModel()
+	applyWorkflow(m, &acp.WorkflowEvent{
+		Kind:       acp.WorkflowKindSnapshot,
+		RunID:      "@temp/run/7",
+		TerminalID: "@temp/run/7",
+		Workflow:   &acp.WorkflowInfo{WorkflowID: "w1", Status: "running", CurrentNode: "collect", LastSequence: 4},
+		Graph:      workflowGraph(),
+		AgentState: &acp.WorkflowAgentState{Type: "agent", NodeID: "collect", State: "running"},
+	})
+
+	shells := m.ActiveShells()
+	if len(shells) != 1 {
+		t.Fatalf("active shells = %v, want 1 workflow terminal", terminalIDs(shells))
+	}
+	terminal := shells[0]
+	if terminal.ID != "@temp/run/7" || terminal.Kind != "workflow" || !terminal.IsWorkflow() {
+		t.Fatalf("terminal = %#v", terminal)
+	}
+	w := terminal.Workflow
+	if w == nil || w.RunID != "@temp/run/7" || w.WorkflowID != "w1" || w.LastSequence != 4 {
+		t.Fatalf("workflow state = %#v", w)
+	}
+	if !w.HasGraph() {
+		t.Fatal("graph must be recorded")
+	}
+	// 画布顺序：collect → merge（图的深度优先），起点在 start 里给出。
+	if got := workflowNodeIDs(w); len(got) != 2 || got[0] != "collect" || got[1] != "merge" {
+		t.Fatalf("node order = %v", got)
+	}
+	if n := w.Node("merge"); n == nil || n.Name != "汇总" || n.Label() != "汇总" {
+		t.Fatalf("merge node = %#v", n)
+	}
+	if w.NodeIndex("merge") != 1 || w.NodeIndex("missing") != -1 {
+		t.Fatalf("node index: merge=%d missing=%d", w.NodeIndex("merge"), w.NodeIndex("missing"))
+	}
+	// 选中节点默认跟随当前节点（agentState / workflow.currentNode）。
+	if w.Selected != "collect" || w.SelectedNode() == nil || w.SelectedNode().ID != "collect" {
+		t.Fatalf("selected = %q", w.Selected)
+	}
+	if w.CurrentAgent != "agent" || w.CurrentAgentState != "running" {
+		t.Fatalf("agent state = %#v", w)
+	}
+	if w.Status != "running" {
+		t.Fatalf("status = %q", w.Status)
+	}
+}
+
+// TestWorkflowIncrementalEventsAccumulate 验证增量事件累加到同一份状态：
+// node / node_code / node_result / agents_start / agent / node_log 各字段落位。
+func TestWorkflowIncrementalEventsAccumulate(t *testing.T) {
+	m := workflowModel()
+	applyWorkflow(m, &acp.WorkflowEvent{
+		Kind: acp.WorkflowKindSnapshot, RunID: "@temp/run/7", TerminalID: "@temp/run/7",
+		Workflow: &acp.WorkflowInfo{Status: "running", CurrentNode: "collect"},
+		Graph:    workflowGraph(),
+	})
+	applyWorkflow(m, &acp.WorkflowEvent{Kind: acp.WorkflowKindNode, RunID: "@temp/run/7", NodeID: "collect", State: "running"})
+	applyWorkflow(m, &acp.WorkflowEvent{Kind: acp.WorkflowKindNodeCode, RunID: "@temp/run/7", NodeID: "extra", Name: "新增节点"})
+	applyWorkflow(m, &acp.WorkflowEvent{Kind: acp.WorkflowKindNodeResult, RunID: "@temp/run/7", NodeID: "merge", Result: "42"})
+	applyWorkflow(m, &acp.WorkflowEvent{Kind: acp.WorkflowKindAgentsStart, RunID: "@temp/run/7", NodeID: "collect", Count: 2, Prompts: []string{"甲", "乙"}})
+	applyWorkflow(m, &acp.WorkflowEvent{Kind: acp.WorkflowKindAgent, RunID: "@temp/run/7", NodeID: "collect", AgentIndex: 1, AgentCount: 2, State: "success", Attempt: 2})
+	applyWorkflow(m, &acp.WorkflowEvent{Kind: acp.WorkflowKindNodeLog, RunID: "@temp/run/7", NodeID: "collect", Message: "第一行"})
+	applyWorkflow(m, &acp.WorkflowEvent{Kind: acp.WorkflowKindNodeLog, RunID: "@temp/run/7", NodeID: "collect", Message: "第二行"})
+	// 未知类型（服务端不做白名单）不影响已有状态。
+	applyWorkflow(m, &acp.WorkflowEvent{Kind: acp.WorkflowEventKind("brand_new"), RunID: "@temp/run/7", NodeID: "collect"})
+
+	w := m.SelectedWorkflow()
+	if w == nil {
+		t.Fatal("workflow state missing")
+	}
+	collect := w.Node("collect")
+	if collect == nil || !collect.Running() || collect.Finished() {
+		t.Fatalf("collect = %#v", collect)
+	}
+	if got := collect.Logs; len(got) != 2 || got[0] != "第一行" || got[1] != "第二行" {
+		t.Fatalf("logs = %v", got)
+	}
+	if len(collect.Agents) != 2 || collect.Agents[1].State != "success" || collect.Agents[1].Attempt != 2 {
+		t.Fatalf("agents = %#v", collect.Agents)
+	}
+	if collect.Agents[0].Prompt != "甲" || collect.Agents[0].Count != 2 {
+		t.Fatalf("agents[0] = %#v", collect.Agents[0])
+	}
+	if collect.RunningAgents() != 0 {
+		t.Fatalf("running agents = %d (only agent 1 succeeded)", collect.RunningAgents())
+	}
+	// node_code 的显示名只在图没给名字时作为回退：extra 不在图里，用 node_code.name。
+	if extra := w.Node("extra"); extra == nil || extra.Label() != "新增节点" {
+		t.Fatalf("extra = %#v", extra)
+	}
+	// 图外节点附在画布末尾，顺序稳定。
+	if ids := workflowNodeIDs(w); len(ids) != 3 || ids[2] != "extra" {
+		t.Fatalf("node order = %v", ids)
+	}
+	merge := w.Node("merge")
+	if merge == nil || merge.Result != "42" || merge.Label() != "汇总" {
+		t.Fatalf("merge = %#v", merge)
+	}
+	if merge.Finished() {
+		t.Fatal("merge must not be finished without a node state event")
+	}
+}
+
+// TestWorkflowNodeStateTransitions 验证节点状态机：done / error / terminated 视为
+// 已结束，running 不算，缓存命中标记跟随事件更新。
+func TestWorkflowNodeStateTransitions(t *testing.T) {
+	m := workflowModel()
+	applyWorkflow(m, &acp.WorkflowEvent{
+		Kind: acp.WorkflowKindSnapshot, RunID: "@temp/run/7", TerminalID: "@temp/run/7", Graph: workflowGraph(),
+	})
+	w := m.SelectedWorkflow()
+	applyWorkflow(m, &acp.WorkflowEvent{Kind: acp.WorkflowKindNode, RunID: "@temp/run/7", NodeID: "collect", State: "done", Cached: true})
+	applyWorkflow(m, &acp.WorkflowEvent{Kind: acp.WorkflowKindNode, RunID: "@temp/run/7", NodeID: "merge", State: "error"})
+	collect, merge := w.Node("collect"), w.Node("merge")
+	if !collect.Finished() || collect.Running() || !collect.Cached {
+		t.Fatalf("collect = %#v", collect)
+	}
+	if !merge.Finished() || merge.Running() {
+		t.Fatalf("merge = %#v", merge)
+	}
+}
+
+// TestWorkflowStatusReplaysLogsInSequenceOrder 验证 workflow/status 结果按 sequence
+// 升序重放（图、agent 状态与事件日志重建），因此断线恢复不依赖实时推送。
+func TestWorkflowStatusReplaysLogsInSequenceOrder(t *testing.T) {
+	m := workflowModel()
+	m.ApplyEvent(&acp.WorkflowStatusEvent{SessionID: "s", Result: acp.WorkflowStatusResult{
+		RunID: "@temp/run/9", Status: "running",
+		Workflow: acp.WorkflowInfo{WorkflowID: "w9", Status: "running", CurrentNode: "collect"},
+		Graph:    workflowGraph(),
+		Logs: []acp.WorkflowLogEntry{
+			{Sequence: 3, Type: "node_log", NodeID: "collect", Payload: json.RawMessage(`{"type":"node_log","nodeId":"collect","message":"第三行"}`)},
+			{Sequence: 1, Type: "node_log", NodeID: "collect", Payload: json.RawMessage(`{"type":"node_log","nodeId":"collect","message":"第一行"}`)},
+			{Sequence: 2, Type: "node_result", NodeID: "collect", Payload: json.RawMessage(`{"type":"node_result","nodeId":"collect","result":"42"}`)},
+		},
+	}})
+
+	w := m.SelectedWorkflow()
+	if w == nil {
+		t.Fatal("workflow state missing")
+	}
+	collect := w.Node("collect")
+	if collect == nil {
+		t.Fatalf("collect missing: %v", workflowNodeIDs(w))
+	}
+	if got := collect.Logs; len(got) != 2 || got[0] != "第一行" || got[1] != "第三行" {
+		t.Fatalf("logs = %v (want sequence order)", got)
+	}
+	if collect.Result != "42" {
+		t.Fatalf("result = %q", collect.Result)
+	}
+	if w.WorkflowID != "w9" || w.Selected != "collect" {
+		t.Fatalf("workflow state = %#v", w)
+	}
+	// 终端仍属于活动段（状态查询不改变分段），kind 为 workflow。
+	shells := m.ActiveShells()
+	if len(shells) != 1 || shells[0].ID != "@temp/run/9" || shells[0].Status != "running" {
+		t.Fatalf("shells = %#v", shells)
+	}
+}
+
+// TestWorkflowStatusKeepsCursorAndDropsStaleNodes 验证刷新（重新查询完整快照）：
+// 用户的选中节点 / 平移 / 日志滚动保留，节点表按新快照重建（旧日志不残留）；
+// 选中节点在新图里消失时回退到合理默认值。
+func TestWorkflowStatusKeepsCursorAndDropsStaleNodes(t *testing.T) {
+	m := workflowModel()
+	applyWorkflow(m, &acp.WorkflowEvent{
+		Kind: acp.WorkflowKindSnapshot, RunID: "@temp/run/9", TerminalID: "@temp/run/9",
+		Workflow: &acp.WorkflowInfo{CurrentNode: "collect"}, Graph: workflowGraph(),
+	})
+	applyWorkflow(m, &acp.WorkflowEvent{Kind: acp.WorkflowKindNodeLog, RunID: "@temp/run/9", NodeID: "collect", Message: "旧的"})
+	w := m.SelectedWorkflow()
+	// 用户浏览到 merge 节点，并平移画布、回看日志。
+	w.Selected = "merge"
+	w.PanX, w.PanY, w.LogScroll = 3, 1, 2
+
+	m.ApplyEvent(&acp.WorkflowStatusEvent{SessionID: "s", Result: acp.WorkflowStatusResult{
+		RunID: "@temp/run/9", Status: "running",
+		Graph: workflowGraph(),
+		Logs: []acp.WorkflowLogEntry{
+			{Sequence: 1, Type: "node_log", NodeID: "merge", Payload: json.RawMessage(`{"type":"node_log","nodeId":"merge","message":"新的"}`)},
+		},
+	}})
+	if w.Selected != "merge" || w.PanX != 3 || w.PanY != 1 || w.LogScroll != 2 {
+		t.Fatalf("cursor reset by refresh: %#v", w)
+	}
+	if got := w.Node("merge").Logs; len(got) != 1 || got[0] != "新的" {
+		t.Fatalf("merge logs = %v", got)
+	}
+	if got := w.Node("collect").Logs; len(got) != 0 {
+		t.Fatalf("collect logs must be dropped on refresh, got %v", got)
+	}
+
+	// 新一轮快照里只剩 merge：选中节点消失，回退到画布第一个节点。
+	m.ApplyEvent(&acp.WorkflowStatusEvent{SessionID: "s", Result: acp.WorkflowStatusResult{
+		RunID: "@temp/run/9",
+		Graph: &acp.WorkflowGraph{
+			Nodes: map[string]acp.WorkflowGraphNode{"merge": {Name: "汇总"}},
+			Start: []string{"merge"},
+		},
+	}})
+	if w.Selected != "merge" {
+		t.Fatalf("selected = %q, want fallback to the only node", w.Selected)
+	}
+	if w.Node("collect") != nil {
+		t.Fatalf("stale node kept: %v", workflowNodeIDs(w))
+	}
+}
+
+// TestWorkflowCursorControls 验证面板按键对应的游标操作：节点选择环绕、换节点
+// 后日志回到最新、日志滚动不为负、焦点只在 workflow 终端间切换。
+func TestWorkflowCursorControls(t *testing.T) {
+	m := workflowModel()
+	applyWorkflow(m, &acp.WorkflowEvent{
+		Kind: acp.WorkflowKindSnapshot, RunID: "@temp/run/7", TerminalID: "@temp/run/7", Graph: workflowGraph(),
+	})
+	w := m.SelectedWorkflow()
+	if !m.ToggleWorkflowFocus() || !m.WorkflowFocusedOnLog() {
+		t.Fatal("toggle must switch focus to the log pane for a workflow terminal")
+	}
+	if !m.ToggleWorkflowFocus() || m.WorkflowFocusedOnLog() {
+		t.Fatal("toggle must switch focus back to the graph pane")
+	}
+	// 焦点在图上时 j/k 平移画布（不滚日志）：delta<0 往下看、>0 回顶部。
+	w.LogScroll = 1
+	if !m.ScrollWorkflowPane(-3) || w.PanY != 3 || w.LogScroll != 1 {
+		t.Fatalf("graph pane scroll: panY=%d logScroll=%d", w.PanY, w.LogScroll)
+	}
+	if !m.ScrollWorkflowPane(3) || w.PanY != 0 {
+		t.Fatalf("panY must return to the top, got %d", w.PanY)
+	}
+	if !m.PanWorkflow(2) || w.PanX != 2 || !m.PanWorkflow(-5) || w.PanX != 0 {
+		t.Fatalf("panX = %d", w.PanX)
+	}
+	// 焦点在日志上时 j/k 滚日志，且不为负。
+	m.ToggleWorkflowFocus()
+	if !m.ScrollWorkflowPane(3) || w.LogScroll != 4 {
+		t.Fatalf("log scroll = %d", w.LogScroll)
+	}
+	m.ScrollWorkflowPane(-10)
+	if w.LogScroll != 0 {
+		t.Fatalf("log scroll must clamp at 0, got %d", w.LogScroll)
+	}
+	// 节点选择环绕，并在换节点时把日志滚回最新。
+	w.LogScroll = 5
+	if !m.SelectWorkflowNode(1) || w.Selected != "merge" || w.LogScroll != 0 {
+		t.Fatalf("selection = %q logScroll = %d", w.Selected, w.LogScroll)
+	}
+	if !m.SelectWorkflowNode(-1) || w.Selected != "collect" {
+		t.Fatalf("selection = %q", w.Selected)
+	}
+	// 只有一个节点时环绕回自身，不报错。
+	m.ApplyEvent(&acp.WorkflowStatusEvent{SessionID: "s", Result: acp.WorkflowStatusResult{
+		RunID: "@temp/run/7", Graph: &acp.WorkflowGraph{Nodes: map[string]acp.WorkflowGraphNode{"solo": {}}, Start: []string{"solo"}},
+	}})
+	m.SelectWorkflowNode(1)
+	if m.SelectedWorkflow().Selected != "solo" {
+		t.Fatalf("selected = %q", m.SelectedWorkflow().Selected)
+	}
+}
+
+// TestWorkflowControlsIgnorePlainTerminals 验证非 workflow 终端不受分栏按键影响：
+// 面板里选中普通 shell 时 workflow 操作一律返回 false。
+func TestWorkflowControlsIgnorePlainTerminals(t *testing.T) {
+	m := workflowModel()
+	m.ApplyEvent(&acp.WorkflowEvent{
+		Kind: acp.WorkflowKindSnapshot, SessionID: "s", RunID: "@temp/run/7", TerminalID: "@temp/run/7", Graph: workflowGraph(),
+	})
+	// 普通 shell 后并入，排在活动段最前（活动段"新的在上"），因此选中第 0 项。
+	m.Active.ApplyTerminalInfo(acp.TerminalInfo{TerminalID: "@temp/run/1", Kind: "shell", Command: "make", Status: "running"})
+	m.ShellPanel = true
+	m.ShellSelected = 0
+	if sel := m.SelectedShell(); sel == nil || sel.ID != "@temp/run/1" {
+		t.Fatalf("selected shell = %#v", sel)
+	}
+	if m.SelectedWorkflow() != nil {
+		t.Fatal("plain shell must not expose workflow state")
+	}
+	if m.ToggleWorkflowFocus() || m.SelectWorkflowNode(1) || m.ScrollWorkflowPane(3) || m.PanWorkflow(1) {
+		t.Fatal("workflow controls must be ignored for plain shells")
+	}
+	if m.WorkflowFocusedOnLog() {
+		t.Fatal("focus must stay unchanged for plain shells")
+	}
+	// 普通 shell 的 IsWorkflow 为 false（避免面板误走 workflow 渲染）。
+	if m.Active.Terminal("@temp/run/1").IsWorkflow() {
+		t.Fatal("shell terminal must not report IsWorkflow")
+	}
+}
+
+// TestWorkflowNodeLogLimit 验证长跑 workflow 的日志上限：只保留最后
+// workflowNodeLogLines 行，避免内存无界增长。
+func TestWorkflowNodeLogLimit(t *testing.T) {
+	m := workflowModel()
+	applyWorkflow(m, &acp.WorkflowEvent{
+		Kind: acp.WorkflowKindSnapshot, RunID: "@temp/run/8", TerminalID: "@temp/run/8", Graph: workflowGraph(),
+	})
+	total := workflowNodeLogLines + 50
+	for i := 0; i < total; i++ {
+		applyWorkflow(m, &acp.WorkflowEvent{
+			Kind: acp.WorkflowKindNodeLog, RunID: "@temp/run/8", NodeID: "collect",
+			Message: "line-" + strconv.Itoa(i),
+		})
+	}
+	logs := m.SelectedWorkflow().Node("collect").Logs
+	if len(logs) != workflowNodeLogLines {
+		t.Fatalf("logs = %d, want %d", len(logs), workflowNodeLogLines)
+	}
+	if want := "line-50"; logs[0] != want {
+		t.Fatalf("oldest kept log = %q, want %q", logs[0], want)
+	}
+	if want := "line-" + strconv.Itoa(total-1); logs[len(logs)-1] != want {
+		t.Fatalf("newest log = %q, want %q", logs[len(logs)-1], want)
+	}
+}
+
+// workflowNodeIDs 返回画布顺序里的节点 ID。
+func workflowNodeIDs(w *WorkflowState) []string {
+	nodes := w.OrderedNodes()
+	out := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		out = append(out, n.ID)
+	}
+	return out
+}

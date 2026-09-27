@@ -116,6 +116,7 @@ const (
 	commandTerminalHistory
 	commandTerminalStatus
 	commandTerminalList
+	commandTerminalWorkflowStatus
 )
 
 type commandResult struct {
@@ -384,6 +385,13 @@ type modelSnapshot struct {
 	ShellIDs      []string // shells 面板列表顺序（活跃在前、历史在后）
 	HistoryIDs    []string // 历史段终端 ID
 	HistoryTexts  []string // 历史段终端内容
+
+	// 选中 workflow 终端时的工作流状态（见 model/workflow.go）。
+	ShellWorkflowLog  bool     // workflow 预览焦点是否在节点日志分栏
+	WorkflowNodes     []string // 节点 ID（按画布顺序）
+	WorkflowSelected  string   // 选中节点 ID
+	WorkflowLogScroll int      // 节点日志分栏向上回看的行数
+	WorkflowLogs      []string // 选中节点的输出行（终值结果 + 日志）
 }
 
 // snapshot 返回当前模型状态快照，供测试在应用运行期间安全轮询。
@@ -417,6 +425,17 @@ func (a *App) snapshot() modelSnapshot {
 	for _, t := range a.model.ShellHistory() {
 		s.HistoryIDs = append(s.HistoryIDs, t.ID)
 		s.HistoryTexts = append(s.HistoryTexts, t.Transcript)
+	}
+	if w := a.model.SelectedWorkflow(); w != nil {
+		s.ShellWorkflowLog = a.model.WorkflowFocusedOnLog()
+		s.WorkflowSelected = w.Selected
+		s.WorkflowLogScroll = w.LogScroll
+		for _, n := range w.OrderedNodes() {
+			s.WorkflowNodes = append(s.WorkflowNodes, n.ID)
+		}
+		if n := w.SelectedNode(); n != nil {
+			s.WorkflowLogs = append(s.WorkflowLogs, n.Logs...)
+		}
 	}
 	if a.model.Active != nil {
 		s.HasActive = true
@@ -765,6 +784,11 @@ func (a *App) applyCommandResult(result commandResult) {
 	}
 	if result.kind == commandTerminalList {
 		// 活动终端列表经 TerminalListEvent 并入模型，这里只需吞掉结果/错误。
+		return
+	}
+	if result.kind == commandTerminalWorkflowStatus {
+		// workflow 快照经 WorkflowStatusEvent 应用到模型（图/节点/日志重建）；
+		// 终端不是 workflow（run 已过期或类型不符）时失败无需打扰用户。
 		return
 	}
 	if result.kind == commandSessionDelete {

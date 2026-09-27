@@ -8,12 +8,17 @@ import (
 	"github.com/cxykevin/alcoh/internal/renderer"
 	"github.com/cxykevin/alcoh/internal/term"
 	"github.com/cxykevin/alcoh/internal/widget"
+	"github.com/cxykevin/tflow"
 )
 
 // ShellPanel renders the live shell list and selected VT preview.
 type ShellPanel struct {
 	Theme       renderer.Theme
 	PreviewRect renderer.Rect
+	// workflow 预览的图布局缓存：面板每帧重绘，但 tflow 布局只在图 / 节点状态 /
+	// 选中项变化时重算（见 workflow_panel.go）。
+	workflowLayoutKey   string
+	workflowLayoutCache *tflow.Diagram
 }
 
 func (p *ShellPanel) Draw(c *renderer.Canvas, r renderer.Rect, m *model.AppModel) {
@@ -25,7 +30,7 @@ func (p *ShellPanel) Draw(c *renderer.Canvas, r renderer.Rect, m *model.AppModel
 		if r.H > 2 {
 			c.PutText(r.X+1, r.Y+2, i18n.T("暂无 shell，按 r 重新拉取"), p.Theme.Style(p.Theme.TextMuted).WithDim(true))
 		}
-		p.footer(c, r)
+		p.footer(c, r, false)
 		return
 	}
 	if m.ShellSelected < 0 {
@@ -33,6 +38,11 @@ func (p *ShellPanel) Draw(c *renderer.Canvas, r renderer.Rect, m *model.AppModel
 	}
 	if m.ShellSelected >= len(xs) {
 		m.ShellSelected = len(xs) - 1
+	}
+	// 选中 workflow 终端时底部提示改为分栏按键（图已到达、预览走分栏渲染）。
+	workflowHints := false
+	if sel := m.SelectedShell(); sel != nil && sel.Workflow != nil {
+		workflowHints = sel.Workflow.HasGraph()
 	}
 	// 列表顺序由模型保证：前 activeCount 个是活跃 shell，其余是历史 shell；
 	// 两段内部都是"新的在上"。
@@ -47,7 +57,7 @@ func (p *ShellPanel) Draw(c *renderer.Canvas, r renderer.Rect, m *model.AppModel
 		}
 		p.PreviewRect = box
 		p.drawPreviewBox(c, box, xs[m.ShellSelected], m)
-		p.footer(c, r)
+		p.footer(c, r, workflowHints)
 		return
 	}
 	// A narrow terminal cannot present a useful 40% preview; give the
@@ -91,7 +101,7 @@ func (p *ShellPanel) Draw(c *renderer.Canvas, r renderer.Rect, m *model.AppModel
 		p.PreviewRect = previewBox
 		p.drawPreviewBox(c, previewBox, xs[m.ShellSelected], m)
 	}
-	p.footer(c, r)
+	p.footer(c, r, workflowHints)
 }
 
 // drawShellRow 绘制一条 shell：第一行左侧为 reason、右侧为彩色状态（右对齐），
@@ -176,6 +186,17 @@ func (p *ShellPanel) preview(c *renderer.Canvas, r renderer.Rect, s *model.Termi
 	if m != nil {
 		m.ShellPreviewRows = content.H
 	}
+	if s.Workflow != nil && s.Workflow.HasGraph() {
+		// workflow 终端：图 + 节点日志替代原始输出。预览框最后一列留给 VT
+		// 侧边滚动条，这里用不上（滚动条由分栏自己按需绘制）。
+		p.drawWorkflowPreview(c, renderer.NewRect(r.X, r.Y+1, r.W, r.H-1), s, m)
+		return
+	}
+	p.drawTerminalScreen(c, content, s)
+}
+
+// drawTerminalScreen 把终端最近的输出画进内容区，并按回看偏移（s.Scroll）取窗口。
+func (p *ShellPanel) drawTerminalScreen(c *renderer.Canvas, content renderer.Rect, s *model.TerminalState) {
 	syncTerminalScreen(s, content.W, content.H)
 	if s.Screen == nil {
 		return
@@ -211,7 +232,7 @@ func (p *ShellPanel) preview(c *renderer.Canvas, r renderer.Rect, s *model.Termi
 		Total: max(retained, content.H), View: content.H, Top: barTop,
 		Track: p.Theme.Style(p.Theme.BorderSubtle),
 		Thumb: p.Theme.Style(p.Theme.Border),
-	}).Draw(c, renderer.NewRect(r.X+r.W-1, r.Y+1, 1, content.H))
+	}).Draw(c, renderer.NewRect(content.X+content.W, content.Y, 1, content.H))
 }
 
 // syncTerminalScreen 让终端的 VT 屏幕适配预览内容区：宽度即换行宽度；高度在
@@ -279,10 +300,16 @@ func cutToWidth(s string, w int) string {
 	return sb.String()
 }
 
-func (p *ShellPanel) footer(c *renderer.Canvas, r renderer.Rect) {
-	if r.H > 0 {
-		c.PutText(r.X+1, r.Y+r.H-1, i18n.T("x 结束  r 刷新  PgUp/PgDn 滚动  Esc 返回"), p.Theme.Style(p.Theme.TextMuted).WithDim(true))
+// footer 绘制面板底部提示行。workflow 为 true 时追加图/节点日志分栏的按键说明。
+func (p *ShellPanel) footer(c *renderer.Canvas, r renderer.Rect, workflow bool) {
+	if r.H <= 0 {
+		return
 	}
+	hint := i18n.T("x 结束  r 刷新  PgUp/PgDn 滚动  Esc 返回")
+	if workflow {
+		hint = i18n.T("Tab 分栏  ←→ 节点  j/k 滚动  x 结束  r 刷新  Esc 返回")
+	}
+	c.PutText(r.X+1, r.Y+r.H-1, renderer.Truncate(hint, max(r.W-2, 1)), p.Theme.Style(p.Theme.TextMuted).WithDim(true))
 }
 
 // sectionLabel 在列表内绘制分段标题（如历史段），右侧用横线补满列表宽度。

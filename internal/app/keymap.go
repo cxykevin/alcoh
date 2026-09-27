@@ -298,6 +298,27 @@ func (a *App) refreshSelectedShell() {
 	})
 }
 
+// refreshSelectedWorkflow 查询选中 workflow 终端的完整快照（alkaid0 v0.5
+// workflow/status）。图与节点状态平时靠推送累积，这里在进入面板 / 刷新 / 切换选中
+// 时补一次全量快照：断线重连、或打开一个早已结束的 workflow 也能立刻看到完整的图、
+// 节点状态与日志。结果经 WorkflowStatusEvent 应用到模型。
+func (a *App) refreshSelectedWorkflow() {
+	s := a.model.SelectedShell()
+	if s == nil || a.sess == nil || !s.IsWorkflow() || !a.model.SupportsAlkaid0V05() {
+		return
+	}
+	control, ok := a.sess.(acp.WorkflowControl)
+	if !ok {
+		return
+	}
+	session := a.sess
+	runID := s.ID
+	a.startCommand(commandResult{kind: commandTerminalWorkflowStatus, sessionID: session.ID(), terminalID: runID}, func(ctx context.Context) (acp.Session, error) {
+		_, err := control.WorkflowStatus(ctx, runID)
+		return nil, err
+	})
+}
+
 // refreshShellOnEntry 进入会话时同步一次 shells 状态：活动终端 + 已结束终端。
 func (a *App) refreshShellOnEntry() {
 	a.refreshShellTerminals()
@@ -309,6 +330,7 @@ func (a *App) refreshShellPanel() {
 	a.refreshShellTerminals()
 	a.refreshShellHistory()
 	a.refreshSelectedShell()
+	a.refreshSelectedWorkflow()
 }
 
 func (a *App) sessionKey(ke input.KeyEvent) {
@@ -360,19 +382,47 @@ func (a *App) sessionKey(ke input.KeyEvent) {
 				m.ShellSelected--
 				// 切到另一个终端：预览始终从最新输出（底部）开始。
 				m.ResetShellPreviewScroll()
+				a.refreshSelectedWorkflow()
 			}
 			return
 		case input.KeyDown:
 			if m.ShellSelected < len(m.Shells())-1 {
 				m.ShellSelected++
 				m.ResetShellPreviewScroll()
+				a.refreshSelectedWorkflow()
 			}
 			return
+		case input.KeyTab:
+			// workflow 终端：在"图"与"节点日志"之间切换焦点分栏；其它终端忽略。
+			m.ToggleWorkflowFocus()
+			return
+		case input.KeyLeft:
+			if ke.IsShift() {
+				// Shift+←→ 平移图画布：查看图的左侧 / 右侧。
+				m.PanWorkflow(-1)
+				return
+			}
+			// ←→ 在 workflow 图里移动选中节点（节点日志分栏跟随选中）。
+			m.SelectWorkflowNode(-1)
+			return
+		case input.KeyRight:
+			if ke.IsShift() {
+				m.PanWorkflow(1)
+				return
+			}
+			m.SelectWorkflowNode(1)
+			return
 		case input.KeyPageUp:
-			// PgUp/PgDn 滚动预览内容（回看历史输出）。
+			// PgUp/PgDn 滚动预览内容（回看历史输出）；workflow 终端翻当前焦点分栏。
+			if m.ScrollWorkflowPane(m.ShellPreviewHeight()) {
+				return
+			}
 			m.ScrollShellPreview(m.ShellPreviewHeight())
 			return
 		case input.KeyPageDown:
+			if m.ScrollWorkflowPane(-m.ShellPreviewHeight()) {
+				return
+			}
 			m.ScrollShellPreview(-m.ShellPreviewHeight())
 			return
 		case input.KeyRune:
@@ -385,6 +435,18 @@ func (a *App) sessionKey(ke input.KeyEvent) {
 				return
 			case 'r':
 				a.refreshShellPanel()
+				return
+			case 'h':
+				m.SelectWorkflowNode(-1)
+				return
+			case 'l':
+				m.SelectWorkflowNode(1)
+				return
+			case 'j':
+				m.ScrollWorkflowPane(-3)
+				return
+			case 'k':
+				m.ScrollWorkflowPane(3)
 				return
 			}
 		}
@@ -1112,10 +1174,15 @@ func (a *App) dispatchMouse(me input.MouseEvent) {
 	// 滚轮位于预览框内时滚动终端内容（回看历史输出）。
 	if me.IsWheel() && me.Action == input.MousePress && a.model.ShellPanel && a.model.Modal == model.NoModal {
 		if r := a.view.ShellPreviewRect; r.W > 0 && me.X >= r.X && me.X < r.X+r.W && me.Y >= r.Y && me.Y < r.Y+r.H {
+			// workflow 终端的预览分栏有自己的滚动游标（图平移 / 节点日志）。
 			if me.Button == input.MouseWheelUp {
-				a.model.ScrollShellPreview(3)
+				if !a.model.ScrollWorkflowPane(3) {
+					a.model.ScrollShellPreview(3)
+				}
 			} else if me.Button == input.MouseWheelDown {
-				a.model.ScrollShellPreview(-3)
+				if !a.model.ScrollWorkflowPane(-3) {
+					a.model.ScrollShellPreview(-3)
+				}
 			}
 			return
 		}

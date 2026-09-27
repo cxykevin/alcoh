@@ -137,6 +137,15 @@ type ShellStopEvent struct {
 	Raw        json.RawMessage
 }
 
+// WorkflowStatusEvent 携带 workflow/status 的查询结果（由客户端主动查询后广播，与
+// TerminalHistoryEvent 同构）。它含完整图、当前 agent 状态与有序事件日志：模型据此
+// 重建 workflow 状态（日志按 sequence 重放），因此已结束的 workflow 也能显示
+// 节点、agent 与日志，而不依赖断线前的实时推送。
+type WorkflowStatusEvent struct {
+	SessionID string
+	Result    WorkflowStatusResult
+}
+
 // AvailableCommand 是 agent 公布的 slash 命令。未识别字段保留在 Raw。
 type AvailableCommand struct {
 	Name        string          `json:"name"`
@@ -201,6 +210,8 @@ func (*TerminalUpdateEvent) isEvent()       {}
 func (*TerminalHistoryEvent) isEvent()      {}
 func (*TerminalListEvent) isEvent()         {}
 func (*ShellStopEvent) isEvent()            {}
+func (*WorkflowEvent) isEvent()             {}
+func (*WorkflowStatusEvent) isEvent()       {}
 func (*CommandsUpdateEvent) isEvent()       {}
 func (*ConfigOptionUpdateEvent) isEvent()   {}
 func (*SessionInfoUpdateEvent) isEvent()    {}

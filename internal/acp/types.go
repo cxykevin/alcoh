@@ -267,6 +267,9 @@ type TerminalInfo struct {
 	// Restored 标记该条目来自持久化副本（服务端重启后内存中已无该终端）。
 	// 此时只有 TerminalID / SessionID / Content 可信，Status 固定为 finished。
 	Restored bool `json:"restored,omitempty"`
+	// Workflow 为 true 表示该终端是 dynworkflow 工作流（kind 同样为 workflow）。
+	// 列表/历史查询里的 workflow 终端还会各自附带一条 workflow 快照通知。
+	Workflow bool `json:"workflow,omitempty"`
 }
 
 // TerminalStatusFinished 报告终端状态是否已结束：结束的终端会从活动列表
@@ -288,6 +291,15 @@ type TerminalControl interface {
 	// TerminalHistory 返回已结束终端（含持久化副本）。terminalID 为空时
 	// 返回该会话全部已结束终端。仅 v0.6 服务端支持。
 	TerminalHistory(context.Context, string) ([]TerminalInfo, error)
+}
+
+// WorkflowControl 暴露 alkaid0 v0.5 的 workflow 查询方法（见 extension.md §3.2）。
+// 与 TerminalControl 分开声明：workflow 是可选能力，实现方（含测试替身）可以只实现
+// 终端部分，调用方用类型断言按需取用。
+type WorkflowControl interface {
+	// WorkflowStatus 返回 workflow 的完整持久化快照（图、agent 状态与事件日志）。
+	// workflow 已结束或不在内存中时同样可查询；runID 不是 workflow 时返回错误。
+	WorkflowStatus(context.Context, string) (WorkflowStatusResult, error)
 }
 
 // ---- 会话 ----

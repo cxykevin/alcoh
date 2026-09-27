@@ -184,6 +184,9 @@ func DecodeSessionUpdatePayload(sessionID string, raw json.RawMessage) (Event, e
 			update.Terminal.Status = update.Status
 		}
 		return &TerminalUpdateEvent{SessionID: sessionID, TerminalID: update.TerminalID, Title: update.Title, Command: update.Command, Status: update.Status, Output: output, UpdateType: update.UpdateType, Terminals: update.Terminals, Terminal: update.Terminal, Raw: append(json.RawMessage(nil), raw...)}, nil
+	case UpdateWorkflowSnapshot:
+		// workflow 快照通知：终端是 workflow 时随终端查询/推送附带的完整图与状态。
+		return decodeWorkflowSnapshot(sessionID, raw)
 	case "available_commands_update":
 		var update struct {
 			AvailableCommands json.RawMessage `json:"availableCommands"`
@@ -228,6 +231,11 @@ func DecodeSessionUpdatePayload(sessionID string, raw json.RawMessage) (Event, e
 	case "other", "":
 		return &UnknownSessionUpdateEvent{SessionID: sessionID, Discriminator: kind, Raw: append(json.RawMessage(nil), raw...)}, nil
 	default:
+		// workflow 增量事件（update_graph / update_node / update_agent / update_node_log …）：
+		// 载荷即 dynworkflow 的事件字段；未识别的类型同样按 workflow 事件保留，由 UI 忽略。
+		if wfKind, ok := workflowUpdateKind(kind); ok {
+			return decodeWorkflowUpdate(sessionID, wfKind, raw)
+		}
 		return &UnknownSessionUpdateEvent{SessionID: sessionID, Discriminator: kind, Raw: append(json.RawMessage(nil), raw...)}, nil
 	}
 }

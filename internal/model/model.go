@@ -89,6 +89,9 @@ type AppModel struct {
 	// ShellPreviewRows 是 shells 面板预览视口高度（视图绘制时写入，用于翻页）。
 	ShellPreviewRows int
 	ShellSelected    int
+	// ShellWorkflowFocus 是 workflow 预览的焦点分栏（图 / 节点日志，Tab 切换）；
+	// 对非 workflow 终端无意义。
+	ShellWorkflowFocus WorkflowFocus
 
 	Modal           ModalKind
 	Permission      *acp.PermissionRequest
@@ -717,6 +720,13 @@ func (m *AppModel) ResetShellPreviewScroll() {
 	if s := m.SelectedShell(); s != nil {
 		s.Scroll = 0
 		s.FollowBottom = true
+		// workflow 终端：画布平移与节点日志滚动也回到起点（节点选择保留，
+		// 便于在列表里来回比较同一个节点的输出）。
+		if s.Workflow != nil {
+			s.Workflow.PanX = 0
+			s.Workflow.PanY = 0
+			s.Workflow.LogScroll = 0
+		}
 	}
 }
 
@@ -1082,6 +1092,16 @@ func (m *AppModel) ApplyEvent(ev acp.Event) {
 				m.Active.ApplyTerminalInfo(info)
 			}
 		}
+	case *acp.WorkflowEvent:
+		// workflow 终端事件（快照通知与 update_* 增量）：图/节点/日志按 runId 累积。
+		if m.SupportsAlkaid0V05() && m.HasActive() && e.SessionID == m.Active.ID {
+			m.Active.ApplyWorkflowEvent(e)
+		}
+	case *acp.WorkflowStatusEvent:
+		// workflow/status 查询结果：完整快照按 sequence 重放，刷新时不依赖推送。
+		if m.SupportsAlkaid0V05() && m.HasActive() && e.SessionID == m.Active.ID {
+			m.Active.ApplyWorkflowStatus(e.Result)
+		}
 	case *acp.UnknownSessionUpdateEvent:
 		if m.HasActive() && e.SessionID == m.Active.ID {
 			m.Active.ProtocolUpdates = appendProtocolUpdate(m.Active.ProtocolUpdates, e.Raw)
@@ -1197,6 +1217,10 @@ func eventSessionID(ev acp.Event) string {
 	case *acp.TerminalListEvent:
 		return e.SessionID
 	case *acp.ShellStopEvent:
+		return e.SessionID
+	case *acp.WorkflowEvent:
+		return e.SessionID
+	case *acp.WorkflowStatusEvent:
 		return e.SessionID
 	case *acp.UnknownSessionUpdateEvent:
 		return e.SessionID
