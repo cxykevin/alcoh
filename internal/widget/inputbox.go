@@ -146,16 +146,26 @@ func (b *InputBuffer) InsertText(text string) {
 		cx, cy := x.CX, x.CY
 		first := append([]rune(nil), line[:cx]...)
 		last := append([]rune(nil), line[cx:]...)
+		// lastPrefix 是最后一个新行里原有内容的长度。多行粘贴时末行只有粘贴
+		// 文本；单行粘贴时末行与首行是同一行，粘贴文本前面还有光标前的内容，
+		// 必须连同原有后缀一次拼好——否则两次写入 newLines[len(parts)-1] 会
+		// 互相覆盖，光标前的内容随粘贴一起被清掉。
+		lastPrefix := 0
 		newLines := make([][]rune, len(parts))
-		newLines[0] = append(first, []rune(parts[0])...)
-		for i := 1; i < len(parts)-1; i++ {
-			newLines[i] = []rune(parts[i])
+		if len(parts) == 1 {
+			lastPrefix = cx
+			newLines[0] = append(append(first, []rune(parts[0])...), last...)
+		} else {
+			newLines[0] = append(first, []rune(parts[0])...)
+			for i := 1; i < len(parts)-1; i++ {
+				newLines[i] = []rune(parts[i])
+			}
+			newLines[len(parts)-1] = append([]rune(parts[len(parts)-1]), last...)
 		}
-		newLines[len(parts)-1] = append([]rune(parts[len(parts)-1]), last...)
 		x.Lines = append(x.Lines[:cy], append(newLines, x.Lines[cy+1:]...)...)
 		x.CY = cy + len(newLines) - 1
-		// Keep the cursor before the original suffix, not after it.
-		x.CX = len([]rune(parts[len(parts)-1]))
+		// 光标停在粘贴内容之后、原有后缀之前（单行粘贴时原有前缀要计入）。
+		x.CX = lastPrefix + len([]rune(parts[len(parts)-1]))
 	})
 }
 

@@ -1340,3 +1340,29 @@ func TestSettingsLanguageSwitchApplies(t *testing.T) {
 		t.Errorf("reloaded language = %q, want en", loaded.Language)
 	}
 }
+
+// TestPasteKeepsCurrentLine 回归：单行粘贴不得清掉输入框当前行已有的内容。
+// 旧实现把粘贴文本同时当作首段与末段写进同一行，后一次写入覆盖前一次，
+// 于是粘贴后整行只剩粘贴内容（光标前输入的内容被"清空"）。
+func TestPasteKeepsCurrentLine(t *testing.T) {
+	setConfigDir(t)
+	ft := newFakeTerm()
+	a := New(ft, demo.New(true))
+	done := runApp(t, a)
+
+	time.Sleep(100 * time.Millisecond)
+	for _, r := range "hello" {
+		ft.sendKey(input.RuneKey(r, input.ModNone))
+	}
+	time.Sleep(50 * time.Millisecond)
+	ft.sendKey(input.KeyEvent{Type: input.KeyPaste, Text: " world"})
+	time.Sleep(50 * time.Millisecond)
+	ft.sendKey(input.RuneKey('q', input.ModCtrl))
+	time.Sleep(50 * time.Millisecond)
+	ft.sendKey(input.RuneKey('y', input.ModNone))
+	waitRun(t, done)
+
+	if got := a.model.Input.Text(); got != "hello world" {
+		t.Errorf("input after paste = %q, want %q", got, "hello world")
+	}
+}

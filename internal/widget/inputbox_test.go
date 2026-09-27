@@ -211,6 +211,62 @@ func TestInputBufferPaste(t *testing.T) {
 	}
 }
 
+// TestInputBufferPasteSingleLine 回归：单行粘贴（文本里没有换行）时，光标前的
+// 内容不能被粘贴覆盖掉。旧实现把首段与末段都写进 newLines[0]，后者覆盖前者，
+// 于是整行只剩粘贴文本——表现为"一粘贴当前行内容就没了"。
+func TestInputBufferPasteSingleLine(t *testing.T) {
+	b := NewInputBuffer()
+	for _, r := range "hello world" {
+		b.InsertRune(r)
+	}
+	b.CX = 5 // 光标停在 "hello" 之后
+	b.InsertText("XYZ")
+	if got := b.Text(); got != "helloXYZ world" {
+		t.Fatalf("paste = %q, want %q", got, "helloXYZ world")
+	}
+	// 光标停在粘贴内容之后、原有后缀之前。
+	if b.CY != 0 || b.CX != 8 {
+		t.Fatalf("cursor = (%d,%d), want (0,8)", b.CY, b.CX)
+	}
+	b.Undo()
+	if got := b.Text(); got != "hello world" {
+		t.Fatalf("undo paste = %q, want %q", got, "hello world")
+	}
+}
+
+// TestInputBufferPasteSingleLineAtEnd 单行粘贴到行尾：原有内容（含宽字符）
+// 全部保留，光标落在粘贴文本之后。
+func TestInputBufferPasteSingleLineAtEnd(t *testing.T) {
+	b := NewInputBuffer()
+	for _, r := range "你好" {
+		b.InsertRune(r)
+	}
+	b.InsertText("世界")
+	if got := b.Text(); got != "你好世界" {
+		t.Fatalf("paste = %q, want %q", got, "你好世界")
+	}
+	if b.CY != 0 || b.CX != 4 {
+		t.Fatalf("cursor = (%d,%d), want (0,4)", b.CY, b.CX)
+	}
+}
+
+// TestInputBufferPasteMultiLine 多行粘贴到行中间：首行接原有前缀、末行保留
+// 原有后缀，光标停在末行粘贴文本之后。
+func TestInputBufferPasteMultiLine(t *testing.T) {
+	b := NewInputBuffer()
+	for _, r := range "abXY" {
+		b.InsertRune(r)
+	}
+	b.CX = 2
+	b.InsertText("1\n2\n3")
+	if got := b.Text(); got != "ab1\n2\n3XY" {
+		t.Fatalf("paste = %q, want %q", got, "ab1\n2\n3XY")
+	}
+	if b.CY != 2 || b.CX != 1 {
+		t.Fatalf("cursor = (%d,%d), want (2,1)", b.CY, b.CX)
+	}
+}
+
 func TestInputBufferTrailingContinuation(t *testing.T) {
 	b := NewInputBuffer()
 	for _, r := range "中文\\" {
