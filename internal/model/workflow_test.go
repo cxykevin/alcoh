@@ -101,7 +101,8 @@ func TestWorkflowIncrementalEventsAccumulate(t *testing.T) {
 	applyWorkflow(m, &acp.WorkflowEvent{Kind: acp.WorkflowKindNodeCode, RunID: "@temp/run/7", NodeID: "extra", Name: "新增节点"})
 	applyWorkflow(m, &acp.WorkflowEvent{Kind: acp.WorkflowKindNodeResult, RunID: "@temp/run/7", NodeID: "merge", Result: "42"})
 	applyWorkflow(m, &acp.WorkflowEvent{Kind: acp.WorkflowKindAgentsStart, RunID: "@temp/run/7", NodeID: "collect", Count: 2, Prompts: []string{"甲", "乙"}})
-	applyWorkflow(m, &acp.WorkflowEvent{Kind: acp.WorkflowKindAgent, RunID: "@temp/run/7", NodeID: "collect", AgentIndex: 1, AgentCount: 2, State: "success", Attempt: 2})
+	// agentIndex 从 1 开始（第二个 agent 成功、重试过一次）。
+	applyWorkflow(m, &acp.WorkflowEvent{Kind: acp.WorkflowKindAgent, RunID: "@temp/run/7", NodeID: "collect", AgentIndex: 2, AgentCount: 2, State: "success", Attempt: 2})
 	applyWorkflow(m, &acp.WorkflowEvent{Kind: acp.WorkflowKindNodeLog, RunID: "@temp/run/7", NodeID: "collect", Message: "第一行"})
 	applyWorkflow(m, &acp.WorkflowEvent{Kind: acp.WorkflowKindNodeLog, RunID: "@temp/run/7", NodeID: "collect", Message: "第二行"})
 	// 未知类型（服务端不做白名单）不影响已有状态。
@@ -141,6 +142,91 @@ func TestWorkflowIncrementalEventsAccumulate(t *testing.T) {
 	}
 	if merge.Finished() {
 		t.Fatal("merge must not be finished without a node state event")
+	}
+}
+
+// TestWorkflowAgentIndexIsOneBased 验证 agent 事件里的 agentIndex 是"从 1 开始"的
+// 序号（dynworkflow 协议：本次调用中的第几个 agent）。按 0 起处理会让第 1 个 agent
+// 的事件落到第二行：列表第 1 行永远停在"等待"且与第 2 行内容重复，还会多出一条
+// 幻影行。缺省（0 = 事件没带该字段）按第一个 agent 处理。
+func TestWorkflowAgentIndexIsOneBased(t *testing.T) {
+	m := workflowModel()
+	applyWorkflow(m, &acp.WorkflowEvent{
+		Kind: acp.WorkflowKindSnapshot, RunID: "@temp/run/7", TerminalID: "@temp/run/7", Graph: workflowGraph(),
+	})
+	applyWorkflow(m, &acp.WorkflowEvent{
+		Kind: acp.WorkflowKindAgentsStart, RunID: "@temp/run/7", NodeID: "collect", Count: 2, Prompts: []string{"甲", "乙"},
+	})
+	applyWorkflow(m, &acp.WorkflowEvent{
+		Kind: acp.WorkflowKindAgent, RunID: "@temp/run/7", NodeID: "collect",
+		AgentIndex: 1, AgentCount: 2, State: "running", Prompt: "甲",
+	})
+	applyWorkflow(m, &acp.WorkflowEvent{
+		Kind: acp.WorkflowKindAgent, RunID: "@temp/run/7", NodeID: "collect",
+		AgentIndex: 2, AgentCount: 2, State: "success", Prompt: "乙",
+	})
+
+	agents := m.SelectedWorkflow().Node("collect").Agents
+	if len(agents) != 2 {
+		t.Fatalf("agent 数 = %d（%#v）：agentIndex 从 1 起就不该补出幻影行", len(agents), agents)
+	}
+	if agents[0].State != "running" || agents[1].State != "success" {
+		t.Fatalf("第 1/2 个 agent 状态 = %q/%q，want running/success", agents[0].State, agents[1].State)
+	}
+	if agents[0].Prompt != "甲" || agents[1].Prompt != "乙" {
+		t.Fatalf("提示词与序号错位：%q / %q", agents[0].Prompt, agents[1].Prompt)
+	}
+	if agents[0].Index != 0 || agents[1].Index != 1 {
+		t.Fatalf("内部下标 = %d/%d，want 0/1（显示时再 +1）", agents[0].Index, agents[1].Index)
+	}
+	if got := m.SelectedWorkflow().Node("collect").RunningAgents(); got != 1 {
+		t.Fatalf("运行中的 agent = %d, want 1", got)
+	}
+
+	// 没有 agents_start 时，第 1 个 agent 的事件建立唯一的第一行（不补空的前导行）。
+	solo := workflowModel()
+	applyWorkflow(solo, &acp.WorkflowEvent{
+		Kind: acp.WorkflowKindSnapshot, RunID: "@temp/run/8", TerminalID: "@temp/run/8", Graph: workflowGraph(),
+	})
+	applyWorkflow(solo, &acp.WorkflowEvent{
+		Kind: acp.WorkflowKindAgent, RunID: "@temp/run/8", NodeID: "collect",
+		AgentIndex: 1, AgentCount: 1, State: "running",
+	})
+	if got := solo.SelectedWorkflow().Node("collect").Agents; len(got) != 1 || got[0].State != "running" {
+		t.Fatalf("单个 agent = %#v", got)
+	}
+	// 缺省 agentIndex（0）同样落在第一个 agent 上。
+	applyWorkflow(solo, &acp.WorkflowEvent{
+		Kind: acp.WorkflowKindAgent, RunID: "@temp/run/8", NodeID: "collect", State: "success",
+	})
+	if got := solo.SelectedWorkflow().Node("collect").Agents; len(got) != 1 || got[0].State != "success" {
+		t.Fatalf("缺省序号的 agent 事件 = %#v", got)
+	}
+}
+
+// TestWorkflowStatusReplaysAgentIndexFromLogEntry 验证 status 重放时 payload 没带
+// agentIndex 的 agent 事件用日志条目上的序号（同样是 1 起）落位。
+func TestWorkflowStatusReplaysAgentIndexFromLogEntry(t *testing.T) {
+	m := workflowModel()
+	m.ApplyEvent(&acp.WorkflowStatusEvent{SessionID: "s", Result: acp.WorkflowStatusResult{
+		RunID: "@temp/run/9", Graph: workflowGraph(),
+		Logs: []acp.WorkflowLogEntry{
+			{Sequence: 1, Type: "agents_start", NodeID: "collect",
+				Payload: json.RawMessage(`{"type":"agents_start","nodeId":"collect","count":2,"prompts":["甲","乙"]}`)},
+			{Sequence: 2, Type: "agent", NodeID: "collect", AgentIndex: 2,
+				Payload: json.RawMessage(`{"type":"agent","nodeId":"collect","state":"success"}`)},
+		},
+	}})
+
+	agents := m.SelectedWorkflow().Node("collect").Agents
+	if len(agents) != 2 {
+		t.Fatalf("agent 数 = %d（%#v）", len(agents), agents)
+	}
+	if agents[1].State != "success" || agents[1].Prompt != "乙" {
+		t.Fatalf("第 2 个 agent = %#v，日志条目上的序号没落位", agents[1])
+	}
+	if agents[0].State != "waiting" {
+		t.Fatalf("第 1 个 agent = %#v，不该被第 2 个的事件改到", agents[0])
 	}
 }
 

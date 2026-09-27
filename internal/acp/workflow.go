@@ -115,6 +115,7 @@ const (
 
 // WorkflowEvent 是解码后的 workflow 事件。不同 Kind 只填充各自的字段，
 // 其余字段保持零值；未知 Kind 也会作为事件保留（客户端应忽略不认识的类型）。
+// AgentIndex 是"从 1 开始"的序号（本次调用中的第几个 agent），0 表示事件没带该字段。
 type WorkflowEvent struct {
 	SessionID string
 	Kind      WorkflowEventKind
@@ -151,6 +152,7 @@ type WorkflowEvent struct {
 }
 
 // WorkflowLogEntry 是 workflow/status 返回的一条持久化事件。
+// AgentIndex 与事件里的同名字段一致：从 1 开始的序号。
 type WorkflowLogEntry struct {
 	Sequence   int             `json:"sequence"`
 	Type       string          `json:"type"`

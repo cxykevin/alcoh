@@ -33,7 +33,7 @@ const workflowPaneCount = int(WorkflowPaneAgents) + 1
 
 // WorkflowAgent 是节点内一次 Agent 调用的状态（agent 事件）。
 type WorkflowAgent struct {
-	Index   int
+	Index   int    // 本次调用内第几个 agent（内部按 0 起下标存放，显示为 Index+1）
 	Count   int    // 本次调用的 agent 总数（agents_start.count / agent.agentCount）
 	State   string // waiting / running / success / failure
 	Prompt  string
@@ -102,7 +102,7 @@ func (n *WorkflowNode) appendLog(line string) {
 	}
 }
 
-// agent 返回节点内指定序号的 agent 状态，不存在时补齐。
+// agent 返回节点内指定序号的 agent 状态（0 起下标），不存在时补齐。
 func (n *WorkflowNode) agent(index int) *WorkflowAgent {
 	if index < 0 {
 		index = 0
@@ -494,6 +494,7 @@ func applyWorkflowLogEntry(runID string, w *WorkflowState, entry acp.WorkflowLog
 	if ev.NodeID == "" {
 		ev.NodeID = entry.NodeID
 	}
+	// agentIndex 从 1 开始，0 表示 payload 里没带这个字段（用日志条目上的值兜底）。
 	if ev.AgentIndex == 0 {
 		ev.AgentIndex = entry.AgentIndex
 	}
@@ -603,7 +604,10 @@ func (w *WorkflowState) applyEvent(ev *acp.WorkflowEvent) {
 		}
 	case acp.WorkflowKindAgent:
 		if n := w.node(ev.NodeID); n != nil {
-			agent := n.agent(ev.AgentIndex)
+			// 协议里的 agentIndex 从 1 开始（本次调用中的第几个 agent），内部按
+			// 0 起下标存放：直接用会让第 1 个 agent 的事件落到第二行，留下一个
+			// 永远"等待"的 #1 与一条多出来的幻影行。
+			agent := n.agent(ev.AgentIndex - 1)
 			if ev.AgentCount > 0 {
 				agent.Count = ev.AgentCount
 			}

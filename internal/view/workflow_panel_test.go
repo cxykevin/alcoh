@@ -2,6 +2,7 @@ package view
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -92,6 +93,18 @@ func regionRows(b *renderer.Buffer, r renderer.Rect) []string {
 	return out
 }
 
+// agentRow 返回 Agent 列表页里序号为 index 的那一行（行内含 "#<index> "），
+// 找不到时返回空串：用来按行比对序号、状态与提示词，避免只断言"页面上出现过"。
+func agentRow(rows []string, index int) string {
+	prefix := fmt.Sprintf("#%d ", index)
+	for _, row := range rows {
+		if strings.Contains(row, prefix) {
+			return row
+		}
+	}
+	return ""
+}
+
 // TestWorkflowPreviewRendersGraphAndLogPanes 验证 workflow 终端的预览被替换成
 // 上下分栏：上分栏为图（节点显示名）、下栏是页签条 + 激活页正文（默认节点日志：
 // 选中节点的终值结果与输出行）；两个分栏都不带焦点标记，并把分栏内尺寸写回模型
@@ -149,9 +162,14 @@ func TestWorkflowPaneTabsAndAgentList(t *testing.T) {
 		Kind: acp.WorkflowKindAgentsStart, RunID: "@temp/run/7", NodeID: "collect",
 		Count: 2, Prompts: []string{"甲", "乙"},
 	})
+	// agentIndex 从 1 开始：第 1 个 agent 运行中，第 2 个已完成（重试过一次）。
 	apply(&acp.WorkflowEvent{
 		Kind: acp.WorkflowKindAgent, RunID: "@temp/run/7", NodeID: "collect",
-		AgentIndex: 1, AgentCount: 2, State: "success", Attempt: 2,
+		AgentIndex: 1, AgentCount: 2, State: "running",
+	})
+	apply(&acp.WorkflowEvent{
+		Kind: acp.WorkflowKindAgent, RunID: "@temp/run/7", NodeID: "collect",
+		AgentIndex: 2, AgentCount: 2, State: "success", Attempt: 2,
 	})
 
 	b, preview := drawWorkflowPanel(t, m)
@@ -175,10 +193,16 @@ func TestWorkflowPaneTabsAndAgentList(t *testing.T) {
 		t.Fatalf("agent page must be active in the tab strip: %q", rows[0])
 	}
 	text := strings.Join(rows, "\n")
-	for _, want := range []string{"#1", "waiting", "甲", "#2", "finished", "(attempt 2)"} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("agent page missing %q: %q", want, rows)
-		}
+	// 序号、状态与提示词按行对齐：agentIndex 从 1 起，第 1 行是"甲"（不该停在
+	// waiting、也不该与第 2 行重复），第 2 行是"乙"并带上尝试次数。
+	if row := agentRow(rows, 1); !strings.Contains(row, "running") || !strings.Contains(row, "甲") {
+		t.Fatalf("第 1 个 agent 行 = %q，want 运行中 + 甲", row)
+	}
+	if row := agentRow(rows, 2); !strings.Contains(row, "finished") || !strings.Contains(row, "乙") || !strings.Contains(row, "(attempt 2)") {
+		t.Fatalf("第 2 个 agent 行 = %q，want 已完成 + 乙 + 尝试次数", row)
+	}
+	if strings.Contains(text, "#3") {
+		t.Fatalf("Agent 列表多出了幻影行（agentIndex 当成了 0 起下标）: %q", rows)
 	}
 	if strings.Contains(text, "第一行") {
 		t.Fatalf("agent page must not show the node log: %q", rows)
