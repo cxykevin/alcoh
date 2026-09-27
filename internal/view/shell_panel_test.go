@@ -2,6 +2,8 @@ package view
 
 import (
 	"encoding/json"
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -97,6 +99,126 @@ func TestShellPanelListsActiveThenHistory(t *testing.T) {
 	}
 	if !strings.Contains(joined, "ok") {
 		t.Fatalf("preview content missing:\n%s", joined)
+	}
+}
+
+// TestShellListRowsAndTop 验证列表按行铺开与窗口起点：每条 shell 两行（reason/状态
+// 与命令），历史段前插入一行分节标题；装得下时停在顶部，装不下时把选中项贴到窗口
+// 底部（它的两行都要露出来）。
+func TestShellListRowsAndTop(t *testing.T) {
+	rows := shellListRows(4, 2)
+	want := []shellListRow{
+		{index: 0}, {index: 0, line: 1},
+		{index: 1}, {index: 1, line: 1},
+		{index: -1},
+		{index: 2}, {index: 2, line: 1},
+		{index: 3}, {index: 3, line: 1},
+	}
+	if !slices.Equal(rows, want) {
+		t.Fatalf("rows = %+v, want %+v", rows, want)
+	}
+	// 没有历史段时不插分节行。
+	if got := shellListRows(2, 2); len(got) != 4 {
+		t.Fatalf("rows without history = %+v", got)
+	}
+	// 装得下：窗口停在顶部（列表照旧从第一条画起）。
+	if got := shellListTop(rows, 3, 20); got != 0 {
+		t.Fatalf("top with room = %d, want 0", got)
+	}
+	// 装不下：选中项落在窗口最后两行。
+	if got := shellListTop(rows, 3, 4); got != 5 {
+		t.Fatalf("top scrolled = %d, want 5", got)
+	}
+	// 选中项缺失时不滚动。
+	if got := shellListTop(rows, 9, 4); got != 0 {
+		t.Fatalf("top for unknown selection = %d, want 0", got)
+	}
+}
+
+// TestShellPanelListScrollsToSelection 验证终端列表超出一屏时跟随选中项滚动：
+// 选中的那条（含命令那行）始终完整可见，列表最右一列随之出现滚动条。
+func TestShellPanelListScrollsToSelection(t *testing.T) {
+	useEnglish(t)
+	theme := renderer.DefaultTheme()
+	m := &model.AppModel{}
+	m.SetAgentInfo(acp.AgentInfo{}, acp.AgentCapabilities{Raw: json.RawMessage(
+		"{\"alk.cxykevin.top/alkaid0/v0.5\":{}}")})
+	m.ActivateSession("s1", "会话")
+	m.ShellPanel = true
+	for i := range 20 {
+		m.Active.ApplyTerminalInfo(acp.TerminalInfo{
+			TerminalID: fmt.Sprintf("@temp/run/%d", i),
+			Reason:     fmt.Sprintf("task %d", i),
+			Command:    fmt.Sprintf("cmd %d", i),
+			Status:     "running",
+		})
+	}
+	// 活动段"新的在上"：下标 19 是最早创建的 @temp/run/0，也就是最后一条。
+	m.ShellSelected = 19
+	b := renderer.NewBuffer(100, 20)
+	p := &ShellPanel{Theme: theme}
+	p.Draw(renderer.NewCanvas(b), renderer.NewRect(0, 0, 100, 20), m)
+	lines := bufferText(b)
+
+	// 列表可视区为第 3~19 行（17 行）：窗口随选中项下移，选中项贴住底部。
+	if !strings.Contains(lines[17], "> task 0") || !strings.Contains(lines[17], "running") {
+		t.Fatalf("selected terminal line 1 = %q", lines[17])
+	}
+	if !strings.Contains(lines[18], "cmd 0") {
+		t.Fatalf("selected terminal line 2 = %q", lines[18])
+	}
+	// 顶部的终端已被滚出窗口，且窗口起点落在整条上（不会只露半条）。
+	if joined := strings.Join(lines[2:19], "\n"); strings.Contains(joined, "task 19") {
+		t.Fatalf("scrolled-out terminal must not be visible:\n%s", joined)
+	}
+	// 滚动条贴在列表最右一列（列表宽 3/5 = 60，预览框从第 62 列起）；滚到底部时
+	// 滑块落在最后几行。
+	if got := b.Get(59, 18).R; got != '█' {
+		t.Fatalf("scrollbar thumb at the bottom = %q, want '█'", got)
+	}
+	if got := b.Get(59, 2).R; got != '│' {
+		t.Fatalf("scrollbar track at the top = %q, want '│'", got)
+	}
+	// 滚回第一条：窗口回到顶部，滚出窗口的终端重新出现。
+	m.ShellSelected = 0
+	p.Draw(renderer.NewCanvas(b), renderer.NewRect(0, 0, 100, 20), m)
+	if !strings.Contains(bufferText(b)[2], "> task 19") {
+		t.Fatalf("scrolling back must show the top of the list: %q", bufferText(b)[2])
+	}
+}
+
+// TestShellPanelListNoScrollbarWhenFits 验证列表装得下一屏时不画滚动条：
+// 右侧不多出一条线，内容照旧从第一行画起。
+func TestShellPanelListNoScrollbarWhenFits(t *testing.T) {
+	useEnglish(t)
+	theme := renderer.DefaultTheme()
+	m := &model.AppModel{}
+	m.SetAgentInfo(acp.AgentInfo{}, acp.AgentCapabilities{Raw: json.RawMessage(
+		"{\"alk.cxykevin.top/alkaid0/v0.5\":{}}")})
+	m.ActivateSession("s1", "会话")
+	m.ShellPanel = true
+	for i := range 3 {
+		m.Active.ApplyTerminalInfo(acp.TerminalInfo{
+			TerminalID: fmt.Sprintf("@temp/run/%d", i),
+			Reason:     fmt.Sprintf("task %d", i),
+			Command:    fmt.Sprintf("cmd %d", i),
+			Status:     "running",
+		})
+	}
+	m.ShellSelected = 1
+	b := renderer.NewBuffer(100, 20)
+	p := &ShellPanel{Theme: theme}
+	p.Draw(renderer.NewCanvas(b), renderer.NewRect(0, 0, 100, 20), m)
+
+	lines := bufferText(b)
+	// 列表从第一条画起：最新的 @temp/run/2 在最上面，选中的 @temp/run/1 紧随其后。
+	if !strings.Contains(lines[2], "task 2") || !strings.Contains(lines[4], "> task 1") {
+		t.Fatalf("list must start at the top:\n%s", strings.Join(lines[2:8], "\n"))
+	}
+	for y := 2; y < 19; y++ {
+		if got := b.Get(59, y).R; got != ' ' {
+			t.Fatalf("no scrollbar expected at (59,%d): %q", y, got)
+		}
 	}
 }
 

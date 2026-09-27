@@ -77,22 +77,24 @@ func (p *ShellPanel) Draw(c *renderer.Canvas, r renderer.Rect, m *model.AppModel
 	maxLeft := max(left-3, 1)
 	c.PutText(r.X+1, r.Y, i18n.T("终端"), p.Theme.Style(p.Theme.Text).WithBold(true))
 	c.PutText(r.X+9, r.Y, renderer.Truncate(shellSummary(activeCount, len(xs)-activeCount), max(left-9, 1)), p.Theme.Style(p.Theme.Accent).WithBold(true))
-	y := r.Y + 2
-	for i, s := range xs {
-		if i == activeCount {
-			if y >= r.Y+r.H-2 {
-				break
-			}
-			p.sectionLabel(c, r.X+1, y, left, i18n.T("历史 (%d)", len(xs)-activeCount))
-			y++
+	// 列表按行铺开（每条 shell 两行，历史段前多一行分节标题）：一屏装不下时窗口
+	// 跟着选中项滚动，最右一列画出滚动条（见 shellListRows / shellListTop）。
+	rows := shellListRows(len(xs), activeCount)
+	listTop, listHeight := r.Y+2, shellListHeight(r.H)
+	top := shellListTop(rows, m.ShellSelected, listHeight)
+	for i := top; i < len(rows) && i-top < listHeight; i++ {
+		row := rows[i]
+		if row.index < 0 {
+			p.sectionLabel(c, r.X+1, listTop+i-top, left, i18n.T("历史 (%d)", len(xs)-activeCount))
+			continue
 		}
-		// 每条 shell 占两行：reason + 右对齐状态 / 命令。
-		if y+1 >= r.Y+r.H-1 {
+		// 窗口底部放不下整条时不画半条：单独露出的命令行没有意义。
+		if row.line == 0 && i-top+1 >= listHeight {
 			break
 		}
-		p.drawShellRow(c, r.X+1, y, maxLeft, s, i == m.ShellSelected)
-		y += 2
+		p.drawShellRow(c, r.X+1, listTop+i-top, maxLeft, xs[row.index], row.index == m.ShellSelected, row.line)
 	}
+	p.shellListScrollbar(c, r, left, listTop, listHeight, len(rows), top)
 	if showPreview && right > 1 {
 		previewBox := renderer.NewRect(r.X+left+1, r.Y, right-1, r.H)
 		if previewBox.H > 0 {
@@ -104,9 +106,9 @@ func (p *ShellPanel) Draw(c *renderer.Canvas, r renderer.Rect, m *model.AppModel
 	p.footer(c, r, workflowHints)
 }
 
-// drawShellRow 绘制一条 shell：第一行左侧为 reason、右侧为彩色状态（右对齐），
-// 第二行是启动命令。
-func (p *ShellPanel) drawShellRow(c *renderer.Canvas, x, y, width int, s *model.TerminalState, selected bool) {
+// drawShellRow 绘制一条 shell 的一行：line 0 为 reason（左）+ 彩色状态（右对齐），
+// line 1 为启动命令。列表按行滚动，所以两行分开画（见 shellListRows）。
+func (p *ShellPanel) drawShellRow(c *renderer.Canvas, x, y, width int, s *model.TerminalState, selected bool, line int) {
 	if width <= 2 || s == nil {
 		return
 	}
@@ -122,6 +124,20 @@ func (p *ShellPanel) drawShellRow(c *renderer.Canvas, x, y, width int, s *model.
 		headStyle = p.Theme.Style(p.Theme.Primary).WithBold(true)
 		cmdStyle = p.Theme.Style(p.Theme.Text)
 	}
+	if line != 0 {
+		// 第二行：命令。
+		cmd := s.Command
+		if cmd == "" {
+			cmd = s.Title
+		}
+		if cmd == "" {
+			cmd = s.ID
+		}
+		if cmd != "" {
+			c.PutText(x+2, y, renderer.Truncate(cmd, max(width-2, 1)), cmdStyle)
+		}
+		return
+	}
 	// 第一行：reason（左）+ 状态（右对齐）。
 	status := shellStatusLabel(s)
 	statusW := renderer.StringWidth(status)
@@ -130,17 +146,60 @@ func (p *ShellPanel) drawShellRow(c *renderer.Canvas, x, y, width int, s *model.
 	if sx := x + width - statusW; sx >= x+2 {
 		c.PutText(sx, y, status, p.Theme.Style(shellStatusColor(p.Theme, s)).WithBold(selected))
 	}
-	// 第二行：命令。
-	cmd := s.Command
-	if cmd == "" {
-		cmd = s.Title
+}
+
+// shellListRow 是终端列表里的一行：某条 shell 的第一行（line 0，reason + 状态）
+// 或第二行（line 1，命令）；index < 0 表示历史段之间的分节标题行。
+type shellListRow struct {
+	index int
+	line  int
+}
+
+// shellListRows 把终端列表铺成行：每条 shell 两行，历史段之前插入一行分节标题。
+func shellListRows(total, activeCount int) []shellListRow {
+	rows := make([]shellListRow, 0, total*2+1)
+	for i := range total {
+		if i == activeCount && activeCount < total {
+			rows = append(rows, shellListRow{index: -1})
+		}
+		rows = append(rows, shellListRow{index: i}, shellListRow{index: i, line: 1})
 	}
-	if cmd == "" {
-		cmd = s.ID
+	return rows
+}
+
+// shellListHeight 返回列表可用的行数：面板标题占第 1 行、第 2 行留白、底部提示
+// 占最后一行，其余都归列表。
+func shellListHeight(panelHeight int) int { return panelHeight - 3 }
+
+// shellListTop 返回列表窗口的起始行：装得下时停在顶部，装不下时把选中项贴到窗口
+// 底部（列表随选中项向下滚动），选中的那条终端因此始终完整可见。
+func shellListTop(rows []shellListRow, selected, height int) int {
+	if height <= 0 {
+		return 0
 	}
-	if cmd != "" {
-		c.PutText(x+2, y+1, renderer.Truncate(cmd, max(width-2, 1)), cmdStyle)
+	start := -1
+	for i, row := range rows {
+		if row.index == selected && row.line == 0 {
+			start = i
+			break
+		}
 	}
+	if start < 0 {
+		return 0
+	}
+	return max(start+2-height, 0)
+}
+
+// shellListScrollbar 在列表最右一列画滚动条：列表装得下时不画，免得右侧多出一条线。
+func (p *ShellPanel) shellListScrollbar(c *renderer.Canvas, r renderer.Rect, left, top, height, total, offset int) {
+	if height < 1 || left < 2 || total <= height {
+		return
+	}
+	(&widget.Scrollbar{
+		Total: total, View: height, Top: offset,
+		Track: p.Theme.Style(p.Theme.BorderSubtle),
+		Thumb: p.Theme.Style(p.Theme.Border),
+	}).Draw(c, renderer.NewRect(r.X+left-1, top, 1, height))
 }
 
 func (p *ShellPanel) drawPreviewBox(c *renderer.Canvas, r renderer.Rect, s *model.TerminalState, m *model.AppModel) {
