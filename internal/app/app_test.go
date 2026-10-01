@@ -640,8 +640,8 @@ func TestCopyBodyText(t *testing.T) {
 }
 
 // TestCopyBodyTextColumns 验证按列取字：只选中行内一部分时，落在选区外的标记符
-// 被丢掉；被选区切断的格式（配对标记也在选区内才算完整）连选区里的半个标记
-// 一起剔除；整行都选中时仍按原文输出。
+// 被丢掉；开启标记被选中的格式算完整（闭合标记在选区外也补上），左侧被切断的
+// 格式连选区里的半个标记一起剔除；整行都选中时仍按原文输出。
 // 渲染行 "  正文 加粗"（`**` 不渲染）的每格源下标见下面 Map。
 func TestCopyBodyTextColumns(t *testing.T) {
 	ft := newFakeTerm()
@@ -665,7 +665,7 @@ func TestCopyBodyTextColumns(t *testing.T) {
 	}{
 		{"选中加粗", 7, 10, "加粗"},
 		{"整行覆盖", 2, 10, "正文 **加粗**"},
-		{"切断加粗：标记剔除", 2, 9, "正文 加粗"},
+		{"右端切断：补上闭标记", 2, 9, "正文 **加粗**"},
 		{"只选渲染前缀", 0, 1, ""},
 		{"只选粗", 9, 10, "粗"},
 	}
@@ -1525,9 +1525,9 @@ func TestApplySelectionFollowsScroll(t *testing.T) {
 	}
 }
 
-// TestCopyBodyTextFormatMarks 验证框选复制时格式标记的保留规则：配对标记都落在
-// 选区内就原样保留，被选区切断的格式（另一端在选区外）视作不完整，连选区里的
-// 那半个标记一并剔除；整行覆盖时原文里的标记全部保留。
+// TestCopyBodyTextFormatMarks 验证框选复制时格式标记的保留规则：开启标记落在
+// 选区内时这段格式算完整（闭合标记被选区右端挡在外面也补上），开启标记在选区
+// 外时按不完整处理、选区里的半个标记一并剔除；整行覆盖时原文里的标记全保留。
 func TestCopyBodyTextFormatMarks(t *testing.T) {
 	ft := newFakeTerm()
 	a := New(ft, demo.New(true))
@@ -1566,6 +1566,19 @@ func TestCopyBodyTextFormatMarks(t *testing.T) {
 	}
 	if got := a.bodyText(&model.Selection{AnchorX: 1, AnchorY: 0, CurX: 4, CurY: 0}); got != "b`cd`e" {
 		t.Errorf("选 b..e = %q, want %q", got, "b`cd`e")
+	}
+
+	// abc`def`：开启标记在选区内、闭合标记被选区右端挡在外面时补上闭合标记
+	// （这段格式从选区内开始，算完整）；左侧被切断的格式仍然剔除。
+	a.view.Body = []view.BodyBlock{{
+		Src:   []view.SrcLine{{Text: "abc`def`", First: true, Map: []int{0, 1, 2, 4, 5, 6}}},
+		Start: 0, End: 0,
+	}}
+	if got := a.bodyText(&model.Selection{AnchorX: 1, AnchorY: 0, CurX: 5, CurY: 0}); got != "bc`def`" {
+		t.Errorf("右端补闭标记 = %q, want %q", got, "bc`def`")
+	}
+	if got := a.bodyText(&model.Selection{AnchorX: 0, AnchorY: 0, CurX: 5, CurY: 0}); got != "abc`def`" {
+		t.Errorf("整行 = %q, want %q", got, "abc`def`")
 	}
 
 	// **abc**def：选 b..f 时闭合标记的配对（行首 `**`）在选区外，一并剔除。

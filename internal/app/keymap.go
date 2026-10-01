@@ -1715,9 +1715,10 @@ func coversRow(s view.SrcLine, rect renderer.Rect, lo, hi int) bool {
 }
 
 // rowFragment 返回渲染行在选中列区间内对应的原文片段：取选中格里源下标的最小
-// 到最大范围——夹在选中字符中间的标记符保留，落在两端的标记随之被丢掉。
-// 被选区切断的格式（配对标记不在选区内）视作不完整，连选区里的那半个标记也
-// 一并剔除（`abc`def 取 b..f 得 bcdef）；配对标记都落在选区内则原样保留。
+// 到最大范围，再按格式的完整性决定标记去留——开启标记落在选区内时这段格式算
+// 完整，闭合标记即使被选区右端挡在外面也补上（`abc`def 取 b..f 得 bcdef，
+// abc`def` 取 b..f 得 bc`def`）；开启标记在选区外时这段格式被左侧切断，选区
+// 里的那半个标记按不完整处理，一并剔除。
 // 没有选中任何来自原文的格时返回空串（该行只贡献一个换行）。
 func rowFragment(s view.SrcLine, rect renderer.Rect, lo, hi int) string {
 	i0, i1 := rowCellRange(rect, lo, hi, len(s.Map))
@@ -1750,15 +1751,44 @@ func rowFragment(s view.SrcLine, rect renderer.Rect, lo, hi int) string {
 			visible[id] = true
 		}
 	}
-	pairs := formatMarkPairs(rs, visible)
+	spans := formatMarkSpans(rs, visible)
+	role := make(map[int]markRole)
+	for pi, sp := range spans {
+		for _, p := range sp.open {
+			role[p] = markRole{pair: pi, open: true}
+		}
+		for _, p := range sp.close {
+			role[p] = markRole{pair: pi}
+		}
+	}
 	var sb strings.Builder
+	var tail []int // 开标记在选区内、闭标记在选区外：末尾补上闭标记，格式才完整
+	tailed := make(map[int]bool, len(spans))
 	for i := minID; i <= maxID; i++ {
-		// 屏幕上看不见的标记字符：配对标记也在选区内才保留，否则这段格式
-		// 被选区切断了，连选区里的那半个标记一起剔除。
-		if isFormatMark(rs[i]) && !visible[i] && !markPairCovered(pairs[i], minID, maxID) {
+		if !isFormatMark(rs[i]) || visible[i] {
+			sb.WriteRune(rs[i])
+			continue
+		}
+		mr, ok := role[i]
+		if !ok {
+			continue // 落单的标记：本身就不完整，剔除
+		}
+		sp := spans[mr.pair]
+		if !mr.open {
+			// 闭标记：开标记也被选中才保留；开标记被选区左侧切断时剔除。
+			if groupCovered(sp.open, minID, maxID) {
+				sb.WriteRune(rs[i])
+			}
 			continue
 		}
 		sb.WriteRune(rs[i])
+		if !groupCovered(sp.close, minID, maxID) && !tailed[mr.pair] {
+			tailed[mr.pair] = true
+			tail = append(tail, sp.close...)
+		}
+	}
+	for _, p := range tail {
+		sb.WriteRune(rs[p])
 	}
 	return sb.String()
 }
@@ -1767,11 +1797,23 @@ func rowFragment(s view.SrcLine, rect renderer.Rect, lo, hi int) string {
 // 当标记吃掉（'_'、'~' 等保持普通字符），因此只看这两个。
 func isFormatMark(r rune) bool { return r == '`' || r == '*' }
 
-// formatMarkPairs 把渲染行里"被 markdown 吃掉、屏幕上看不见"的标记字符两两
+// markSpan 是一段行内格式的两处标记：open 是开启标记的源下标，close 是闭合
+// 标记的源下标（`**` 各占两个位置，单独的 '*' 与 '`' 各占一个）。
+type markSpan struct {
+	open  []int
+	close []int
+}
+
+// markRole 描述某个标记位置在一段格式里的角色。
+type markRole struct {
+	pair int  // 在 formatMarkSpans 结果里的下标
+	open bool // 是否属于开启标记
+}
+
+// formatMarkSpans 把渲染行里"被 markdown 吃掉、屏幕上看不见"的标记字符按格式
 // 配对：连续的两个 '*' 是一组 `**`，单独的 '*' 与 '`' 各成一组；同种标记的组
-// 按出现顺序 0-1、2-3… 配对（前者开、后者闭）。返回每个标记位置 → 与它同属
-// 一个格式的另一组源下标；落单（没配上）的标记不出现在结果里。
-func formatMarkPairs(rs []rune, visible map[int]bool) map[int][]int {
+// 按出现顺序 0-1、2-3… 配对（第 1 组开启、第 2 组闭合）。落单的组不返回。
+func formatMarkSpans(rs []rune, visible map[int]bool) []markSpan {
 	var groups [][]int
 	var keys []string
 	for i := 0; i < len(rs); {
@@ -1787,32 +1829,27 @@ func formatMarkPairs(rs []rune, visible map[int]bool) map[int][]int {
 		}
 		i++
 	}
-	byKey := make(map[string][]int)
+	// 同种标记按出现顺序两两成对：队列里已有开启组就配上闭合组。
+	pending := make(map[string][]int)
+	var spans []markSpan
 	for gi, k := range keys {
-		byKey[k] = append(byKey[k], gi)
-	}
-	pairs := make(map[int][]int)
-	for _, list := range byKey {
-		for n := 0; n+1 < len(list); n += 2 {
-			a, b := groups[list[n]], groups[list[n+1]]
-			for _, p := range a {
-				pairs[p] = b
-			}
-			for _, p := range b {
-				pairs[p] = a
-			}
+		if len(pending[k]) > 0 {
+			open := pending[k][0]
+			pending[k] = pending[k][1:]
+			spans = append(spans, markSpan{open: groups[open], close: groups[gi]})
+			continue
 		}
+		pending[k] = append(pending[k], gi)
 	}
-	return pairs
+	return spans
 }
 
-// markPairCovered 报告配对组的源位置是否都落在选区 [minID, maxID] 内；
-// other 为空（落单标记）时视作未覆盖。
-func markPairCovered(other []int, minID, maxID int) bool {
-	if len(other) == 0 {
+// groupCovered 报告标记组的源位置是否都落在选区 [minID, maxID] 内。
+func groupCovered(group []int, minID, maxID int) bool {
+	if len(group) == 0 {
 		return false
 	}
-	for _, p := range other {
+	for _, p := range group {
 		if p < minID || p > maxID {
 			return false
 		}
