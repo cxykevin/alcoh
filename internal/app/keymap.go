@@ -1716,6 +1716,8 @@ func coversRow(s view.SrcLine, rect renderer.Rect, lo, hi int) bool {
 
 // rowFragment 返回渲染行在选中列区间内对应的原文片段：取选中格里源下标的最小
 // 到最大范围——夹在选中字符中间的标记符保留，落在两端的标记随之被丢掉。
+// 被选区切断的格式（配对标记不在选区内）视作不完整，连选区里的那半个标记也
+// 一并剔除（`abc`def 取 b..f 得 bcdef）；配对标记都落在选区内则原样保留。
 // 没有选中任何来自原文的格时返回空串（该行只贡献一个换行）。
 func rowFragment(s view.SrcLine, rect renderer.Rect, lo, hi int) string {
 	i0, i1 := rowCellRange(rect, lo, hi, len(s.Map))
@@ -1742,7 +1744,80 @@ func rowFragment(s view.SrcLine, rect renderer.Rect, lo, hi int) string {
 	if maxID >= len(rs) {
 		maxID = len(rs) - 1
 	}
-	return string(rs[minID : maxID+1])
+	visible := make(map[int]bool, len(s.Map))
+	for _, id := range s.Map {
+		if id >= 0 {
+			visible[id] = true
+		}
+	}
+	pairs := formatMarkPairs(rs, visible)
+	var sb strings.Builder
+	for i := minID; i <= maxID; i++ {
+		// 屏幕上看不见的标记字符：配对标记也在选区内才保留，否则这段格式
+		// 被选区切断了，连选区里的那半个标记一起剔除。
+		if isFormatMark(rs[i]) && !visible[i] && !markPairCovered(pairs[i], minID, maxID) {
+			continue
+		}
+		sb.WriteRune(rs[i])
+	}
+	return sb.String()
+}
+
+// isFormatMark 报告 r 是否可能充当行内格式的标记字符：本渲染器只把 '`' 与 '*'
+// 当标记吃掉（'_'、'~' 等保持普通字符），因此只看这两个。
+func isFormatMark(r rune) bool { return r == '`' || r == '*' }
+
+// formatMarkPairs 把渲染行里"被 markdown 吃掉、屏幕上看不见"的标记字符两两
+// 配对：连续的两个 '*' 是一组 `**`，单独的 '*' 与 '`' 各成一组；同种标记的组
+// 按出现顺序 0-1、2-3… 配对（前者开、后者闭）。返回每个标记位置 → 与它同属
+// 一个格式的另一组源下标；落单（没配上）的标记不出现在结果里。
+func formatMarkPairs(rs []rune, visible map[int]bool) map[int][]int {
+	var groups [][]int
+	var keys []string
+	for i := 0; i < len(rs); {
+		if isFormatMark(rs[i]) && !visible[i] {
+			if rs[i] == '*' && i+1 < len(rs) && rs[i+1] == '*' && !visible[i+1] {
+				groups = append(groups, []int{i, i + 1})
+				keys = append(keys, "**")
+				i += 2
+				continue
+			}
+			groups = append(groups, []int{i})
+			keys = append(keys, string(rs[i]))
+		}
+		i++
+	}
+	byKey := make(map[string][]int)
+	for gi, k := range keys {
+		byKey[k] = append(byKey[k], gi)
+	}
+	pairs := make(map[int][]int)
+	for _, list := range byKey {
+		for n := 0; n+1 < len(list); n += 2 {
+			a, b := groups[list[n]], groups[list[n+1]]
+			for _, p := range a {
+				pairs[p] = b
+			}
+			for _, p := range b {
+				pairs[p] = a
+			}
+		}
+	}
+	return pairs
+}
+
+// markPairCovered 报告配对组的源位置是否都落在选区 [minID, maxID] 内；
+// other 为空（落单标记）时视作未覆盖。
+func markPairCovered(other []int, minID, maxID int) bool {
+	if len(other) == 0 {
+		return false
+	}
+	for _, p := range other {
+		if p < minID || p > maxID {
+			return false
+		}
+	}
+	return true
 }
 
 // expandAll 切换当前会话全部思维链与工具调用的展开状态（Ctrl+O）：

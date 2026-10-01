@@ -639,8 +639,9 @@ func TestCopyBodyText(t *testing.T) {
 	}
 }
 
-// TestCopyBodyTextColumns 验证按列取字：只选中行内一部分时，落在选区两端的
-// 标记符被丢掉、夹在选中字符中间的标记保留；整行都选中时仍按原文输出。
+// TestCopyBodyTextColumns 验证按列取字：只选中行内一部分时，落在选区外的标记符
+// 被丢掉；被选区切断的格式（配对标记也在选区内才算完整）连选区里的半个标记
+// 一起剔除；整行都选中时仍按原文输出。
 // 渲染行 "  正文 加粗"（`**` 不渲染）的每格源下标见下面 Map。
 func TestCopyBodyTextColumns(t *testing.T) {
 	ft := newFakeTerm()
@@ -664,7 +665,7 @@ func TestCopyBodyTextColumns(t *testing.T) {
 	}{
 		{"选中加粗", 7, 10, "加粗"},
 		{"整行覆盖", 2, 10, "正文 **加粗**"},
-		{"选到正文 加", 2, 9, "正文 **加粗"},
+		{"切断加粗：标记剔除", 2, 9, "正文 加粗"},
 		{"只选渲染前缀", 0, 1, ""},
 		{"只选粗", 9, 10, "粗"},
 	}
@@ -1521,5 +1522,61 @@ func TestApplySelectionFollowsScroll(t *testing.T) {
 		if c.Style.Reverse {
 			t.Fatal("selection outside the visible window must not highlight anything")
 		}
+	}
+}
+
+// TestCopyBodyTextFormatMarks 验证框选复制时格式标记的保留规则：配对标记都落在
+// 选区内就原样保留，被选区切断的格式（另一端在选区外）视作不完整，连选区里的
+// 那半个标记一并剔除；整行覆盖时原文里的标记全部保留。
+func TestCopyBodyTextFormatMarks(t *testing.T) {
+	ft := newFakeTerm()
+	a := New(ft, demo.New(true))
+	a.view.BodyRect = renderer.NewRect(0, 0, 80, 24)
+	a.view.BodyScroll = 0
+
+	// 行内代码 `abc`def 渲染成 abcdef：两个反引号不渲染，渲染列 0..5。
+	a.view.Body = []view.BodyBlock{{
+		Src:   []view.SrcLine{{Text: "`abc`def", First: true, Map: []int{1, 2, 3, 5, 6, 7}}},
+		Start: 0, End: 0,
+	}}
+	cases := []struct {
+		name          string
+		anchorX, curX int
+		want          string
+	}{
+		{"整行覆盖保留原文", 0, 5, "`abc`def"},
+		{"被切断的标记剔除", 1, 5, "bcdef"},
+		{"不碰标记的片段", 1, 2, "bc"},
+		{"标记之后的部分", 3, 5, "def"},
+	}
+	for _, c := range cases {
+		got := a.bodyText(&model.Selection{AnchorX: c.anchorX, AnchorY: 0, CurX: c.curX, CurY: 0})
+		if got != c.want {
+			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
+		}
+	}
+
+	// ab`cd`ef：完整的一对反引号都被选中时原样保留。
+	a.view.Body = []view.BodyBlock{{
+		Src:   []view.SrcLine{{Text: "ab`cd`ef", First: true, Map: []int{0, 1, 3, 4, 6, 7}}},
+		Start: 0, End: 0,
+	}}
+	if got := a.bodyText(&model.Selection{AnchorX: 2, AnchorY: 0, CurX: 3, CurY: 0}); got != "cd" {
+		t.Errorf("选 cd = %q, want %q", got, "cd")
+	}
+	if got := a.bodyText(&model.Selection{AnchorX: 1, AnchorY: 0, CurX: 4, CurY: 0}); got != "b`cd`e" {
+		t.Errorf("选 b..e = %q, want %q", got, "b`cd`e")
+	}
+
+	// **abc**def：选 b..f 时闭合标记的配对（行首 `**`）在选区外，一并剔除。
+	a.view.Body = []view.BodyBlock{{
+		Src:   []view.SrcLine{{Text: "**abc**def", First: true, Map: []int{2, 3, 4, 7, 8, 9}}},
+		Start: 0, End: 0,
+	}}
+	if got := a.bodyText(&model.Selection{AnchorX: 1, AnchorY: 0, CurX: 5, CurY: 0}); got != "bcdef" {
+		t.Errorf("加粗被切断 = %q, want %q", got, "bcdef")
+	}
+	if got := a.bodyText(&model.Selection{AnchorX: 0, AnchorY: 0, CurX: 5, CurY: 0}); got != "**abc**def" {
+		t.Errorf("加粗整行 = %q, want %q", got, "**abc**def")
 	}
 }
