@@ -69,7 +69,7 @@ var en = map[string]string{
 	"       多个权限按到达顺序排队，逐条弹出；Esc 视为取消并处理下一条。":                   "       Multiple permission requests queue up; Esc cancels the current one and processes the next.",
 	"ACP 状态: 状态栏展示当前 model/agent 元信息与 stop reason；":             "ACP status: the status bar shows current model/agent metadata and stop reason;",
 	"       未知 session update 与 calling_info 参数块是协议细节，默认不在正文显示": "       Unknown session updates and calling_info argument blocks are protocol details, hidden from the body by default",
-	"       （原始 JSON 仍保留在协议诊断中）；设置里打开“显示协议细节”可查看。":                "       (raw JSON stays in the protocol diagnostics); enable “Show protocol details” in settings to view them.",
+	"       （原始 JSON 仍保留在协议诊断中）；设置里打开“显示协议细节”可查看。":              "       (raw JSON stays in the protocol diagnostics); enable “Show protocol details” in settings to view them.",
 	"帮助": "Help",
 
 	// ---- 退出确认 ----

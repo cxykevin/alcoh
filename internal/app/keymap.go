@@ -1501,7 +1501,7 @@ func (a *App) shellSelectionText(sel *model.Selection) string {
 }
 
 // lineSelectionBounds 计算行选择下内容行 contentY 覆盖的列区间 [lo, hi]
-//（sel 的 Y 是内容行号，与滚动位置无关，调用方负责把屏幕行换算成内容行）；
+// （sel 的 Y 是内容行号，与滚动位置无关，调用方负责把屏幕行换算成内容行）；
 // screenY 是同一行在屏幕上的行号，仅用于宽字符对齐 buffer。
 // 行选择语义：首行从起点（宽字符对齐后）到行尾，末行从行首到终点，
 // 中间行整行；单行从 min 列到 max 列。宽字符不切半：lo 若落在续列则回退
