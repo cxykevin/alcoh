@@ -42,10 +42,14 @@ type block struct {
 
 // SrcLine 是行级插针的一行：Text 为该渲染行对应的原始 markdown 逻辑行，
 // First 表示该渲染行是否为该原始逻辑行的首个渲染行（长行 wrap 拆分时，
-// 后续渲染行 First=false，复制时去重避免整行重复输出）。
+// 后续渲染行 First=false，复制时拼回同一行，避免整行重复输出）。
+// Map 按渲染行的单元格列（含渲染前缀）给出该列对应的 Text rune 下标；
+// -1 表示该列不是来自原文（渲染前缀、列表符号、宽字符续列等）。部分框选
+// 复制时据此只取选中的字符，未渲染的标记不会被带出来。
 type SrcLine struct {
 	Text  string
 	First bool
+	Map   []int
 }
 
 // BodyBlock 描述正文中一个可复制条目：Raw 为块级原始文本，Src 为行级插针，
@@ -64,6 +68,9 @@ type MessageList struct {
 	// Toggles 记录可点击切换展开/折叠的正文行（contentY → 目标，仅标题行），
 	// 由 Draw 每次重建，供鼠标点击命中测试使用。
 	Toggles map[int]ToggleRef
+	// Rows 是最近一次 Draw 的内容总行数（contentY 上界，与滚动无关），
+	// 供拖拽自动滚动的边界判断使用。
+	Rows int
 
 	// cache 按 Timeline 条目 Key 缓存上一帧的渲染结果：条目内容没变时直接复用，
 	// 避免每帧对整段会话重做 markdown 解析 / 语法高亮 / 换行。长会话流式输出时
@@ -122,6 +129,7 @@ func (ml *MessageList) Draw(c *renderer.Canvas, r renderer.Rect, s *model.Sessio
 	for _, blk := range blocks {
 		total += len(blk.lines)
 	}
+	ml.Rows = total
 	viewH := r.H
 	maxScroll := max(total-viewH, 0)
 	scroll := s.Scroll
@@ -362,25 +370,38 @@ func (ml *MessageList) messageBlock(msg *model.Message, width int) *block {
 		srcLines := strings.Split(msg.Text, "\n")
 		row := 0
 		for li, ln := range srcLines {
+			// 用户消息按原文换行渲染，渲染 rune 与原文逐字对应。
+			idents := seqIdents(0, len([]rune(ln)))
+			off := 0
 			wrapped := renderer.Wrap(ln, width-4)
 			for j, wl := range wrapped {
 				prefix := "  "
 				if row == 0 {
 					prefix = "  ❯ "
 				}
-				blk.lines = append(blk.lines, []Span{{Text: prefix + wl, Style: t.Style(t.Primary).WithBold(true)}})
-				blk.srcLines = append(blk.srcLines, SrcLine{Text: strings.TrimRight(srcLines[li], " \t"), First: j == 0})
+				n := min(len([]rune(wl)), len(idents)-off)
+				style := t.Style(t.Primary).WithBold(true)
+				blk.lines = append(blk.lines, []Span{{Text: prefix + wl, Style: style}})
+				blk.srcLines = append(blk.srcLines, SrcLine{
+					Text:  strings.TrimRight(srcLines[li], " \t"),
+					First: j == 0,
+					Map:   cellMap(renderer.StringWidth(prefix), []Span{{Text: wl, Style: style}}, idents[off:off+n]),
+				})
+				off += n
 				row++
 			}
 		}
 	} else {
 		for _, sl := range Markdown(msg.Text, t) {
-			wrapped := wrapSpans(sl.Spans, width-4)
-			for j, line := range wrapped {
-				blk.lines = append(blk.lines, prependSpan(line, "  ", t.Style(t.Text)))
+			for j, wl := range wrapLine(sl, width-4) {
+				blk.lines = append(blk.lines, prependSpan(wl.Spans, "  ", t.Style(t.Text)))
 				// 插针：该渲染行对应的原始 markdown 逻辑行；长行 wrap 的首行
-				// 标记 First，后续续行 First=false（复制时整行只输出一次）。
-				blk.srcLines = append(blk.srcLines, SrcLine{Text: sl.Src, First: j == 0})
+				// 标记 First，后续续行 First=false（复制时拼回同一行）。
+				blk.srcLines = append(blk.srcLines, SrcLine{
+					Text:  sl.Src,
+					First: j == 0,
+					Map:   cellMap(renderer.StringWidth("  "), wl.Spans, wl.Map),
+				})
 			}
 		}
 	}
@@ -670,25 +691,35 @@ func prependSpan(spans []Span, text string, style renderer.Style) []Span {
 	return append([]Span{{Text: text, Style: style}}, spans...)
 }
 
-func wrapSpans(spans []Span, maxW int) [][]Span {
+// wrapLine 按 maxW 列宽把一行带源下标的渲染行拆成多行：样式与源下标随 rune
+// 一起换行，返回行的 Spans/Map 都按该行重排（Src 由调用方维护）。
+func wrapLine(line StyledLine, maxW int) []StyledLine {
 	if maxW <= 1 {
 		maxW = 1
 	}
-	var result [][]Span
+	var result []StyledLine
 	var cur []Span
+	var curMap []int
 	w := 0
-	appendRune := func(r rune, st renderer.Style) {
+	appendRune := func(r rune, st renderer.Style, id int) {
 		if len(cur) > 0 && cur[len(cur)-1].Style == st {
 			cur[len(cur)-1].Text += string(r)
 		} else {
 			cur = append(cur, Span{Text: string(r), Style: st})
 		}
+		curMap = append(curMap, id)
 	}
-	for _, sp := range spans {
+	flush := func() {
+		result = append(result, StyledLine{Spans: cur, Map: curMap})
+		cur, curMap, w = nil, nil, 0
+	}
+	idx := 0 // 当前 rune 在 line.Spans 拼接序列中的序号
+	for _, sp := range line.Spans {
 		for _, r := range sp.Text {
+			id := identAt(line.Map, idx)
+			idx++
 			if r == '\n' {
-				result = append(result, cur)
-				cur, w = nil, 0
+				flush()
 				continue
 			}
 			rw := renderer.RuneWidth(r)
@@ -696,27 +727,60 @@ func wrapSpans(spans []Span, maxW int) [][]Span {
 				continue
 			}
 			if r == '\t' {
+				// 制表符展开成最多 4 个空格：都指向同一个 tab，复制时只输出一次。
 				for i := 0; i < 4 && w < maxW; i++ {
-					appendRune(' ', sp.Style)
+					appendRune(' ', sp.Style, id)
 					w++
 				}
 				continue
 			}
 			if w+rw > maxW {
-				result = append(result, cur)
-				cur, w = nil, 0
+				flush()
 			}
-			appendRune(r, sp.Style)
+			appendRune(r, sp.Style, id)
 			w += rw
 		}
 	}
 	if len(cur) > 0 || w > 0 {
-		result = append(result, cur)
+		flush()
 	}
 	if len(result) == 0 {
-		result = [][]Span{{}}
+		result = []StyledLine{{Spans: []Span{}}}
 	}
 	return result
+}
+
+// identAt 返回第 i 个渲染 rune 的源下标；未映射或不带映射时返回 -1。
+func identAt(idents []int, i int) int {
+	if i < 0 || i >= len(idents) {
+		return -1
+	}
+	return idents[i]
+}
+
+// cellMap 把"每个 rune 的源下标"展开成"每个单元格（列）的源下标"：宽字符的两
+// 格都指向同一个 rune，零宽 rune 不占格；prefixW 是渲染前缀的列数（不来自原文，
+// 映射为 -1），使列号与屏幕上该渲染行的列号一一对应。
+func cellMap(prefixW int, spans []Span, idents []int) []int {
+	out := negIdents(prefixW)
+	idx := 0
+	for _, sp := range spans {
+		for _, r := range sp.Text {
+			id := identAt(idents, idx)
+			idx++
+			switch width := renderer.RuneWidth(r); width {
+			case 0:
+				// 零宽 rune 不占列，列位与它无关。
+			case 1:
+				out = append(out, id)
+			default:
+				for range width {
+					out = append(out, id)
+				}
+			}
+		}
+	}
+	return out
 }
 
 func itoa(n int) string {

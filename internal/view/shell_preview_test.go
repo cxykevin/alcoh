@@ -92,3 +92,32 @@ func TestShellPreviewFillsBoxWrapsAndUsesWhite(t *testing.T) {
 		t.Fatalf("scrollbar column %d is empty", barX)
 	}
 }
+
+// TestAppViewBodyRows 验证渲染时写入正文内容总行数与块目录（拖拽自动滚动的
+// 边界判断依赖它），回首页后清零。
+func TestAppViewBodyRows(t *testing.T) {
+	useEnglish(t)
+	const w, h = 120, 24
+	// 用 model.New()：会话视图会画输入框，需要有初始化的 Input。
+	m := model.New()
+	m.ActivateSession("s1", "会话")
+	m.Active.ApplyMessage(&acp.MessageUpdateEvent{
+		SessionID: "s1",
+		Message: acp.Message{MessageID: "m1", ContentSet: true,
+			Content: []acp.ContentBlock{{Type: "text", Text: new("你好，世界")}}},
+	})
+
+	v := NewAppView(renderer.DefaultTheme())
+	canv := renderer.NewCanvas(renderer.NewBuffer(w, h))
+	v.Draw(canv, renderer.NewRect(0, 0, w, h), m)
+	if len(v.Body) == 0 || v.BodyRows == 0 {
+		t.Fatalf("body blocks = %d, rows = %d", len(v.Body), v.BodyRows)
+	}
+
+	// 回首页：正文数据清零，避免残留上一会话的行数。
+	m.GoHome()
+	v.Draw(canv, renderer.NewRect(0, 0, w, h), m)
+	if v.BodyRows != 0 || len(v.Body) != 0 {
+		t.Fatalf("home: rows = %d, blocks = %d", v.BodyRows, len(v.Body))
+	}
+}

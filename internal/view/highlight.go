@@ -75,6 +75,40 @@ func expandCodeTabs(text string) string {
 	return strings.ReplaceAll(text, "\t", "    ")
 }
 
+// codeLineIdents 返回代码渲染行每个 rune 对应的原始行 rune 下标：行号前缀
+// （"  1 │ "）是渲染合成，标 -1；正文是原始行按 tab 展开成 4 个空格后的结果，
+// 展开出的每个空格都指向同一个 tab。正文与原始行失配（高亮改写了文本）时
+// 只保留行号前缀的映射，正文标 -1。
+func codeLineIdents(spans []Span, raw string) []int {
+	var rendered []rune
+	for _, sp := range spans {
+		rendered = append(rendered, []rune(sp.Text)...)
+	}
+	var expanded []rune
+	var ids []int
+	for i, r := range []rune(raw) {
+		if r == '\t' {
+			expanded = append(expanded, ' ', ' ', ' ', ' ')
+			ids = append(ids, i, i, i, i)
+			continue
+		}
+		expanded = append(expanded, r)
+		ids = append(ids, i)
+	}
+	out := negIdents(len(rendered))
+	off := len(rendered) - len(expanded)
+	if off < 0 {
+		return out
+	}
+	for k, r := range expanded {
+		if rendered[off+k] != r {
+			return out
+		}
+		out[off+k] = ids[k]
+	}
+	return out
+}
+
 func highlightStyle(tt chroma.TokenType, t renderer.Theme) renderer.Style {
 	// 代码只改变前景色与字形属性，背景保持终端默认色。
 	// 这样高亮区不会形成额外色块，也与普通对话的视觉层级一致。

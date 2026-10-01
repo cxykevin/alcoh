@@ -633,6 +633,116 @@ func TestCopyBodyText(t *testing.T) {
 	}
 }
 
+// TestCopyBodyTextColumns 验证按列取字：只选中行内一部分时，落在选区两端的
+// 标记符被丢掉、夹在选中字符中间的标记保留；整行都选中时仍按原文输出。
+// 渲染行 "  正文 加粗"（`**` 不渲染）的每格源下标见下面 Map。
+func TestCopyBodyTextColumns(t *testing.T) {
+	ft := newFakeTerm()
+	a := New(ft, demo.New(true))
+	a.view.Body = []view.BodyBlock{{
+		Src: []view.SrcLine{{
+			Text:  "正文 **加粗**",
+			First: true,
+			// 前缀两格 → -1，"正文 加粗" 各格 → 原文 rune 下标（中文各占两格）。
+			Map: []int{-1, -1, 0, 0, 1, 1, 2, 5, 5, 6, 6},
+		}},
+		Start: 0, End: 0,
+	}}
+	a.view.BodyRect = renderer.NewRect(0, 0, 80, 24)
+	a.view.BodyScroll = 0
+
+	cases := []struct {
+		name          string
+		anchorX, curX int
+		want          string
+	}{
+		{"选中加粗", 7, 10, "加粗"},
+		{"整行覆盖", 2, 10, "正文 **加粗**"},
+		{"选到正文 加", 2, 9, "正文 **加粗"},
+		{"只选渲染前缀", 0, 1, ""},
+		{"只选粗", 9, 10, "粗"},
+	}
+	for _, c := range cases {
+		got := a.bodyText(&model.Selection{AnchorX: c.anchorX, AnchorY: 0, CurX: c.curX, CurY: 0})
+		if got != c.want {
+			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
+		}
+	}
+
+	// 长行 wrap：两行属于同一逻辑行，续行选中的部分接在上一行后面，不换行。
+	a.view.Body = []view.BodyBlock{{
+		Src: []view.SrcLine{
+			{Text: "abcdefgh", First: true, Map: []int{-1, -1, 0, 1, 2, 3, 4, 5}},
+			{Text: "abcdefgh", First: false, Map: []int{-1, -1, 6, 7}},
+		},
+		Start: 0, End: 1,
+	}}
+	// 首行选前 3 格（"abc"），续行没选中：只出首行片段。
+	got := a.bodyText(&model.Selection{AnchorX: 2, AnchorY: 0, CurX: 4, CurY: 0})
+	if got != "abc" {
+		t.Fatalf("first wrap row = %q, want %q", got, "abc")
+	}
+	// 首行起到续行前 3 格：两行片段拼回同一行，中间不插换行。
+	got = a.bodyText(&model.Selection{AnchorX: 2, AnchorY: 0, CurX: 4, CurY: 1})
+	if got != "abcdefgh" {
+		t.Fatalf("wrapped line = %q, want %q", got, "abcdefgh")
+	}
+}
+
+// TestDragAutoScrollsBody 验证拖拽自动滚动：拖出正文上/下边界时贴边滚一行、
+// 选区终点停在边界行；已经滚到底（顶）就不再滚。
+func TestDragAutoScrollsBody(t *testing.T) {
+	ft := newFakeTerm()
+	a := New(ft, demo.New(true))
+	a.model.ActivateSession("s1", "会话")
+	a.view.BodyRect = renderer.NewRect(0, 5, 80, 10) // 正文占屏幕 5..14 行
+	a.view.BodyRows = 40
+	a.view.BodyScroll = 0
+
+	// 在正文内按下（终端坐标 1-based）。
+	a.handleSelect(input.MouseEvent{Button: input.MouseLeft, Action: input.MousePress, X: 1, Y: 6})
+	if a.model.Selection == nil {
+		t.Fatal("selection not started")
+	}
+
+	// 拖到正文下方：向下滚一行，选区终点停在正文最后一行。
+	a.handleSelect(input.MouseEvent{Button: input.MouseLeft, Action: input.MouseMove, X: 10, Y: 25})
+	if got := a.model.Active.Scroll; got != 1 {
+		t.Errorf("scroll after dragging below = %d, want 1", got)
+	}
+	if a.model.Active.FollowBottom {
+		t.Error("dragging must unstick from bottom")
+	}
+	if got := a.model.Selection.CurY; got != 14 {
+		t.Errorf("cursor row = %d, want 14 (body bottom)", got)
+	}
+
+	// 模拟一次渲染回写后再拖：已经到底（30+10 = 40 行）就不再滚。
+	a.model.Active.Scroll = 30
+	a.view.BodyScroll = 30
+	a.handleSelect(input.MouseEvent{Button: input.MouseLeft, Action: input.MouseMove, X: 10, Y: 25})
+	if got := a.model.Active.Scroll; got != 30 {
+		t.Errorf("scroll at bottom = %d, want 30", got)
+	}
+
+	// 拖到正文上方：向上滚一行，选区终点停在正文第一行。
+	a.handleSelect(input.MouseEvent{Button: input.MouseLeft, Action: input.MouseMove, X: 10, Y: 1})
+	if got := a.model.Active.Scroll; got != 29 {
+		t.Errorf("scroll after dragging above = %d, want 29", got)
+	}
+	if got := a.model.Selection.CurY; got != 5 {
+		t.Errorf("cursor row = %d, want 5 (body top)", got)
+	}
+
+	// 已经在顶部：不再滚。
+	a.model.Active.Scroll = 0
+	a.view.BodyScroll = 0
+	a.handleSelect(input.MouseEvent{Button: input.MouseLeft, Action: input.MouseMove, X: 10, Y: 1})
+	if got := a.model.Active.Scroll; got != 0 {
+		t.Errorf("scroll at top = %d, want 0", got)
+	}
+}
+
 // TestApplySelectionLine 验证行选择高亮：宽字符整字反显，不产生块状花屏。
 func TestApplySelectionLine(t *testing.T) {
 	ft := newFakeTerm()

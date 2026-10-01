@@ -1338,6 +1338,19 @@ func (a *App) handleSelect(me input.MouseEvent) {
 		m.Selection = &model.Selection{AnchorX: x, AnchorY: y, CurX: x, CurY: y}
 	case input.MouseMove:
 		if m.Selection != nil {
+			// 拖出正文上/下边界时自动滚动：每来一次移动事件贴边滚一行，
+			// 继续拖就能继续滚（拖动本身持续产生移动事件）；滚到两端即停。
+			switch {
+			case y < rect.Y:
+				if a.view.BodyScroll > 0 {
+					m.ScrollUp(1)
+				}
+			case y >= rect.Y+rect.H:
+				if a.view.BodyScroll+rect.H < a.view.BodyRows {
+					m.ScrollDown(1)
+				}
+			}
+			// 选区终点停在边界行上：滚动后同一屏幕行指向更远的内容，选区随之延长。
 			cy := max(y, rect.Y)
 			if cy >= rect.Y+rect.H {
 				cy = rect.Y + rect.H - 1
@@ -1529,10 +1542,10 @@ func wideCharBounds(buf *renderer.Buffer, y, lo, hi int) (int, int) {
 	return lo, hi
 }
 
-// bodyText 返回行选择覆盖的正文原始文本。选择只作用于正文区域（BodyRect），
+// bodyText 返回选择覆盖的正文原始文本。选择只作用于正文区域（BodyRect），
 // 滚动位置通过 BodyScroll 映射到 contentY。
-// 消息块走行级插针：取选中渲染行对应的原始 markdown 逻辑行（不保留 "❯"/缩进
-// 等渲染前缀），同一逻辑行 wrap 拆分的续行只输出一次；其余块整块输出。
+// 消息块走行级插针：按选中的列从原始 markdown 里取字（见 bodyLineText），
+// 未渲染的标记符只要不在选区内就被丢掉；其余块整块输出。
 func (a *App) bodyText(sel *model.Selection) string {
 	body := a.view.Body
 	if len(body) == 0 {
@@ -1559,31 +1572,158 @@ func (a *App) bodyText(sel *model.Selection) string {
 		if blk.End < c1 || blk.Start > c2 {
 			continue
 		}
-		if len(blk.Src) > 0 {
-			lo := max(c1, blk.Start)
-			hi := min(c2, blk.End)
-			prev := ""
-			for r := lo; r <= hi; r++ {
-				s := blk.Src[r-blk.Start]
-				// 长逻辑行 wrap 拆分的续行（First=false）与上一行同源，去重。
-				if !s.First && s.Text == prev {
-					continue
-				}
+		if len(blk.Src) == 0 {
+			// 块级（工具/终端/思考等）：整块输出一次。
+			if sb.Len() > 0 {
+				sb.WriteString("\n\n")
+			}
+			sb.WriteString(blk.Raw)
+			continue
+		}
+		// 行级插针：一次处理一个逻辑行（首行 + 它的 wrap 续行），续行不重复输出。
+		for i := 0; i < len(blk.Src); {
+			j := i
+			for j+1 < len(blk.Src) && !blk.Src[j+1].First {
+				j++
+			}
+			text, ok := bodyLineText(blk.Src[i:j+1], blk.Start+i, sel, rect, c1, c2)
+			if ok {
 				if sb.Len() > 0 {
 					sb.WriteString("\n")
 				}
-				sb.WriteString(s.Text)
-				prev = s.Text
+				sb.WriteString(text)
 			}
-			continue
+			i = j + 1
 		}
-		// 块级（工具/终端/思考等）：整块输出一次。
-		if sb.Len() > 0 {
-			sb.WriteString("\n\n")
-		}
-		sb.WriteString(blk.Raw)
 	}
 	return sb.String()
+}
+
+// bodyLineText 返回一个逻辑行在选区内的原始文本，第二返回值表示与选区有无交集。
+// rows 是该逻辑行的渲染行（首行 First=true，之后是长行 wrap 出来的续行），
+// rowStart 是它的首个 contentY。
+//
+// 整个逻辑行都在选区内、且每行的渲染内容都被整列覆盖时返回原文（`**`、`# `
+// 等标记原样保留）；否则逐行按选中的列取原文里对应的字符——落在选区两端的
+// 标记符随之被丢掉，夹在选中字符中间的标记保留。
+func bodyLineText(rows []view.SrcLine, rowStart int, sel *model.Selection, rect renderer.Rect, c1, c2 int) (string, bool) {
+	rowEnd := rowStart + len(rows) - 1
+	if len(rows) == 0 || rowEnd < c1 || rowStart > c2 {
+		return "", false
+	}
+	if rows[0].Map == nil {
+		// 没有列映射（整行插针）：整行输出一次，wrap 续行不重复。
+		return rows[0].Text, rows[0].Text != ""
+	}
+	whole := rowStart >= c1 && rowEnd <= c2
+	for i, s := range rows {
+		lo, hi := bodyLineBounds(sel, rect, rowStart+i)
+		if !coversRow(s, rect, lo, hi) {
+			whole = false
+			break
+		}
+	}
+	if whole {
+		return rows[0].Text, rows[0].Text != ""
+	}
+	var sb strings.Builder
+	for i, s := range rows {
+		y := rowStart + i
+		if y < c1 || y > c2 {
+			continue
+		}
+		lo, hi := bodyLineBounds(sel, rect, y)
+		sb.WriteString(rowFragment(s, rect, lo, hi))
+	}
+	if sb.Len() == 0 {
+		return "", false
+	}
+	return sb.String(), true
+}
+
+// bodyLineBounds 返回正文某屏幕行的选中列区间（含端点），语义与高亮一致：
+// 单行从 Anchor 到 Cur，首行从起点到行尾、末行从行首到终点，中间整行。
+func bodyLineBounds(sel *model.Selection, rect renderer.Rect, y int) (int, int) {
+	lo, hi := rect.X, rect.X+rect.W-1
+	switch {
+	case sel.AnchorY == sel.CurY:
+		lo, hi = min(sel.AnchorX, sel.CurX), max(sel.AnchorX, sel.CurX)
+	case y == sel.AnchorY:
+		if sel.AnchorY < sel.CurY {
+			lo = sel.AnchorX
+		} else {
+			hi = sel.AnchorX
+		}
+	case y == sel.CurY:
+		if sel.AnchorY < sel.CurY {
+			hi = sel.CurX
+		} else {
+			lo = sel.CurX
+		}
+	}
+	return lo, hi
+}
+
+// rowCellRange 把屏幕列区间换算成渲染行内的格区间（0-based，含端点）。
+func rowCellRange(rect renderer.Rect, lo, hi, n int) (int, int) {
+	i0, i1 := lo-rect.X, hi-rect.X
+	if i0 < 0 {
+		i0 = 0
+	}
+	if i1 > n-1 {
+		i1 = n - 1
+	}
+	return i0, i1
+}
+
+// coversRow 报告整行的渲染内容（两端渲染前缀不算）是否都被选中列区间覆盖。
+func coversRow(s view.SrcLine, rect renderer.Rect, lo, hi int) bool {
+	first, last := -1, -1
+	for i, id := range s.Map {
+		if id < 0 {
+			continue
+		}
+		if first < 0 {
+			first = i
+		}
+		last = i
+	}
+	if first < 0 {
+		return false
+	}
+	i0, i1 := rowCellRange(rect, lo, hi, len(s.Map))
+	return i0 <= first && i1 >= last
+}
+
+// rowFragment 返回渲染行在选中列区间内对应的原文片段：取选中格里源下标的最小
+// 到最大范围——夹在选中字符中间的标记符保留，落在两端的标记随之被丢掉。
+// 没有选中任何来自原文的格时返回空串（该行只贡献一个换行）。
+func rowFragment(s view.SrcLine, rect renderer.Rect, lo, hi int) string {
+	i0, i1 := rowCellRange(rect, lo, hi, len(s.Map))
+	if i0 > i1 {
+		return ""
+	}
+	minID, maxID := -1, -1
+	for i := i0; i <= i1; i++ {
+		id := s.Map[i]
+		if id < 0 {
+			continue
+		}
+		if minID < 0 || id < minID {
+			minID = id
+		}
+		if id > maxID {
+			maxID = id
+		}
+	}
+	rs := []rune(s.Text)
+	if minID < 0 || minID >= len(rs) {
+		return ""
+	}
+	if maxID >= len(rs) {
+		maxID = len(rs) - 1
+	}
+	return string(rs[minID : maxID+1])
 }
 
 // expandAll 切换当前会话全部思维链与工具调用的展开状态（Ctrl+O）：

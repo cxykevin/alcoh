@@ -18,11 +18,14 @@ type AppView struct {
 	Theme     renderer.Theme
 	SpinFrame int
 
-	// Body/BodyRect/BodyScroll 记录最近一帧会话正文的块目录与消息区屏幕位置，
-	// 供鼠标选择的原始 markdown 复制与选区高亮使用（渲染时填充）。
+	// Body/BodyRect/BodyScroll/BodyRows 记录最近一帧会话正文的块目录、消息区
+	// 屏幕位置、滚动偏移与内容总行数，供鼠标选择的原始 markdown 复制、选区
+	// 高亮与拖拽滚动使用（渲染时填充）。选区坐标是屏幕单元格：
+	// contentY = 屏幕行 - BodyRect.Y + BodyScroll。
 	Body       []BodyBlock
 	BodyRect   renderer.Rect
 	BodyScroll int
+	BodyRows   int
 	// BodyToggles 记录最近一帧可点击切换展开/折叠的正文行（contentY → 目标，
 	// 思考/工具标题行）。鼠标左键命中时展开/折叠对应单项。
 	BodyToggles map[int]ToggleRef
@@ -377,6 +380,7 @@ func (v *AppView) drawSession(c *renderer.Canvas, r renderer.Rect, m *model.AppM
 			v.Body = ml.Body
 			v.BodyRect = renderer.NewRect(r.X, r.Y, r.W, msgH)
 			v.BodyScroll = ml.Scroll
+			v.BodyRows = ml.Rows
 			v.BodyToggles = ml.Toggles
 		}
 		if planH > 0 {
@@ -418,6 +422,7 @@ func (v *AppView) drawSession(c *renderer.Canvas, r renderer.Rect, m *model.AppM
 	v.Body = ml.Body
 	v.BodyRect = msgRect
 	v.BodyScroll = ml.Scroll
+	v.BodyRows = ml.Rows
 	v.BodyToggles = ml.Toggles
 
 	if planH > 0 {
@@ -490,6 +495,7 @@ func (v *AppView) drawHome(c *renderer.Canvas, r renderer.Rect, m *model.AppMode
 	v.Body = nil
 	v.BodyRect = renderer.Rect{}
 	v.BodyScroll = 0
+	v.BodyRows = 0
 	v.BodyToggles = nil
 
 	listW := 32

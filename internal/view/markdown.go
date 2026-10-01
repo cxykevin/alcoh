@@ -15,9 +15,14 @@ type Span struct {
 // StyledLine 是一行 span 序列（渲染时不再换行）。
 // Src 记录该渲染行对应的原始 markdown 文本（含 `#`/`**`/“ ` “ 等标记符），
 // 供鼠标选择时从原始文本精确截取，而不复制渲染后的结果。
+// Map 与 Spans 拼接后的 rune 顺序一一对应，给出每个渲染 rune 在 Src 中的下标；
+// -1 表示该 rune 是渲染合成、原文里没有（列表符号、分隔线、代码行号前缀等）。
+// 部分框选时据此只取选中的字符：未渲染的标记符（`**`、`# ` 等）自然被排除，
+// 复制结果不会出现落单的标记。
 type StyledLine struct {
 	Spans []Span
 	Src   string
+	Map   []int
 }
 
 // Markdown 把纯文本渲染为带样式的行（简易 markdown 着色）。
@@ -32,6 +37,7 @@ func Markdown(text string, t renderer.Theme) []StyledLine {
 		for i := range hl {
 			if i < len(codeLines) {
 				hl[i].Src = codeLines[i] // 插针：代码行对应原始行
+				hl[i].Map = codeLineIdents(hl[i].Spans, codeLines[i])
 			}
 		}
 		lines = append(lines, hl...)
@@ -69,39 +75,90 @@ func Markdown(text string, t renderer.Theme) []StyledLine {
 
 func markdownLine(line string, t renderer.Theme) StyledLine {
 	base := t.Style(t.Text)
-	var spans []Span
 
 	switch {
 	case strings.HasPrefix(line, "# "):
-		spans = append(spans, Span{Text: strings.TrimPrefix(line, "# "), Style: t.Style(t.MDHeading).WithBold(true)})
-		return StyledLine{Spans: spans}
+		return headingLine(line, "# ", t.Style(t.MDHeading).WithBold(true))
 	case strings.HasPrefix(line, "## "):
-		spans = append(spans, Span{Text: strings.TrimPrefix(line, "## "), Style: t.Style(t.MDHeading).WithBold(true)})
-		return StyledLine{Spans: spans}
+		return headingLine(line, "## ", t.Style(t.MDHeading).WithBold(true))
 	case strings.HasPrefix(line, "### "):
-		spans = append(spans, Span{Text: strings.TrimPrefix(line, "### "), Style: t.Style(t.MDHeading)})
-		return StyledLine{Spans: spans}
+		return headingLine(line, "### ", t.Style(t.MDHeading))
 	case strings.HasPrefix(line, "> "):
-		content := strings.TrimPrefix(line, "> ")
-		return StyledLine{Spans: inlineStyle(content, t.Style(t.MDBlockquote).WithItalic(true), t)}
+		spans, idents := inlineStyle(strings.TrimPrefix(line, "> "), t.Style(t.MDBlockquote).WithItalic(true), t)
+		return StyledLine{Spans: spans, Map: shiftIdents(idents, len([]rune("> ")))}
 	case strings.HasPrefix(line, "- "):
-		content := strings.TrimPrefix(line, "- ")
+		spans, idents := inlineStyle(strings.TrimPrefix(line, "- "), base, t)
 		marker := Span{Text: "• ", Style: t.Style(t.MDList)}
-		return StyledLine{Spans: append([]Span{marker}, inlineStyle(content, base, t)...)}
+		return StyledLine{
+			Spans: append([]Span{marker}, spans...),
+			// 列表符号是渲染合成：占 2 格，原文里对应 "- "。
+			Map: append(negIdents(len([]rune("• "))), shiftIdents(idents, len([]rune("- ")))...),
+		}
 	case strings.HasPrefix(line, "---") || strings.HasPrefix(line, "***"):
-		return StyledLine{Spans: []Span{{Text: strings.Repeat("─", 40), Style: t.Style(t.MDList)}}}
+		rule := strings.Repeat("─", 40)
+		return StyledLine{Spans: []Span{{Text: rule, Style: t.Style(t.MDList)}}, Map: negIdents(len([]rune(rule)))}
 	}
-	return StyledLine{Spans: inlineStyle(line, base, t)}
+	spans, idents := inlineStyle(line, base, t)
+	return StyledLine{Spans: spans, Map: idents}
+}
+
+// headingLine 生成标题渲染行：前缀标记（"# " 等）不渲染，源下标整体后移 marker 个。
+func headingLine(line, marker string, style renderer.Style) StyledLine {
+	content := strings.TrimPrefix(line, marker)
+	return StyledLine{
+		Spans: []Span{{Text: content, Style: style}},
+		Map:   seqIdents(len([]rune(marker)), len([]rune(content))),
+	}
+}
+
+// seqIdents 返回 n 个从 offset 起的连续源下标（渲染 rune 与原文逐字对应）。
+func seqIdents(offset, n int) []int {
+	out := make([]int, n)
+	for i := range out {
+		out[i] = offset + i
+	}
+	return out
+}
+
+// negIdents 返回 n 个 -1（渲染合成字符，原文里没有对应字符）。
+func negIdents(n int) []int {
+	out := make([]int, n)
+	for i := range out {
+		out[i] = -1
+	}
+	return out
+}
+
+// shiftIdents 把源下标整体后移 d（跳过的标记前缀长度），-1 保持不变。
+func shiftIdents(idents []int, d int) []int {
+	if d == 0 {
+		return idents
+	}
+	out := make([]int, len(idents))
+	for i, id := range idents {
+		if id < 0 {
+			out[i] = -1
+			continue
+		}
+		out[i] = id + d
+	}
+	return out
 }
 
 // inlineStyle 解析行内标记：**bold**、*italic*、`code`、[text](url)。
-func inlineStyle(s string, base renderer.Style, t renderer.Theme) []Span {
+// 同时返回与渲染 rune 一一对应的源下标（见 StyledLine.Map）：标记符本身不渲染，
+// 因此不出现在下标序列里——部分框选复制时它们自然被排除。
+func inlineStyle(s string, base renderer.Style, t renderer.Theme) ([]Span, []int) {
 	var spans []Span
+	var idents []int
 	var buf strings.Builder
+	var bufIdents []int
 	flush := func(st renderer.Style) {
 		if buf.Len() > 0 {
 			spans = append(spans, Span{Text: buf.String(), Style: st})
+			idents = append(idents, bufIdents...)
 			buf.Reset()
+			bufIdents = bufIdents[:0]
 		}
 	}
 	cur := base
@@ -136,14 +193,20 @@ func inlineStyle(s string, base renderer.Style, t renderer.Theme) []Span {
 					text := string(rs[i+1 : i+end])
 					flush(cur)
 					spans = append(spans, Span{Text: text, Style: t.Style(t.MDLink).WithUnderline(true)})
+					// 链接只渲染方括号里的文字：源下标逐字对应，"(url)" 不占渲染位。
+					for k := range []rune(text) {
+						idents = append(idents, i+1+k)
+					}
 					i += rel + closeIdx + 1
 					continue
 				}
 			}
 			buf.WriteRune(rs[i])
+			bufIdents = append(bufIdents, i)
 			i++
 		default:
 			buf.WriteRune(rs[i])
+			bufIdents = append(bufIdents, i)
 			i++
 		}
 	}
@@ -151,7 +214,7 @@ func inlineStyle(s string, base renderer.Style, t renderer.Theme) []Span {
 	if len(spans) == 0 {
 		spans = append(spans, Span{Text: "", Style: base})
 	}
-	return spans
+	return spans, idents
 }
 
 func isRuneSpace(r rune) bool { return r == ' ' || r == '\t' }

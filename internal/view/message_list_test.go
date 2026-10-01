@@ -57,5 +57,47 @@ func TestMessageListToggles(t *testing.T) {
 	}
 }
 
+// TestMessageBlockSrcMaps 验证正文行的"每格源下标"：渲染前缀（"  " / "  ❯ "）
+// 在原文里没有对应字符（-1），其余列指向该行原文的 rune；中文占两格、两格同指
+// 一个 rune；长行 wrap 的续行继续用同一逻辑行的原文下标。
+func TestMessageBlockSrcMaps(t *testing.T) {
+	theme := renderer.DefaultTheme()
+	ml := &MessageList{Theme: theme}
+
+	// 用户消息：首行前缀 "  ❯ "（4 格），中文每字占两格。
+	blk := ml.messageBlock(&model.Message{Kind: model.MsgUser, Text: "你好ab"}, 40)
+	if len(blk.srcLines) != len(blk.lines) {
+		t.Fatalf("srcLines %d != lines %d", len(blk.srcLines), len(blk.lines))
+	}
+	if want := []int{-1, -1, -1, -1, 0, 0, 1, 1, 2, 3}; !equalInts(blk.srcLines[0].Map, want) {
+		t.Fatalf("user map = %v, want %v", blk.srcLines[0].Map, want)
+	}
+
+	// 用户消息长行 wrap：续行前缀 "  "（2 格），下标从续行首字接着算。
+	const width = 12 // 正文宽 width-4 = 8 列
+	long := "1234567890abcdef"
+	wrapped := renderer.Wrap(long, width-4)
+	if len(wrapped) < 2 {
+		t.Fatalf("expected wrapped rows, got %v", wrapped)
+	}
+	blk = ml.messageBlock(&model.Message{Kind: model.MsgUser, Text: long}, width)
+	if len(blk.srcLines) != len(wrapped) {
+		t.Fatalf("got %d rows, want %d", len(blk.srcLines), len(wrapped))
+	}
+	cont := blk.srcLines[1].Map
+	if len(cont) < 3 || cont[0] != -1 || cont[1] != -1 || cont[2] != len(wrapped[0]) {
+		t.Fatalf("continuation map = %v, want first char at source %d", cont, len(wrapped[0]))
+	}
+	if blk.srcLines[1].First {
+		t.Error("continuation row should not be marked First")
+	}
+
+	// 助手消息：前缀 "  " 两格；粗体标记符不渲染，因而不占格也不出现在下标里。
+	blk = ml.messageBlock(&model.Message{Kind: model.MsgAssistant, Text: "**加粗**"}, 40)
+	if want := []int{-1, -1, 2, 2, 3, 3}; !equalInts(blk.srcLines[0].Map, want) {
+		t.Fatalf("bold map = %v, want %v", blk.srcLines[0].Map, want)
+	}
+}
+
 //go:fix inline
 func strPtr(s string) *string { return new(s) }

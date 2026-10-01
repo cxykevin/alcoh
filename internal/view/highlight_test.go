@@ -24,10 +24,20 @@ func TestMarkdownCodeHighlightAddsLineNumbers(t *testing.T) {
 	}
 }
 
-func TestWrapSpansExpandsTabToFourSpaces(t *testing.T) {
+func TestWrapLineExpandsTabToFourSpaces(t *testing.T) {
 	st := renderer.DefaultTheme().Style(renderer.DefaultTheme().Text)
-	lines := wrapSpans([]Span{{Text: "a\tb", Style: st}}, 20)
-	if len(lines) != 1 || len(lines[0]) != 1 || lines[0][0].Text != "a    b" {
+	lines := wrapLine(StyledLine{Spans: []Span{{Text: "a\tb", Style: st}}, Map: []int{0, 1, 2}}, 20)
+	if len(lines) != 1 || len(lines[0].Spans) != 1 || lines[0].Spans[0].Text != "a    b" {
 		t.Fatalf("tab expansion got %#v", lines)
+	}
+	// 展开出的 4 个空格都指向同一个 tab（源下标 1），复制时只算一个字符。
+	want := []int{0, 1, 1, 1, 1, 2}
+	if len(lines[0].Map) != len(want) {
+		t.Fatalf("tab map = %v, want %v", lines[0].Map, want)
+	}
+	for i, id := range want {
+		if lines[0].Map[i] != id {
+			t.Fatalf("tab map = %v, want %v", lines[0].Map, want)
+		}
 	}
 }
