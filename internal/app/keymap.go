@@ -1302,8 +1302,19 @@ func (a *App) dispatchMouse(me input.MouseEvent) {
 	}
 }
 
+// bodyScroll 返回正文当前的滚动偏移（内容行号）：渲染后模型里的 Scroll 就是
+// 屏幕首行对应的内容行（见 view/message_list.go），刚发生的滚动也立即计入，
+// 用于在鼠标屏幕行与内容行号之间换算。
+func (a *App) bodyScroll() int {
+	if a.model.Active == nil {
+		return a.view.BodyScroll
+	}
+	return a.model.Active.Scroll
+}
+
 // handleSelect 处理左键按下/拖拽/释放，维护行选择状态。
 // 选择只在会话正文区域（BodyRect）内生效；拖出正文时被裁剪到正文边界。
+// 选区记内容行号，滚轮/翻页滚动后高亮与复制内容都跟着正文走。
 func (a *App) handleSelect(me input.MouseEvent) {
 	m := a.model
 	if m.Modal != model.NoModal || m.View != model.ViewSession {
@@ -1336,7 +1347,9 @@ func (a *App) handleSelect(me input.MouseEvent) {
 		if a.clickBodyToggle(x, y, rect) {
 			return
 		}
-		m.Selection = &model.Selection{AnchorX: x, AnchorY: y, CurX: x, CurY: y}
+		// 选区记内容行号（不是屏幕行）：之后滚动时高亮随内容一起移动。
+		cy := y - rect.Y + a.bodyScroll()
+		m.Selection = &model.Selection{AnchorX: x, AnchorY: cy, CurX: x, CurY: cy}
 	case input.MouseMove:
 		if m.Selection != nil {
 			// 拖出正文上/下边界时自动滚动：每来一次移动事件贴边滚一行，
@@ -1356,7 +1369,7 @@ func (a *App) handleSelect(me input.MouseEvent) {
 			if cy >= rect.Y+rect.H {
 				cy = rect.Y + rect.H - 1
 			}
-			m.Selection.CurX, m.Selection.CurY = x, cy
+			m.Selection.CurX, m.Selection.CurY = x, cy-rect.Y+a.bodyScroll()
 		}
 	case input.MouseRelease:
 		if m.Selection != nil {
@@ -1487,22 +1500,24 @@ func (a *App) shellSelectionText(sel *model.Selection) string {
 	return out.String()
 }
 
-// lineSelectionBounds 计算行选择下第 y 行覆盖的列区间 [lo, hi]。
+// lineSelectionBounds 计算行选择下内容行 contentY 覆盖的列区间 [lo, hi]
+//（sel 的 Y 是内容行号，与滚动位置无关，调用方负责把屏幕行换算成内容行）；
+// screenY 是同一行在屏幕上的行号，仅用于宽字符对齐 buffer。
 // 行选择语义：首行从起点（宽字符对齐后）到行尾，末行从行首到终点，
 // 中间行整行；单行从 min 列到 max 列。宽字符不切半：lo 若落在续列则回退
 // 到该字符首列，hi 若落在宽字符首列则前进到续列。无区间时返回 hi=-1。
-func lineSelectionBounds(buf *renderer.Buffer, sel *model.Selection, y int) (int, int) {
+func lineSelectionBounds(buf *renderer.Buffer, sel *model.Selection, contentY, screenY int) (int, int) {
 	var lo, hi int
 	switch {
 	case sel.AnchorY == sel.CurY:
 		lo, hi = min(sel.AnchorX, sel.CurX), max(sel.AnchorX, sel.CurX)
-	case y == sel.AnchorY:
+	case contentY == sel.AnchorY:
 		if sel.AnchorY < sel.CurY { // 正向：anchor 行在上方，从 anchor 到行尾
 			lo, hi = sel.AnchorX, buf.W-1
 		} else { // 反向：anchor 行在下方，从行首到 anchor
 			lo, hi = 0, sel.AnchorX
 		}
-	case y == sel.CurY:
+	case contentY == sel.CurY:
 		if sel.AnchorY < sel.CurY { // 正向：cur 行在下方，从行首到 cur
 			lo, hi = 0, sel.CurX
 		} else { // 反向：cur 行在上方，从 cur 到行尾
@@ -1517,7 +1532,7 @@ func lineSelectionBounds(buf *renderer.Buffer, sel *model.Selection, y int) (int
 	if hi >= buf.W {
 		hi = buf.W - 1
 	}
-	return wideCharBounds(buf, y, lo, hi)
+	return wideCharBounds(buf, screenY, lo, hi)
 }
 
 // wideCharBounds 把行区间 [lo,hi] 补齐成完整宽字符：lo 落在续列时回退到首列，
@@ -1543,8 +1558,9 @@ func wideCharBounds(buf *renderer.Buffer, y, lo, hi int) (int, int) {
 	return lo, hi
 }
 
-// bodyText 返回选择覆盖的正文原始文本。选择只作用于正文区域（BodyRect），
-// 滚动位置通过 BodyScroll 映射到 contentY。
+// bodyText 返回选择覆盖的正文原始文本。选择只作用于正文区域（BodyRect）；
+// 选区 Y 是内容行号，这里按当前滚动偏移裁剪到可见的内容行范围后直接使用，
+// 因此滚动前后复制到的都是同一段内容。
 // 消息块走行级插针：按选中的列从原始 markdown 里取字（见 bodyLineText），
 // 未渲染的标记符只要不在选区内就被丢掉；其余块整块输出。
 func (a *App) bodyText(sel *model.Selection) string {
@@ -1556,18 +1572,19 @@ func (a *App) bodyText(sel *model.Selection) string {
 	if rect.H <= 0 {
 		return ""
 	}
-	y1, y2 := min(sel.AnchorY, sel.CurY), max(sel.AnchorY, sel.CurY)
-	if y2 < rect.Y || y1 >= rect.Y+rect.H {
+	// 选区（内容行号）裁剪到当前可见的内容行范围。
+	c1, c2 := min(sel.AnchorY, sel.CurY), max(sel.AnchorY, sel.CurY)
+	top := a.view.BodyScroll
+	bottom := a.view.BodyScroll + rect.H - 1
+	if c2 < top || c1 > bottom {
 		return ""
 	}
-	if y1 < rect.Y {
-		y1 = rect.Y
+	if c1 < top {
+		c1 = top
 	}
-	if y2 >= rect.Y+rect.H {
-		y2 = rect.Y + rect.H - 1
+	if c2 > bottom {
+		c2 = bottom
 	}
-	c1 := y1 - rect.Y + a.view.BodyScroll
-	c2 := y2 - rect.Y + a.view.BodyScroll
 	var sb strings.Builder
 	for _, blk := range body {
 		if blk.End < c1 || blk.Start > c2 {
@@ -1642,20 +1659,21 @@ func bodyLineText(rows []view.SrcLine, rowStart int, sel *model.Selection, rect 
 	return sb.String(), true
 }
 
-// bodyLineBounds 返回正文某屏幕行的选中列区间（含端点），语义与高亮一致：
-// 单行从 Anchor 到 Cur，首行从起点到行尾、末行从行首到终点，中间整行。
-func bodyLineBounds(sel *model.Selection, rect renderer.Rect, y int) (int, int) {
+// bodyLineBounds 返回正文内容行 contentY 的选中列区间（含端点，列范围为
+// rect 整行），语义与高亮一致：单行从 Anchor 到 Cur，首行从起点到行尾、
+// 末行从行首到终点，中间整行。
+func bodyLineBounds(sel *model.Selection, rect renderer.Rect, contentY int) (int, int) {
 	lo, hi := rect.X, rect.X+rect.W-1
 	switch {
 	case sel.AnchorY == sel.CurY:
 		lo, hi = min(sel.AnchorX, sel.CurX), max(sel.AnchorX, sel.CurX)
-	case y == sel.AnchorY:
+	case contentY == sel.AnchorY:
 		if sel.AnchorY < sel.CurY {
 			lo = sel.AnchorX
 		} else {
 			hi = sel.AnchorX
 		}
-	case y == sel.CurY:
+	case contentY == sel.CurY:
 		if sel.AnchorY < sel.CurY {
 			hi = sel.CurX
 		} else {

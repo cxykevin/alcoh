@@ -624,12 +624,18 @@ func TestCopyBodyText(t *testing.T) {
 		t.Fatalf("block raw = %q", got)
 	}
 
-	// 滚动：正文滚动 10 行后，屏幕 y=20 命中 contentY=30 的块。
+	// 滚动无关性：选区记内容行号，正文滚到第 10 行（BodyScroll=10）时
+	// contentY=30 的块仍在选区内，取到的内容与滚动位置无关。
 	a.view.Body = []view.BodyBlock{{Src: []view.SrcLine{{Text: "滚动后的内容", First: true}}, Start: 30, End: 30}}
 	a.view.BodyScroll = 10
-	got = a.bodyText(&model.Selection{AnchorX: 0, AnchorY: 20, CurX: 0, CurY: 20})
+	got = a.bodyText(&model.Selection{AnchorX: 0, AnchorY: 30, CurX: 0, CurY: 30})
 	if got != "滚动后的内容" {
 		t.Fatalf("scrolled body = %q", got)
+	}
+	// 该内容行滚出可见范围（BodyScroll=0，可见内容行 0..23）后不再取到。
+	a.view.BodyScroll = 0
+	if got := a.bodyText(&model.Selection{AnchorX: 0, AnchorY: 30, CurX: 0, CurY: 30}); got != "" {
+		t.Fatalf("offscreen body = %q, want empty", got)
 	}
 }
 
@@ -713,8 +719,9 @@ func TestDragAutoScrollsBody(t *testing.T) {
 	if a.model.Active.FollowBottom {
 		t.Error("dragging must unstick from bottom")
 	}
-	if got := a.model.Selection.CurY; got != 14 {
-		t.Errorf("cursor row = %d, want 14 (body bottom)", got)
+	// 选区存内容行号：正文最后一行（屏幕 14）在滚过 1 行后是内容行 10。
+	if got := a.model.Selection.CurY; got != 10 {
+		t.Errorf("cursor content row = %d, want 10 (body bottom)", got)
 	}
 
 	// 模拟一次渲染回写后再拖：已经到底（30+10 = 40 行）就不再滚。
@@ -730,8 +737,9 @@ func TestDragAutoScrollsBody(t *testing.T) {
 	if got := a.model.Active.Scroll; got != 29 {
 		t.Errorf("scroll after dragging above = %d, want 29", got)
 	}
-	if got := a.model.Selection.CurY; got != 5 {
-		t.Errorf("cursor row = %d, want 5 (body top)", got)
+	// 正文第一行（屏幕 5）在滚到偏移 29 后是内容行 29。
+	if got := a.model.Selection.CurY; got != 29 {
+		t.Errorf("cursor content row = %d, want 29 (body top)", got)
 	}
 
 	// 已经在顶部：不再滚。
@@ -1474,5 +1482,44 @@ func TestPasteKeepsCurrentLine(t *testing.T) {
 
 	if got := a.model.Input.Text(); got != "hello world" {
 		t.Errorf("input after paste = %q, want %q", got, "hello world")
+	}
+}
+
+// TestApplySelectionFollowsScroll 回归：选区记的是内容行号，正文滚动后高亮
+// 随内容一起移动，而不是停在原来的屏幕行上（滚动前选中的那段文字仍然高亮）。
+func TestApplySelectionFollowsScroll(t *testing.T) {
+	ft := newFakeTerm()
+	a := New(ft, demo.New(true))
+	a.view.BodyRect = renderer.NewRect(0, 0, 80, 10)
+	a.view.BodyScroll = 0
+
+	a.back = renderer.NewBuffer(80, 10)
+	a.back.PutText(2, 3, "hello", renderer.DefaultStyle(), 80)
+	a.model.Selection = &model.Selection{AnchorX: 2, AnchorY: 3, CurX: 6, CurY: 3}
+	a.applySelection(a.back)
+	if c := a.back.Cells[a.back.Index(2, 3)]; !c.Style.Reverse {
+		t.Fatal("content row 3 should be highlighted at screen row 3 while unscrolled")
+	}
+
+	// 滚动 2 行：同一内容行落到屏幕第 1 行。
+	a.view.BodyScroll = 2
+	a.back = renderer.NewBuffer(80, 10)
+	a.back.PutText(2, 1, "hello", renderer.DefaultStyle(), 80)
+	a.applySelection(a.back)
+	if c := a.back.Cells[a.back.Index(2, 1)]; !c.Style.Reverse {
+		t.Error("highlight should follow the content after scrolling")
+	}
+	if c := a.back.Cells[a.back.Index(2, 3)]; c.Style.Reverse {
+		t.Error("stale screen row must not stay highlighted")
+	}
+
+	// 内容行滚出可见区（选区在上方）时不再高亮任何一行。
+	a.view.BodyScroll = 8
+	a.back = renderer.NewBuffer(80, 10)
+	a.applySelection(a.back)
+	for _, c := range a.back.Cells {
+		if c.Style.Reverse {
+			t.Fatal("selection outside the visible window must not highlight anything")
+		}
 	}
 }

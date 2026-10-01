@@ -948,22 +948,26 @@ func (a *App) render() bool {
 
 // applySelection 给行选择区域叠加反显样式，实现"所见即所得"的高亮。
 // 选区只作用于正文区域（BodyRect），计划/输入框/状态栏不高亮；
-// 宽字符整字反显，不会只反半格导致花屏。
+// 选区 Y 存的是内容行号，这里按当前滚动偏移换算成屏幕行再裁剪，
+// 因此滚动时高亮随内容一起移动；宽字符整字反显，不会只反半格导致花屏。
 func (a *App) applySelection(buf *renderer.Buffer) {
 	sel := a.model.Selection
 	if sel == nil {
 		return
 	}
+	rect := a.view.BodyRect
+	if rect.H <= 0 {
+		return
+	}
+	// 内容行号 → 屏幕行（滚动偏移取自本帧渲染后的实际值）。
 	y1, y2 := min(sel.AnchorY, sel.CurY), max(sel.AnchorY, sel.CurY)
+	y1 = y1 - a.view.BodyScroll + rect.Y
+	y2 = y2 - a.view.BodyScroll + rect.Y
 	if y1 < 0 {
 		y1 = 0
 	}
 	if y2 >= buf.H {
 		y2 = buf.H - 1
-	}
-	rect := a.view.BodyRect
-	if rect.H <= 0 {
-		return
 	}
 	if y2 < rect.Y || y1 >= rect.Y+rect.H {
 		return
@@ -975,7 +979,7 @@ func (a *App) applySelection(buf *renderer.Buffer) {
 		y2 = rect.Y + rect.H - 1
 	}
 	for y := y1; y <= y2; y++ {
-		lo, hi := lineSelectionBounds(buf, sel, y)
+		lo, hi := lineSelectionBounds(buf, sel, y-rect.Y+a.view.BodyScroll, y)
 		if lo > hi {
 			continue
 		}
