@@ -136,7 +136,8 @@ func (v *AppView) drawHelp(c *renderer.Canvas, r renderer.Rect) {
 		i18n.T("       多个权限按到达顺序排队，逐条弹出；Esc 视为取消并处理下一条。"),
 		"",
 		i18n.T("ACP 状态: 状态栏展示当前 model/agent 元信息与 stop reason；"),
-		i18n.T("       未知 session update 会作为一行系统提示写入正文（原始 JSON 保留在协议诊断中）。"),
+		i18n.T("       未知 session update 与 calling_info 参数块是协议细节，默认不在正文显示"),
+		i18n.T("       （原始 JSON 仍保留在协议诊断中）；设置里打开“显示协议细节”可查看。"),
 	}
 	// 计算高度
 	contentH := len(lines)
@@ -202,6 +203,7 @@ func (sc *SettingsContent) Draw(c *renderer.Canvas, r renderer.Rect) {
 		{i18n.T("展开思考内容"), onOff(sc.Values.ThinkingExpanded)},
 		{i18n.T("默认展开工具"), onOff(sc.Values.ToolsExpanded)},
 		{i18n.T("语言"), sc.Values.Language},
+		{i18n.T("显示协议细节"), onOff(sc.Values.ShowProtocolDetails)},
 	}
 	for i, row := range rows {
 		if r.Y+i >= r.Y+r.H {

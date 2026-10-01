@@ -201,8 +201,9 @@ func (ml *MessageList) buildBlocks(s *model.SessionState, width int) []*block {
 			if item.ToolCall != nil {
 				tc := item.ToolCall
 				private := s.Alkaid0ToolCalls
-				blocks = append(blocks, ml.cached(item.Key, ml.toolSig(tc, width, private), func() *block {
-					return ml.toolBlock(tc, width, private)
+				details := s.ShowProtocolDetails
+				blocks = append(blocks, ml.cached(item.Key, ml.toolSig(tc, width, private, details), func() *block {
+					return ml.toolBlock(tc, width, private, details)
 				}))
 			}
 		case model.TimelinePlan:
@@ -297,11 +298,11 @@ func (ml *MessageList) thoughtSig(m *model.Message, width int) uint64 {
 	return s.sum64()
 }
 
-// toolSig 覆盖 toolBlock 的输入（含展开后的 raw 输入输出、内容块、位置与
-// alkaid0 私有渲染开关）。
-func (ml *MessageList) toolSig(tc *model.ToolCall, width int, alkaid0 bool) uint64 {
+// toolSig 覆盖 toolBlock 的输入（含展开后的 raw 输入输出、内容块、位置、
+// alkaid0 私有渲染开关与协议细节开关）。
+func (ml *MessageList) toolSig(tc *model.ToolCall, width int, alkaid0, details bool) uint64 {
 	s := newSig()
-	s.str(tc.ID).str(tc.Title).str(string(tc.Kind)).str(string(tc.Status)).bool(tc.Expanded).bool(alkaid0)
+	s.str(tc.ID).str(tc.Title).str(string(tc.Kind)).str(string(tc.Status)).bool(tc.Expanded).bool(alkaid0).bool(details)
 	s.str(tc.RawInput).str(tc.RawOutput).num(width)
 	for _, location := range tc.Locations {
 		s.str(location.Path)
@@ -440,7 +441,7 @@ func (ml *MessageList) thoughtBlock(msg *model.Message, width int) *block {
 	return blk
 }
 
-func (ml *MessageList) toolBlock(tc *model.ToolCall, width int, alkaid0 bool) *block {
+func (ml *MessageList) toolBlock(tc *model.ToolCall, width int, alkaid0, details bool) *block {
 	t := ml.Theme
 	// alkaid0 v0.4：标题由工具名与关键参数拼出，正文只展开标题未消费的参数。
 	var call *alkaid0Call
@@ -549,6 +550,11 @@ func (ml *MessageList) toolBlock(tc *model.ToolCall, width int, alkaid0 bool) *b
 				}
 			}
 		default:
+			// alkaid0 私有 calling_info 参数块属于协议细节：参数已由标题与
+			// 私有正文消费，默认不渲染它的标签行；「显示协议细节」打开才显示。
+			if ct.Type == acp.ToolCallingInfoType && !details {
+				continue
+			}
 			label := ct.Type
 			if label == "" {
 				label = "unknown"

@@ -235,3 +235,20 @@ func TestAlkaid0ToolCallFallbackWithoutCapability(t *testing.T) {
 		t.Fatalf("server param preview should render without v0.4:\n%s", got)
 	}
 }
+
+// TestAlkaid0CallingInfoHiddenByDefault 验证 calling_info 参数块属于协议细节：
+// 默认不渲染它的标签行（参数已由标题与私有正文消费），「显示协议细节」打开
+// 后才作为诊断信息显示。
+func TestAlkaid0CallingInfoHiddenByDefault(t *testing.T) {
+	s := alkaid0TestSession("s1")
+	applyAlkaid0ToolCall(t, s, "c1", "edit", map[string]any{
+		"path": "src/main.go", "target": "append", "text": "hello",
+	})
+	if got := drawText(t, s, 80, 20); strings.Contains(got, acp.ToolCallingInfoType) {
+		t.Fatalf("calling_info block should be hidden by default:\n%s", got)
+	}
+	s.ShowProtocolDetails = true
+	if got := drawText(t, s, 80, 20); !strings.Contains(got, acp.ToolCallingInfoType) {
+		t.Fatalf("calling_info block should show when protocol details are on:\n%s", got)
+	}
+}

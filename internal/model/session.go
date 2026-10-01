@@ -193,6 +193,9 @@ type SessionState struct {
 	// 标题由工具名与关键参数拼出（如 Edit(path)、Run shell*(cmd)），正文只
 	// 展开标题未消费的其余参数。
 	Alkaid0ToolCalls bool
+	// ShowProtocolDetails 为 true 时正文里显示协议细节（未知 session update
+	// 的系统提示、calling_info 参数块标签）。取自本地设置，默认关闭。
+	ShowProtocolDetails bool
 }
 
 func NewSession(id, title string) *SessionState {

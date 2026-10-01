@@ -39,6 +39,10 @@ type Values struct {
 	ThinkingExpanded    bool   `json:"thinkingExpanded,omitempty"`
 	ToolsExpanded       bool   `json:"toolsExpanded,omitempty"`
 	TerminalOutputLimit int    `json:"terminalOutputLimit,omitempty"`
+	// ShowProtocolDetails 为 true 时在正文里显示协议细节：未知 session update
+	// 的系统提示行、工具调用里的 calling_info 参数块标签。默认 false（隐藏），
+	// 原始 JSON 始终保留在会话的协议诊断里。
+	ShowProtocolDetails bool `json:"showProtocolDetails,omitempty"`
 	// OnboardingEffort 是新手引导里选择的"用户第一个会话"的推理强度
 	// （thought_level 值，如 high/xhigh）。首个会话激活时经 session/set_config_option
 	// 应用后清空；空表示未设置。仅由引导流程写入。

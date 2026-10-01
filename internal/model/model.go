@@ -164,7 +164,10 @@ type AppModel struct {
 	Quitting  bool
 }
 
-// Selection 描述一次鼠标选择。坐标为屏幕单元格（0-based，X 列 / Y 行）。
+// Selection 描述一次鼠标选择。X 为屏幕列（0-based），Y 为纵坐标：
+// 正文选区（AppModel.Selection）用内容行号
+// （contentY = 屏幕行 - 正文区首行 + 正文滚动偏移，见 view.BodyScroll），
+// 因此滚动时高亮随内容一起移动；终端预览选区（ShellSelection）仍用屏幕行号。
 // Anchor 为按下点，Cursor 为拖动终点；渲染时按行选择语义叠加反显
 // （首行从 Anchor/Cur 到行尾、末行到 Anchor/Cur、中间整行，宽字符不切半），
 // Ctrl+C 时按同一行选择从已渲染帧提取文本并复制。
@@ -561,9 +564,11 @@ func (m *AppModel) SetAgentInfo(info acp.AgentInfo, caps acp.AgentCapabilities) 
 	ordering := caps.Has(acp.Alkaid0CapabilityV04)
 	if m.Active != nil {
 		m.Active.SetAlkaid0V04(ordering)
+		m.Active.ShowProtocolDetails = m.Settings.ShowProtocolDetails
 	}
 	if m.PreSession != nil {
 		m.PreSession.SetAlkaid0V04(ordering)
+		m.PreSession.ShowProtocolDetails = m.Settings.ShowProtocolDetails
 	}
 }
 
@@ -605,10 +610,26 @@ func (m *AppModel) ToggleSetting() bool {
 		m.Settings.ThinkingExpanded = !m.Settings.ThinkingExpanded
 	case 2:
 		m.Settings.ToolsExpanded = !m.Settings.ToolsExpanded
+	case 4:
+		// 显示协议细节（设置页最后一行）：正文里的未知 session update 提示与
+		// calling_info 参数块标签，默认关闭。
+		m.Settings.ShowProtocolDetails = !m.Settings.ShowProtocolDetails
+		m.SyncProtocolDetails()
 	default:
 		return false
 	}
 	return true
+}
+
+// SyncProtocolDetails 把"显示协议细节"开关同步到当前会话与主页预创建会话：
+// 切换设置后正文渲染立即随之改变。
+func (m *AppModel) SyncProtocolDetails() {
+	if m.Active != nil {
+		m.Active.ShowProtocolDetails = m.Settings.ShowProtocolDetails
+	}
+	if m.PreSession != nil {
+		m.PreSession.ShowProtocolDetails = m.Settings.ShowProtocolDetails
+	}
 }
 
 // CycleColorMode 在已支持的本地色彩模式之间切换。
@@ -1107,14 +1128,18 @@ func (m *AppModel) ApplyEvent(ev acp.Event) {
 		}
 	case *acp.UnknownSessionUpdateEvent:
 		if m.HasActive() && e.SessionID == m.Active.ID {
+			// 原始 JSON 始终收进协议诊断（/settings 里的条数），正文提示按
+			// "显示协议细节"开关决定：默认不往正文里写这行提示。
 			m.Active.ProtocolUpdates = appendProtocolUpdate(m.Active.ProtocolUpdates, e.Raw)
-			label := e.Discriminator
-			if label == "" {
-				label = "unknown"
+			if m.Active.ShowProtocolDetails {
+				label := e.Discriminator
+				if label == "" {
+					label = "unknown"
+				}
+				noticeKey := "unknown:" + label
+				notice := i18n.T("▸ 已收到未知 session update: %s（保留在协议诊断中）", label)
+				m.Active.AppendSystemNotice(noticeKey, notice)
 			}
-			noticeKey := "unknown:" + label
-			notice := i18n.T("▸ 已收到未知 session update: %s（保留在协议诊断中）", label)
-			m.Active.AppendSystemNotice(noticeKey, notice)
 		}
 	case *acp.SessionListEvent:
 		m.Sessions = e.Sessions
@@ -1267,6 +1292,8 @@ func (m *AppModel) ActivateSession(id, title string) {
 		m.Active = NewSession(id, title)
 		m.Active.SetAlkaid0V04(m.SupportsAlkaid0())
 	}
+	// 本地展示偏好随会话激活同步（新建的会话默认隐藏协议细节）。
+	m.SyncProtocolDetails()
 	m.View = ViewSession
 	m.Modal = NoModal
 	m.Permission = nil

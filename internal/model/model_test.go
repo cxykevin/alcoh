@@ -367,14 +367,24 @@ func TestRemoveSessionActiveGoesHome(t *testing.T) {
 	}
 }
 
-func TestUnknownSessionUpdateAppendsTimelineNotice(t *testing.T) {
+func TestUnknownSessionUpdateHiddenByDefault(t *testing.T) {
 	m := New()
 	m.ActivateSession("s1", "")
 	raw := []byte(`{"sessionUpdate":"future_update","value":true}`)
 	m.ApplyEvent(&acp.UnknownSessionUpdateEvent{SessionID: "s1", Discriminator: "future_update", Raw: raw})
+	// 原始 JSON 收进协议诊断，但默认不往正文写提示行。
 	if len(m.Active.ProtocolUpdates) != 1 {
 		t.Fatalf("protocol updates = %d, want 1", len(m.Active.ProtocolUpdates))
 	}
+	if len(m.Active.Timeline) != 0 {
+		t.Fatalf("timeline should stay empty while protocol details are off: %#v", m.Active.Timeline)
+	}
+	// 打开"显示协议细节"后再次收到同一 discriminator：补上提示行。
+	m.SettingsSelected = 4
+	if !m.ToggleSetting() {
+		t.Fatal("settings row 4 should toggle show-protocol-details")
+	}
+	m.ApplyEvent(&acp.UnknownSessionUpdateEvent{SessionID: "s1", Discriminator: "future_update", Raw: raw})
 	if len(m.Active.Timeline) != 1 || m.Active.Timeline[0].Kind != TimelineSystemNotice {
 		t.Fatalf("timeline = %#v", m.Active.Timeline)
 	}

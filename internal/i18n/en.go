@@ -68,7 +68,8 @@ var en = map[string]string{
 	"权限弹窗: ↑↓ 选择选项, a=allow, r=reject, Enter 确认, Esc 取消":        "Permission modal: ↑↓ select, a=allow, r=reject, Enter confirm, Esc cancel",
 	"       多个权限按到达顺序排队，逐条弹出；Esc 视为取消并处理下一条。":                   "       Multiple permission requests queue up; Esc cancels the current one and processes the next.",
 	"ACP 状态: 状态栏展示当前 model/agent 元信息与 stop reason；":             "ACP status: the status bar shows current model/agent metadata and stop reason;",
-	"       未知 session update 会作为一行系统提示写入正文（原始 JSON 保留在协议诊断中）。": "       Unknown session updates are written to the body as a system notice (raw JSON kept in the protocol diagnostics).",
+	"       未知 session update 与 calling_info 参数块是协议细节，默认不在正文显示": "       Unknown session updates and calling_info argument blocks are protocol details, hidden from the body by default",
+	"       （原始 JSON 仍保留在协议诊断中）；设置里打开“显示协议细节”可查看。":                "       (raw JSON stays in the protocol diagnostics); enable “Show protocol details” in settings to view them.",
 	"帮助": "Help",
 
 	// ---- 退出确认 ----
@@ -82,6 +83,7 @@ var en = map[string]string{
 	"展开思考内容": "Expand thinking",
 	"默认展开工具": "Expand tools by default",
 	"语言":     "Language",
+	"显示协议细节": "Show protocol details",
 	"←→ 切换色彩模式 / 语言    Enter 切换开关    Esc 关闭": "←→ switch color mode / language    Enter toggle    Esc close",
 	"ACP 配置更新: %d 条（只读；未声明写回 RPC）":           "ACP config updates: %d (read-only; no write-back RPC declared)",
 	"开启": "on",

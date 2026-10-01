@@ -633,9 +633,9 @@ func (a *App) settingsKey(ke input.KeyEvent) {
 	m := a.model
 	switch ke.Type {
 	case input.KeyUp:
-		m.MoveSettings(-1, 4)
+		m.MoveSettings(-1, 5)
 	case input.KeyDown:
-		m.MoveSettings(1, 4)
+		m.MoveSettings(1, 5)
 	case input.KeyLeft:
 		if m.CycleColorMode(-1) || m.CycleLanguage(-1) {
 			a.saveSettings()
@@ -1228,10 +1228,11 @@ func (a *App) dispatchMouse(me input.MouseEvent) {
 		}
 		return
 	case model.ModalSettings:
+		// 设置页共 5 行（色彩模式 / 思考 / 工具 / 语言 / 协议细节）。
 		if me.Button == input.MouseWheelUp {
-			m.MoveSettings(-1, 3)
+			m.MoveSettings(-1, 5)
 		} else if me.Button == input.MouseWheelDown {
-			m.MoveSettings(1, 3)
+			m.MoveSettings(1, 5)
 		}
 		return
 	case model.ModalModel:
