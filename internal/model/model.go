@@ -1735,19 +1735,22 @@ func (m *AppModel) AtScrollTop() bool {
 	return s.Scroll == 0 && s.MaxScroll > 0 && !s.HistoryLoading
 }
 
-// SetHistoryLoading 标记/解除"正在加载更早的历史"：开始时正文顶部显示提示并
-// 阻止重复发起请求，结束时记录视口锚点，让新插入的旧内容不把视口顶下去。
+// SetHistoryLoading 标记/解除"正在加载更早的历史"：开始时正文顶部显示提示、
+// 阻止重复发起请求，并记录视口锚点，让随后插入的旧内容不把视口顶下去。
+//
+// 锚点在**开始**加载时记录：这一页的消息由服务端先推过来、响应随后才到，
+// 等结束再记录就会把已经渲染出来的新行算进基准，补偿失效（视口跳到最早一条）。
 func (m *AppModel) SetHistoryLoading(loading bool) {
 	if !m.HasActive() {
 		return
 	}
 	s := m.Active
 	if loading {
+		s.BeginHistoryAnchor()
 		s.HistoryLoading = true
 		return
 	}
 	s.HistoryLoading = false
-	s.BeginHistoryAnchor()
 }
 
 // NextPermissionOption / PrevPermissionOption 移动权限选项选择。

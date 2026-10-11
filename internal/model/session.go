@@ -297,6 +297,10 @@ func (s *SessionState) finishLatestThought() {
 // BeginHistoryAnchor 记录当前正文行数作为锚点。alkaid0 v0.6 的历史回放分页
 // 每次取更早的一页，内容接在正文前面；渲染时按新增行数补偿滚动偏移，
 // 视口就停在用户原本看到的位置，不会因为前面插入了内容而跳动。
+//
+// 锚点必须在**开始加载**时记录（见 AppModel.SetHistoryLoading）：服务端先把这一页
+// 的消息推过来、响应随后才到，等加载结束再记录就会把已经渲染出来的新行算进基准，
+// 行数差归零、补偿失效，视口会直接跳到新插入内容的最前面。
 func (s *SessionState) BeginHistoryAnchor() {
 	s.historyAnchor = s.Rows
 	s.historyAnchoring = true
@@ -304,13 +308,21 @@ func (s *SessionState) BeginHistoryAnchor() {
 
 // AdjustScrollForHistoryAnchor 在渲染前补偿加载更早历史带来的行数变化：
 // 新增内容都在正文前面，把新增行数加到滚动偏移上即可保持视口不动。
+//
+// 行数还没增加说明这一页还没渲染出来：加载期间保留锚点，等下一帧再补；
+// 加载已经结束则说明这一页没带来新内容（已到最早一条或请求失败），丢弃锚点，
+// 免得之后正常的内容变化被当成“前面插入的行”把视口推走。
 func (s *SessionState) AdjustScrollForHistoryAnchor(total int) {
 	if !s.historyAnchoring {
 		return
 	}
-	s.historyAnchoring = false
 	if delta := total - s.historyAnchor; delta > 0 {
 		s.Scroll += delta
+		s.historyAnchoring = false
+		return
+	}
+	if !s.HistoryLoading {
+		s.historyAnchoring = false
 	}
 }
 

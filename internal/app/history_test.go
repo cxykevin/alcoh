@@ -14,6 +14,7 @@ import (
 	"github.com/cxykevin/alcoh/internal/acp"
 	"github.com/cxykevin/alcoh/internal/demo"
 	"github.com/cxykevin/alcoh/internal/input"
+	"github.com/cxykevin/alcoh/internal/model"
 )
 
 // earlierBackend 包装 demo backend，统计"取更早一页"的请求次数。
@@ -81,6 +82,22 @@ func waitHistoryCommand(t *testing.T, a *App) commandResult {
 		t.Fatal("timeout waiting for the earlier-history command")
 		return commandResult{}
 	}
+}
+
+// waitForPrependedPage 轮询拉取后端事件，直到更早的一页真正落到正文（首条消息
+// 变成 want）。服务端的推送与加载响应来自两条后台路径，"先渲染、后收到响应"是
+// 正常时序，这里刻意不消费命令结果，用于复现该时序。
+func waitForPrependedPage(t *testing.T, a *App, b *earlierBackend, want string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		a.drain(b.Events())
+		if msgs := a.model.Active.Messages; len(msgs) > 0 && msgs[0].MessageID == want {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("first message = %v, want %s before the response arrives", a.model.Active.Messages, want)
 }
 
 // TestScrollToTopLoadsEarlierHistory 验证滚到正文顶部触发更早一页的加载：
@@ -157,5 +174,129 @@ func TestScrollToTopLoadsEarlierHistory(t *testing.T) {
 	}
 	if a.model.Active.HistoryLoading {
 		t.Error("no request should leave the loading flag set")
+	}
+}
+
+// preparePagedSession 准备一个"正文超出一屏、视口停在顶部"的活动会话，
+// 用于断言各个滚动入口滚到顶部时都会续取更早一页（见 maybeLoadEarlierHistory）。
+func preparePagedSession(t *testing.T, b *earlierBackend) *App {
+	t.Helper()
+	ft := newFakeTerm()
+	a := New(ft, b)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	a.runCtx = ctx
+
+	s, err := b.ResumeSession(ctx, "demo-0")
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	a.sess = s
+	a.model.ActivateSession(s.ID(), s.Title())
+	a.model.View = model.ViewSession
+	a.drain(b.Events())
+
+	active := a.model.Active
+	active.FollowBottom = false
+	active.Scroll = 0
+	active.Rows = 60
+	active.MaxScroll = 20 // 渲染层回写：正文确实超出一屏
+	return a
+}
+
+// TestPageUpAtTopLoadsEarlierHistory 验证焦点留在输入框时，PgUp 滚到正文顶部
+// 也会续取更早一页（不必先 Tab 切到消息区）。
+func TestPageUpAtTopLoadsEarlierHistory(t *testing.T) {
+	b := &earlierBackend{Backend: demo.New(true)}
+	defer b.Close()
+	a := preparePagedSession(t, b)
+
+	a.sessionKey(input.SimpleKey(input.KeyPageUp))
+	if !a.model.Active.HistoryLoading {
+		t.Fatal("PgUp at the top should start loading earlier history")
+	}
+	waitLoadCount(t, b, 1)
+
+	res := waitHistoryCommand(t, a)
+	a.drain(b.Events())
+	a.applyCommandResult(res)
+	if a.model.Active.HistoryLoading {
+		t.Error("loading flag should be cleared when the page arrives")
+	}
+}
+
+// TestWheelAtTopLoadsEarlierHistory 验证鼠标滚轮滚到正文顶部也会续取更早一页。
+func TestWheelAtTopLoadsEarlierHistory(t *testing.T) {
+	b := &earlierBackend{Backend: demo.New(true)}
+	defer b.Close()
+	a := preparePagedSession(t, b)
+
+	a.dispatchMouse(input.MouseEvent{Button: input.MouseWheelUp, Action: input.MousePress, X: 50, Y: 10})
+	if !a.model.Active.HistoryLoading {
+		t.Fatal("wheel up at the top should start loading earlier history")
+	}
+	waitLoadCount(t, b, 1)
+
+	res := waitHistoryCommand(t, a)
+	a.drain(b.Events())
+	a.applyCommandResult(res)
+	if got := a.model.Active.Messages; len(got) == 0 || got[0].MessageID != "msg_91" {
+		t.Fatalf("first message = %v, want msg_91 (earlier page prepended)", got)
+	}
+}
+
+// TestScrollTopWithoutOverflowKeepsIdle 验证正文不满一屏（MaxScroll == 0）时
+// PgUp 与滚轮都不会发起翻页请求：没有更上面的内容可翻。
+func TestScrollTopWithoutOverflowKeepsIdle(t *testing.T) {
+	b := &earlierBackend{Backend: demo.New(true)}
+	defer b.Close()
+	a := preparePagedSession(t, b)
+	a.model.Active.MaxScroll = 0
+
+	a.sessionKey(input.SimpleKey(input.KeyPageUp))
+	a.dispatchMouse(input.MouseEvent{Button: input.MouseWheelUp, Action: input.MousePress, X: 50, Y: 10})
+	if got := b.loadCount(); got != 0 {
+		t.Fatalf("earlier history requests = %d, want 0 without overflow", got)
+	}
+	if a.model.Active.HistoryLoading {
+		t.Error("no request should leave the loading flag set")
+	}
+}
+
+// TestEarlierHistoryPageRenderedBeforeResponseKeepsAnchor 验证"这一页先被推过来
+// 渲染、加载响应随后才到"的时序：锚点在开始加载时就已记录，新行提前画出来也
+// 不影响补偿，视口仍停在用户原本看到的位置；响应到达只解除加载状态，不再动偏移。
+// 回归：曾把锚点记录在加载结束时，此时行数已涨上去，行数差归零、补偿失效，
+// 视口直接跳到最早一条。
+func TestEarlierHistoryPageRenderedBeforeResponseKeepsAnchor(t *testing.T) {
+	b := &earlierBackend{Backend: demo.New(true)}
+	defer b.Close()
+	a := preparePagedSession(t, b)
+
+	a.messageKey(input.SimpleKey(input.KeyUp))
+	if !a.model.Active.HistoryLoading {
+		t.Fatal("loading flag should be set after reaching the top")
+	}
+	waitLoadCount(t, b, 1)
+
+	// 服务端在这一页的响应到达前就推送了消息（推送与响应来自两条后台路径，
+	// 这里只等推送落到模型，不消费命令结果），渲染层随即回写新的行数。
+	active := a.model.Active
+	waitForPrependedPage(t, a, b, "msg_91")
+	active.Rows = 80 // 前面多了 20 行
+	active.AdjustScrollForHistoryAnchor(active.Rows)
+	if got := active.Scroll; got != 20 {
+		t.Fatalf("scroll = %d, want 20 while the page renders before the response", got)
+	}
+
+	// 响应到达：解除加载状态，视口保持不动（锚点已消费，不再重复补偿）。
+	res := waitHistoryCommand(t, a)
+	a.applyCommandResult(res)
+	if active.HistoryLoading {
+		t.Error("loading flag should be cleared when the page arrives")
+	}
+	active.AdjustScrollForHistoryAnchor(active.Rows)
+	if got := active.Scroll; got != 20 {
+		t.Errorf("scroll = %d, want 20 after the response", got)
 	}
 }

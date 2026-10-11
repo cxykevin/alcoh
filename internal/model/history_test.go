@@ -65,6 +65,8 @@ func TestAtScrollTopGatesEarlierHistoryLoading(t *testing.T) {
 		t.Fatal("viewport at top of an overflowing body should trigger")
 	}
 
+	// 锚点基准是加载开始时上一帧渲染回写的正文行数。
+	s.Rows = 60
 	m.SetHistoryLoading(true)
 	if !s.HistoryLoading {
 		t.Fatal("HistoryLoading should be set while loading")
@@ -73,13 +75,12 @@ func TestAtScrollTopGatesEarlierHistoryLoading(t *testing.T) {
 		t.Fatal("must not trigger again while a page is loading")
 	}
 
-	s.Rows = 60
 	s.Scroll = 20
 	m.SetHistoryLoading(false)
 	if s.HistoryLoading {
 		t.Fatal("HistoryLoading should be cleared when the page arrives")
 	}
-	// 结束后记录锚点：下一帧渲染按新增行数补偿（这里模拟前面插入 20 行）。
+	// 下一帧渲染时前面已经插入了 20 行：按锚点补偿一次，视口停在原处。
 	s.AdjustScrollForHistoryAnchor(80)
 	if s.Scroll != 40 {
 		t.Errorf("scroll = %d, want 40 after 20 prepended lines", s.Scroll)
@@ -110,4 +111,46 @@ func TestEarlierHistoryPageSlotsBeforeKnownMessages(t *testing.T) {
 		s.AppendChunk(&acp.MessageChunkEvent{SessionID: "s1", MessageID: id, Text: id})
 	}
 	assertMessageOrder(t, s, []string{"msg_1", "msg_2", "msg_3", "msg_5", "msg_6"})
+}
+
+// TestHistoryAnchorWaitsForReplayedPage 验证锚点从"开始加载"一直保留到这一页
+// 真正渲染出来：加载期间渲染的空帧不动偏移也不丢锚点，新内容到达那一帧一次补足；
+// 加载结束仍没有新内容（已到最早一条或请求失败）则丢弃锚点，之后正常的内容变化
+// 不会被误当成"前面插入的行"把视口推走。
+func TestHistoryAnchorWaitsForReplayedPage(t *testing.T) {
+	s := NewSession("s1", "test")
+	s.Rows = 100
+	s.Scroll = 40
+	s.HistoryLoading = true
+	s.BeginHistoryAnchor()
+
+	// 加载中渲染：这一页还没到，行数没变 → 偏移不动，锚点仍保留。
+	s.AdjustScrollForHistoryAnchor(100)
+	if s.Scroll != 40 {
+		t.Errorf("scroll = %d, want 40 while the page is still pending", s.Scroll)
+	}
+
+	// 更早的一页渲染出来（前面多了 30 行）→ 一次性补偿 30 行。
+	s.AdjustScrollForHistoryAnchor(130)
+	if s.Scroll != 70 {
+		t.Errorf("scroll = %d, want 70 after 30 prepended lines", s.Scroll)
+	}
+	// 补偿已消费锚点：后续渲染不会再动偏移。
+	s.AdjustScrollForHistoryAnchor(160)
+	if s.Scroll != 70 {
+		t.Errorf("scroll = %d, want 70 (anchor consumed)", s.Scroll)
+	}
+
+	// 加载结束但这一页没带来新行（已到最早一条或请求失败）：丢弃锚点，
+	// 之后新消息带来的行数变化不再补偿。
+	s.Rows = 160
+	s.HistoryLoading = true
+	s.BeginHistoryAnchor()
+	s.AdjustScrollForHistoryAnchor(160) // 加载中的空帧
+	s.HistoryLoading = false
+	s.AdjustScrollForHistoryAnchor(160) // 加载结束、行数没变 → 丢弃锚点
+	s.AdjustScrollForHistoryAnchor(190) // 之后的内容变化不再补偿
+	if s.Scroll != 70 {
+		t.Errorf("scroll = %d, want 70 after an empty page dropped its anchor", s.Scroll)
+	}
 }

@@ -264,6 +264,16 @@ func (a *App) refreshShellHistory() {
 	})
 }
 
+// maybeLoadEarlierHistory 在视口停在正文顶部时续取更早的一页。
+// 滚轮、PgUp 与消息区按键共用这条路径：alkaid0 v0.6 的历史回放是"从最新往更早"
+// 翻页，顶部就是当前已知历史的开端（见 docs/acp/extension.md §3.3），
+// 所以"滚到头"本身就该触发加载，不要求用户先把焦点切到消息区。
+func (a *App) maybeLoadEarlierHistory() {
+	if a.model.AtScrollTop() {
+		a.loadEarlierHistory()
+	}
+}
+
 // loadEarlierHistory 取更早的一页对话历史（alkaid0 v0.6 历史回放分页，
 // 见 docs/acp/extension.md §3.3）。回放的消息由服务端经 session/update 推送，
 // 与首屏一致；这里只负责发起请求与维护加载中状态。服务端未声明 v0.6、
@@ -499,6 +509,8 @@ func (a *App) sessionKey(ke input.KeyEvent) {
 		page := max(h/2, 1)
 		if ke.Type == input.KeyPageUp {
 			m.ScrollUp(page)
+			// 焦点在输入框时 PgUp 同样会滚到正文顶部：续取更早一页。
+			a.maybeLoadEarlierHistory()
 		} else {
 			m.ScrollDown(page)
 		}
@@ -1198,9 +1210,7 @@ func (a *App) messageKey(ke input.KeyEvent) {
 	// 已滚到正文顶部（且正文确实超出一屏）时继续取更早的一页：alkaid0 v0.6
 	// 的历史回放是"从最新往更早"翻页，顶部就是当前已知历史的开端
 	// （见 docs/acp/extension.md §3.3）。
-	if m.AtScrollTop() {
-		a.loadEarlierHistory()
-	}
+	a.maybeLoadEarlierHistory()
 }
 
 // dispatchMouse 处理鼠标事件：
@@ -1348,6 +1358,8 @@ func (a *App) dispatchMouse(me input.MouseEvent) {
 	case model.ViewSession:
 		if me.Button == input.MouseWheelUp {
 			m.ScrollUp(step)
+			// 滚轮滚到正文顶部时续取更早一页（与 PgUp / 消息区按键一致）。
+			a.maybeLoadEarlierHistory()
 		} else if me.Button == input.MouseWheelDown {
 			m.ScrollDown(step)
 		}
