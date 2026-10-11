@@ -1,6 +1,7 @@
 package model
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/cxykevin/alcoh/internal/acp"
@@ -419,3 +420,127 @@ func TestMarkStreamingDoneOnIdle(t *testing.T) {
 
 //go:fix inline
 func strPtr(s string) *string { return new(s) }
+
+// TestAlkaid0ToolCallFollowsOwnerMessage 验证工具项跟随归属消息归位。回放分页的
+// 页边界可能切在 agent 消息与它的工具结果之间，工具调用于是先于归属消息到达、
+// 占在正文最前面；更早的一页把归属消息补进来后，工具项必须排到它后面，不能
+// 一直压在归属消息乃至更早的消息之上。
+func TestAlkaid0ToolCallFollowsOwnerMessage(t *testing.T) {
+	s := NewSession("s1", "test")
+	s.SetAlkaid0MessageOrdering(true)
+
+	// 首屏：工具项先到，它的 agent 消息（msg_100）还在更早的一页里。
+	s.ApplyToolCall(&acp.ToolCallUpdateEvent{SessionID: "s1", ToolCallID: "call_1_100_tool_run"})
+	s.AppendChunk(&acp.MessageChunkEvent{SessionID: "s1", MessageID: "msg_101", IsUser: true, Text: "用户消息 101"})
+	assertTimelineOrder(t, s, []string{"tool:call_1_100_tool_run", "msg:msg_101"})
+
+	// 归属消息还不在本地：工具项保持原位，不提前移动。
+	s.AppendChunk(&acp.MessageChunkEvent{SessionID: "s1", MessageID: "msg_102", Text: "AI 回复 102"})
+	assertTimelineOrder(t, s, []string{"tool:call_1_100_tool_run", "msg:msg_101", "msg:msg_102"})
+
+	// 更早一页到达：工具项跟到归属消息之后，落在更早的消息下面。
+	s.AppendChunk(&acp.MessageChunkEvent{SessionID: "s1", MessageID: "msg_99", IsUser: true, Text: "用户消息 99"})
+	s.AppendChunk(&acp.MessageChunkEvent{SessionID: "s1", MessageID: "msg_100", Text: "AI 回复 100"})
+	assertTimelineOrder(t, s, []string{"msg:msg_99", "msg:msg_100", "tool:call_1_100_tool_run", "msg:msg_101", "msg:msg_102"})
+}
+
+// TestAlkaid0ToolCallsUnderSameOwnerKeepArrivalOrder 验证归属同一消息的多个工具项
+// 按到达顺序挂在该消息之后。
+func TestAlkaid0ToolCallsUnderSameOwnerKeepArrivalOrder(t *testing.T) {
+	s := NewSession("s1", "test")
+	s.SetAlkaid0MessageOrdering(true)
+	s.ApplyToolCall(&acp.ToolCallUpdateEvent{SessionID: "s1", ToolCallID: "call_1_50_tool_a"})
+	s.ApplyToolCall(&acp.ToolCallUpdateEvent{SessionID: "s1", ToolCallID: "call_1_50_tool_b"})
+	s.AppendChunk(&acp.MessageChunkEvent{SessionID: "s1", MessageID: "msg_60", IsUser: true, Text: "用户消息"})
+	s.AppendChunk(&acp.MessageChunkEvent{SessionID: "s1", MessageID: "msg_50", Text: "AI 回复"})
+	assertTimelineOrder(t, s, []string{"msg:msg_50", "tool:call_1_50_tool_a", "tool:call_1_50_tool_b", "msg:msg_60"})
+}
+
+// TestAlkaid0ToolCallOwnerParsing 验证归属解析只认 alkaid0 的
+// "call_<sessionID>_<messageID>_<toolID>"，其它 agent 的 toolCallId 不锚定。
+func TestAlkaid0ToolCallOwnerParsing(t *testing.T) {
+	for _, tc := range []struct {
+		id   string
+		want string
+	}{
+		{"call_1_100_tool_run", "msg_100"},
+		{"call_12_3456_tool_x", "msg_3456"},
+		{"call_1_100_tool_run_2", "msg_100"},
+		{"call_1", ""},
+		{"call_x_100_tool", ""},
+		{"call_1_y_tool", ""},
+		{"tool_call_1", ""},
+		{"", ""},
+	} {
+		if got := alkaid0ToolCallOwnerMessageID(tc.id); got != tc.want {
+			t.Errorf("alkaid0ToolCallOwnerMessageID(%q) = %q, want %q", tc.id, got, tc.want)
+		}
+	}
+}
+
+// assertTimelineOrder 断言时间线顺序：消息项写作 "msg:<id>"，工具项写作 "tool:<id>"。
+func assertTimelineOrder(t *testing.T, s *SessionState, want []string) {
+	t.Helper()
+	got := make([]string, 0, len(s.Timeline))
+	for _, item := range s.Timeline {
+		switch {
+		case item.Message != nil:
+			got = append(got, "msg:"+item.Message.MessageID)
+		case item.ToolCall != nil:
+			got = append(got, "tool:"+item.ToolCall.ID)
+		case item.Terminal != nil:
+			got = append(got, "terminal:"+item.Terminal.ID)
+		default:
+			got = append(got, "other:"+item.Key)
+		}
+	}
+	if len(got) != len(want) {
+		t.Fatalf("timeline = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("timeline = %v, want %v", got, want)
+		}
+	}
+}
+
+// TestAlkaid0TerminalCardFollowsOwnerMessage 验证 run 工具的终端卡片跟随归属消息
+// 归位：卡片与工具项一样可能先于归属消息到达（resume 的终端快照在连接注册后立即
+// 推送，分页回放的消息随后按页到达），更早一页把归属消息补进来后，卡片必须和它
+// 的工具项一起落到该 agent 消息之后，不能停在正文最前面。
+func TestAlkaid0TerminalCardFollowsOwnerMessage(t *testing.T) {
+	s := NewSession("s1", "test")
+	s.SetAlkaid0MessageOrdering(true)
+
+	// 首屏：run 工具调用与终端卡片先到，它们的 agent 消息（msg_100）还在更早一页。
+	s.ApplyToolCall(&acp.ToolCallUpdateEvent{SessionID: "s1", ToolCallID: "call_1_100_tool_run", TerminalID: "@temp/run/7"})
+	s.ApplyTerminalInfo(acp.TerminalInfo{TerminalID: "@temp/run/7", Status: "running", Command: "go test ./..."})
+	s.AnchorTerminalOwner("@temp/run/7", "call_1_100_tool_run")
+	s.AppendChunk(&acp.MessageChunkEvent{SessionID: "s1", MessageID: "msg_101", IsUser: true, Text: "用户消息"})
+	assertTimelineOrder(t, s, []string{"tool:call_1_100_tool_run", "terminal:@temp/run/7", "msg:msg_101"})
+
+	// 更早一页到达：工具项与终端卡片一起跟到归属消息之后。
+	s.AppendChunk(&acp.MessageChunkEvent{SessionID: "s1", MessageID: "msg_100", Text: "AI 回复"})
+	assertTimelineOrder(t, s, []string{"msg:msg_100", "tool:call_1_100_tool_run", "terminal:@temp/run/7", "msg:msg_101"})
+}
+
+// TestAlkaid0TerminalCardAnchoredByToolCallEvent 验证事件接线：带 terminal_id 的
+// run 工具调用事件会把终端卡片锚定到该 agent 消息（与工具项同一归属）。
+func TestAlkaid0TerminalCardAnchoredByToolCallEvent(t *testing.T) {
+	m := New()
+	m.SetAgentInfo(acp.AgentInfo{}, acp.AgentCapabilities{Raw: json.RawMessage(
+		"{\"alk.cxykevin.top/alkaid0/v0.5\":{},\"alk.cxykevin.top/alkaid0/v0.6\":{}}")})
+	m.ActivateSession("s1", "test")
+	s := m.Active
+	s.SetAlkaid0MessageOrdering(true)
+
+	// 终端快照先到（resume 后立即推送），随后才是分页回放的消息与工具调用。
+	m.ApplyEvent(&acp.TerminalUpdateEvent{
+		SessionID: "s1", TerminalID: "@temp/run/7", UpdateType: "full",
+		Terminals: []acp.TerminalInfo{{TerminalID: "@temp/run/7", Status: "running", Command: "go test ./..."}},
+	})
+	s.AppendChunk(&acp.MessageChunkEvent{SessionID: "s1", MessageID: "msg_101", IsUser: true, Text: "用户消息"})
+	m.ApplyEvent(&acp.ToolCallUpdateEvent{SessionID: "s1", ToolCallID: "call_1_100_tool_run", TerminalID: "@temp/run/7"})
+	s.AppendChunk(&acp.MessageChunkEvent{SessionID: "s1", MessageID: "msg_100", Text: "AI 回复"})
+	assertTimelineOrder(t, s, []string{"msg:msg_100", "terminal:@temp/run/7", "tool:call_1_100_tool_run", "msg:msg_101"})
+}

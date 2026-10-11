@@ -42,6 +42,12 @@ type TimelineItem struct {
 	Plan     *acp.Plan
 	Terminal *TerminalState
 	Notice   string
+	// OwnerMessageID 是该项归属的消息 ID（如工具调用所属的 agent 消息 msg_<dbID>）。
+	// 归属消息在本地时，重排会把这一项移到它后面：这类项不像消息那样按 ID 回填
+	// 槽位，回放时可能先于归属消息到达（页边界切在 agent 消息与它的工具结果
+	// 之间），必须随后归位，否则会停在正文最前面、压在更早的消息之上。
+	// 空表示不锚定（保持首次出现的位置）。
+	OwnerMessageID string
 }
 
 // Message 是一条消息的 UI 状态。
@@ -400,7 +406,8 @@ func (s *SessionState) sortMessagesByID() {
 		sortAlkaid0Messages(s.Messages)
 	}
 	// 时间线里的消息项按展示顺序取出，再填回消息项原有的槽位：槽位不动，
-	// 工具调用 / 终端 / 计划 / 系统提示等非消息项也留在原处。
+	// 终端 / 计划 / 系统提示等非消息项也留在原处。带归属消息的工具项随后
+	// 归位（见 sortAnchoredItems）。
 	ordered := make([]*TimelineItem, 0, len(s.Messages))
 	for _, message := range s.Messages {
 		if item := s.timelineIndex[messageTimelineKey(message.MessageID, message.Kind)]; item != nil {
@@ -414,6 +421,90 @@ func (s *SessionState) sortMessagesByID() {
 			pos++
 		}
 	}
+	s.sortAnchoredItems()
+}
+
+// sortAnchoredItems 把带归属消息的项（工具调用的归属来自 toolCallId 里的
+// 消息 ID，见 alkaid0ToolCallOwnerMessageID）移到归属消息项之后。
+//
+// 这类项不像消息那样按 ID 回填槽位：回放分页的页边界可能切在 agent 消息与它的
+// 工具结果之间，工具调用于是先于归属消息到达、占在正文最前面；更早的一页把归属
+// 消息补进来之后它必须跟着归位，否则会一直压在归属消息乃至更早的消息之上。
+// 归属消息还不在本地（那一页尚未加载）时保持原位不动；同一归属消息下的多项
+// 按原相对顺序挂在其后。
+func (s *SessionState) sortAnchoredItems() {
+	owners := make(map[string]bool, len(s.Timeline))
+	for _, item := range s.Timeline {
+		if item.Message != nil {
+			owners[item.Message.MessageID] = true
+		}
+	}
+	after := make(map[string][]*TimelineItem)
+	moving := make(map[*TimelineItem]bool)
+	for _, item := range s.Timeline {
+		if item.Message != nil || item.OwnerMessageID == "" || !owners[item.OwnerMessageID] {
+			continue
+		}
+		after[item.OwnerMessageID] = append(after[item.OwnerMessageID], item)
+		moving[item] = true
+	}
+	if len(moving) == 0 {
+		return
+	}
+	out := make([]*TimelineItem, 0, len(s.Timeline))
+	for _, item := range s.Timeline {
+		if moving[item] {
+			continue
+		}
+		out = append(out, item)
+		if item.Message == nil {
+			continue
+		}
+		if list := after[item.Message.MessageID]; len(list) > 0 {
+			out = append(out, list...)
+			delete(after, item.Message.MessageID)
+		}
+	}
+	s.Timeline = out
+}
+
+// AnchorTerminalOwner 给终端卡片记录归属消息：run 工具调用的 toolCallId 里带着
+// agent 消息 ID，卡片据此跟随该消息归位，而不是停在正文最前面。
+//
+// 终端卡片与工具调用一样可能先于归属消息到达——session/resume 的终端全量快照在
+// 连接注册后立即推送，分页回放的消息则按页到达；归属消息在本地后，两者都会移到
+// 它后面（见 sortAnchoredItems）。终端的本体（shell 面板条目）不受影响，它属于
+// 服务端的持久化资源、不属于对话分支。
+func (s *SessionState) AnchorTerminalOwner(terminalID, toolCallID string) {
+	owner := alkaid0ToolCallOwnerMessageID(toolCallID)
+	if owner == "" || terminalID == "" {
+		return
+	}
+	item := s.timelineIndex["terminal:"+terminalID]
+	if item == nil {
+		return
+	}
+	item.OwnerMessageID = owner
+	s.sortAnchoredItems()
+}
+
+// alkaid0ToolCallOwnerMessageID 从 alkaid0 的工具调用 ID
+// "call_<sessionID>_<messageID>_<toolID>"（见服务端各工具与 provider/request/build）
+// 中取出归属消息 ID（msg_<messageID>）。格式不符（其它 agent 的 toolCallId，
+// 如 "call_1"）或段不是数字时返回空串，表示该项不锚定。
+func alkaid0ToolCallOwnerMessageID(toolCallID string) string {
+	parts := strings.SplitN(toolCallID, "_", 4)
+	if len(parts) < 3 || parts[0] != "call" {
+		return ""
+	}
+	if _, err := strconv.ParseUint(parts[1], 10, 64); err != nil {
+		return ""
+	}
+	messageID, err := strconv.ParseUint(parts[2], 10, 64)
+	if err != nil {
+		return ""
+	}
+	return "msg_" + strconv.FormatUint(messageID, 10)
 }
 
 // sortAlkaid0Messages 按 messageId 排列消息：带可比较 ID（msg_<dbID>）的消息按
@@ -694,6 +785,7 @@ func (s *SessionState) ApplyToolCall(ev *acp.ToolCallUpdateEvent) {
 		s.ToolOrder = append(s.ToolOrder, ev.ToolCallID)
 		item := s.appendTimeline("tool:"+ev.ToolCallID, TimelineToolCall)
 		item.ToolCall = tc
+		item.OwnerMessageID = alkaid0ToolCallOwnerMessageID(ev.ToolCallID)
 	}
 	if ev.Status != nil {
 		tc.Status = *ev.Status

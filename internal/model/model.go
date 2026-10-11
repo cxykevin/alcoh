@@ -1079,6 +1079,9 @@ func (m *AppModel) ApplyEvent(ev acp.Event) {
 			// 持久化副本只有内容，否则列表只能显示 @temp/run/<n>。
 			if e.TerminalID != "" && m.SupportsAlkaid0V06() {
 				m.Active.LinkToolCallTerminal(e.TerminalID, e.Content, e.RawInput, e.Status)
+				// 终端卡片也跟随该 agent 消息归位：resume 的终端快照可能先于
+				// 分页回放的消息到达，卡片不该停在正文最前面（见 AnchorTerminalOwner）。
+				m.Active.AnchorTerminalOwner(e.TerminalID, e.ToolCallID)
 			}
 		}
 	case *acp.PlanUpdateEvent:
