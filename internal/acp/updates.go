@@ -121,6 +121,23 @@ func DecodeSessionUpdatePayload(sessionID string, raw json.RawMessage) (Event, e
 			return nil, err
 		}
 		return &UsageUpdateEvent{SessionID: sessionID, Used: update.Used, Size: update.Size, Cost: update.Cost}, nil
+	case "alk.cxykevin.top/session/rewind":
+		// 会话 rewind 结果（见 extension.md §2.7）：模型据此裁剪正文并回填输入框。
+		var update struct {
+			MessageID string `json:"messageId"`
+			Success   bool   `json:"success"`
+			Error     string `json:"error"`
+		}
+		if err := json.Unmarshal(raw, &update); err != nil {
+			return nil, err
+		}
+		return &RewindEvent{
+			SessionID: sessionID,
+			MessageID: update.MessageID,
+			Success:   update.Success,
+			Error:     update.Error,
+			Raw:       append(json.RawMessage(nil), raw...),
+		}, nil
 	case "alk.cxykevin.top/shell_stop":
 		var update struct {
 			RunID      string `json:"runId"`

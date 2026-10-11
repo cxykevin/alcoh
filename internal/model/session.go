@@ -187,6 +187,18 @@ type SessionState struct {
 	// FollowBottom 为 true 时消息区锁定底部：新内容到达自动跟随，
 	// Scroll 由渲染层同步为当前最大滚动偏移。用户一旦手动滚动即解除。
 	FollowBottom bool
+	// MaxScroll 是最近一次渲染的最大滚动偏移（渲染层写入）；为 0 表示正文
+	// 不满一屏。滚动到顶时据此判断确实还有内容可看，避免误触发加载更早历史。
+	MaxScroll int
+	// HistoryLoading 为 true 时正在加载更早的一页（alkaid0 v0.6 历史回放分页）：
+	// 正文顶部显示提示，同时阻止重复发起请求。
+	HistoryLoading bool
+	// Rows 是最近一次渲染的正文总行数（渲染层写入）；加载更早历史后据此
+	// 补偿滚动偏移，使视口停在用户原本看到的位置（见 BeginHistoryAnchor）。
+	Rows int
+	// historyAnchor/historyAnchoring 支撑"加载更早历史后视口不跳动"。
+	historyAnchor    int
+	historyAnchoring bool
 
 	Alkaid0MessageOrdering bool
 	// Alkaid0ToolCalls 为 true 时按 alkaid0 私有协议（v0.4）渲染工具调用：
@@ -279,6 +291,26 @@ func (s *SessionState) finishLatestThought() {
 			m.Expanded = false
 			return
 		}
+	}
+}
+
+// BeginHistoryAnchor 记录当前正文行数作为锚点。alkaid0 v0.6 的历史回放分页
+// 每次取更早的一页，内容接在正文前面；渲染时按新增行数补偿滚动偏移，
+// 视口就停在用户原本看到的位置，不会因为前面插入了内容而跳动。
+func (s *SessionState) BeginHistoryAnchor() {
+	s.historyAnchor = s.Rows
+	s.historyAnchoring = true
+}
+
+// AdjustScrollForHistoryAnchor 在渲染前补偿加载更早历史带来的行数变化：
+// 新增内容都在正文前面，把新增行数加到滚动偏移上即可保持视口不动。
+func (s *SessionState) AdjustScrollForHistoryAnchor(total int) {
+	if !s.historyAnchoring {
+		return
+	}
+	s.historyAnchoring = false
+	if delta := total - s.historyAnchor; delta > 0 {
+		s.Scroll += delta
 	}
 }
 
@@ -418,6 +450,133 @@ func alkaid0MessageIDNumber(id string) (uint64, bool) {
 	}
 	n, err := strconv.ParseUint(strings.TrimPrefix(id, "msg_"), 10, 64)
 	return n, err == nil
+}
+
+// RewindTarget 是 rewind 选择器里的一条对话：一条可作为 rewind 目标的用户消息，
+// 连同该轮 AI 回复（选择器把它渲染成两行 + 一条分隔空行）。
+type RewindTarget struct {
+	MessageID string
+	Text      string
+	// Reply 是该用户消息之后、下一条用户消息之前的第一条 assistant 正文；
+	// 为空表示这一轮还没有正文回复（仍在生成或只有思考）。
+	Reply string
+}
+
+// RewindTargets 返回当前会话可作为 rewind 目标的用户消息（按正文顺序）。
+//
+// 只有 DB 消息（msg_<dbID>）能作为目标：服务端的 /__alk_rewind 只接受这种 ID，
+// 斜杠命令的合成消息（cmd_<chatID>_<seq>）不入库、无法定位。会话的第一条消息
+// 没有"前一条"，服务端会拒绝，这里一并排除（见 extension.md §2.7、§5.3）。
+func (s *SessionState) RewindTargets() []RewindTarget {
+	root, haveRoot := uint64(0), false
+	for _, m := range s.Messages {
+		id, ok := alkaid0MessageIDNumber(m.MessageID)
+		if !ok {
+			continue
+		}
+		if !haveRoot || id < root {
+			root, haveRoot = id, true
+		}
+	}
+	out := make([]RewindTarget, 0, len(s.Messages))
+	for i, m := range s.Messages {
+		if m.Kind != MsgUser {
+			continue
+		}
+		id, ok := alkaid0MessageIDNumber(m.MessageID)
+		if !ok || (haveRoot && id == root) {
+			continue
+		}
+		out = append(out, RewindTarget{
+			MessageID: m.MessageID,
+			Text:      m.Text,
+			Reply:     assistantReplyAfter(s.Messages, i),
+		})
+	}
+	return out
+}
+
+// assistantReplyAfter 返回 messages[i] 之后、下一条用户消息之前的第一条非空
+// assistant 正文（即这一轮的 AI 回复）；没有正文回复时返回空串。思考与工具
+// 调用不参与，命令的合成消息（同为用户消息）会把范围截断在它之前。
+func assistantReplyAfter(messages []*Message, i int) string {
+	for _, m := range messages[i+1:] {
+		switch m.Kind {
+		case MsgUser:
+			return ""
+		case MsgAssistant:
+			if strings.TrimSpace(m.Text) != "" {
+				return m.Text
+			}
+		}
+	}
+	return ""
+}
+
+// TruncateFrom 丢弃 messageID 这条消息及其之后的全部正文内容：消息（含斜杠命令
+// 的合成消息）、工具调用、计划、终端卡片与系统提示都从时间线移除，与服务端
+// rewind 后新的活跃分支保持一致（见 extension.md §2.7）。shell 面板里的终端是
+// 服务端的持久化资源、不属于对话分支，只从正文移除条目，本体保留。
+// 返回是否找到该消息。
+func (s *SessionState) TruncateFrom(messageID string) bool {
+	cut := -1
+	for i, m := range s.receiveMessages {
+		if m.MessageID == messageID {
+			cut = i
+			break
+		}
+	}
+	if cut < 0 {
+		return false
+	}
+	kept := append([]*Message(nil), s.receiveMessages[:cut]...)
+	s.receiveMessages = kept
+	s.msgIndex = make(map[string]*Message, len(kept))
+	for _, m := range kept {
+		s.msgIndex[messageKey(m.MessageID, m.Kind == MsgThought, m.Kind == MsgUser)] = m
+	}
+	s.Messages = append(s.Messages[:0], kept...)
+
+	// 时间线：目标消息的条目及其后的一切随分支撤回。目标可能是 user 或
+	// assistant/thought（共用 messageId），按消息 ID 找其条目位置。
+	cutIdx := -1
+	for i, item := range s.Timeline {
+		if item.Message != nil && item.Message.MessageID == messageID {
+			cutIdx = i
+			break
+		}
+	}
+	if cutIdx < 0 {
+		// 消息在列表里却不在时间线上（异常数据）：只修消息列表。
+		s.sortMessagesByID()
+		return true
+	}
+	timeline := make([]*TimelineItem, 0, cutIdx)
+	timeline = append(timeline, s.Timeline[:cutIdx]...)
+	for i := cutIdx; i < len(s.Timeline); i++ {
+		item := s.Timeline[i]
+		if item.Kind == TimelineToolCall && item.ToolCall != nil {
+			delete(s.ToolCalls, item.ToolCall.ID)
+			s.removeToolOrder(item.ToolCall.ID)
+		}
+	}
+	s.Timeline = timeline
+	s.timelineIndex = make(map[string]*TimelineItem, len(timeline))
+	for _, item := range timeline {
+		s.timelineIndex[item.Key] = item
+	}
+	s.sortMessagesByID()
+	return true
+}
+
+// removeToolOrder 从兼容用的工具顺序表里移除一个工具调用 ID。
+func (s *SessionState) removeToolOrder(id string) {
+	for i, v := range s.ToolOrder {
+		if v == id {
+			s.ToolOrder = append(s.ToolOrder[:i], s.ToolOrder[i+1:]...)
+			return
+		}
+	}
 }
 
 // messageKey 生成消息索引键：thought 与 user/assistant 分开，避免共享 messageId 冲突。

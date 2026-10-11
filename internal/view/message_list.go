@@ -132,6 +132,17 @@ func (ml *MessageList) Draw(c *renderer.Canvas, r renderer.Rect, s *model.Sessio
 	ml.Rows = total
 	viewH := r.H
 	maxScroll := max(total-viewH, 0)
+	s.MaxScroll = maxScroll
+	// 视口锚定基准不计入"正在加载更早历史"的提示行：它在加载开始/结束时
+	// 出现与消失，若参与计算会让新增行数的补偿偏差一行。
+	anchorTotal := total
+	if s.HistoryLoading {
+		anchorTotal--
+	}
+	s.Rows = anchorTotal
+	// 加载更早的历史后新内容插在正文前面，按新增行数补偿滚动偏移，
+	// 视口停在用户原本看到的位置（见 SessionState.BeginHistoryAnchor）。
+	s.AdjustScrollForHistoryAnchor(anchorTotal)
 	scroll := s.Scroll
 	if s.FollowBottom {
 		scroll = maxScroll
@@ -224,6 +235,12 @@ func (ml *MessageList) buildBlocks(s *model.SessionState, width int) []*block {
 				}))
 			}
 		}
+	}
+	// 正在加载更早的一页（alkaid0 v0.6 历史回放分页）时，在正文顶部顶一行提示：
+	// 它在加载结束的下一帧消失，因此不参与视口锚定的行数计算（见 Draw）。
+	if s.HistoryLoading {
+		notice := i18n.T("正在加载更早的历史…")
+		blocks = append([]*block{{lines: [][]Span{{{Text: notice, Style: ml.Theme.Style(ml.Theme.TextMuted).WithDim(true)}}}}}, blocks...)
 	}
 	return blocks
 }

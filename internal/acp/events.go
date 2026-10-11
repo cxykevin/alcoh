@@ -137,6 +137,19 @@ type ShellStopEvent struct {
 	Raw        json.RawMessage
 }
 
+// RewindEvent 对应 alk.cxykevin.top/session/rewind：一次会话 rewind 的结果
+// （见 ../alkaid0/docs/acp/extension.md §2.7）。rewind 把会话头（活跃分支末端）
+// 移到目标消息的前一条，目标消息本身不保留；成功与失败都会广播。
+type RewindEvent struct {
+	SessionID string
+	// MessageID 是本次 rewind 的目标消息 ID（msg_<dbID>）。
+	MessageID string
+	Success   bool
+	// Error 仅失败时非空：失败原因（服务端随后还会以 idle + refusal 的命令轮收尾）。
+	Error string
+	Raw   json.RawMessage
+}
+
 // WorkflowStatusEvent 携带 workflow/status 的查询结果（由客户端主动查询后广播，与
 // TerminalHistoryEvent 同构）。它含完整图、当前 agent 状态与有序事件日志：模型据此
 // 重建 workflow 状态（日志按 sequence 重放），因此已结束的 workflow 也能显示
@@ -210,6 +223,7 @@ func (*TerminalUpdateEvent) isEvent()       {}
 func (*TerminalHistoryEvent) isEvent()      {}
 func (*TerminalListEvent) isEvent()         {}
 func (*ShellStopEvent) isEvent()            {}
+func (*RewindEvent) isEvent()               {}
 func (*WorkflowEvent) isEvent()             {}
 func (*WorkflowStatusEvent) isEvent()       {}
 func (*CommandsUpdateEvent) isEvent()       {}

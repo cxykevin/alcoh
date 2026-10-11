@@ -44,6 +44,11 @@ const (
 	MethodTerminalHistory = "alk.cxykevin.top/session/terminal/history"
 	// MethodWorkflowStatus 查询 workflow 的完整快照与事件日志（alkaid0 v0.5）。
 	MethodWorkflowStatus = "alk.cxykevin.top/session/terminal/workflow/status"
+
+	// SessionCursorField 是 alkaid0 v0.6 历史回放分页的扩展字段名。它出现在
+	// session/resume 响应里表示还有更早的消息未回放；把它原样作为下一次
+	// session/resume 请求的顶层参数传入即可继续取更早的一页（见 extension.md §3.3）。
+	SessionCursorField = "alk.cxykevin.top/session/cursor"
 )
 
 // ConfigGetResult 是 alk.cxykevin.top/config/get 的响应。Config 为完整的
@@ -237,12 +242,19 @@ type SessionResumeParams struct {
 	SessionID  string      `json:"sessionId"`
 	CWD        string      `json:"cwd,omitempty"`
 	ReplayFrom *ReplayFrom `json:"replayFrom,omitempty"`
+	// Cursor 是 alkaid0 v0.6 的历史回放分页游标：省略时取活跃分支最近的一页，
+	// 传入上一次响应里的游标则继续回放更早的一页。游标对客户端不透明，
+	// 必须原样回传（见 extension.md §3.3）。
+	Cursor string `json:"alk.cxykevin.top/session/cursor,omitempty"`
 }
 
 // SessionResult 是 session/new、session/resume 的结果。
 type SessionResult struct {
 	SessionID     string         `json:"sessionId"`
 	ConfigOptions []ConfigOption `json:"configOptions,omitempty"`
+	// Cursor 是 alkaid0 v0.6 的历史回放分页游标：非空表示还有更早的消息
+	// 未回放，可用它再发一次 session/resume 取更早的一页。
+	Cursor string `json:"alk.cxykevin.top/session/cursor,omitempty"`
 }
 
 // SessionSetConfigOptionParams 是 session/set_config_option request 参数。

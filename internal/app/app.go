@@ -112,6 +112,13 @@ type App struct {
 	// pendingPromptCh 是等待会话停稳的超时通道（cancelHandoffWait）；没有
 	// 挂起文本时为 nil，主循环 select 中该分支被禁用。
 	pendingPromptCh <-chan time.Time
+
+	// pendingRewindOpen 表示 /rewind 已请求停止正在运行的 agent loop、等待
+	// 会话停稳后打开对话选择器（见 startRewind / flushPendingRewind）。
+	pendingRewindOpen bool
+	// pendingRewindCh 是 /rewind 等待会话停稳的超时通道（cancelHandoffWait）；
+	// 没有待打开的选择器时为 nil，主循环 select 中该分支被禁用。
+	pendingRewindCh <-chan time.Time
 }
 
 type commandKind uint8
@@ -126,6 +133,7 @@ const (
 	commandConnectSubmit
 	commandTerminalStop
 	commandTerminalHistory
+	commandHistoryPage
 	commandTerminalStatus
 	commandTerminalList
 	commandTerminalWorkflowStatus
@@ -637,6 +645,11 @@ func (a *App) Run() error {
 			// 内没有停稳，放弃发送，输入框内容保持原样。
 			a.withModel(a.dropPendingPrompt)
 			needsRender = true
+		case <-a.pendingRewindCh:
+			// "/rewind 先停止再打开选择器"等待超时：会话在 cancelHandoffWait
+			// 内没有停稳，放弃本次 /rewind。
+			a.withModel(a.dropPendingRewind)
+			needsRender = true
 		}
 		// drain 积压后端事件，合并到一帧。
 		quitting := false
@@ -650,6 +663,10 @@ func (a *App) Run() error {
 			}
 			// 会话停稳后发送"运行中提交"挂起的 prompt（先停止再发送）。
 			a.flushPendingPrompt()
+			// 会话停稳后打开 /rewind 挂起的对话选择器（先停止再打开）。
+			a.flushPendingRewind()
+			// rewind 结果到达：正文已裁剪，回填输入框或提示失败。
+			a.applyRewindOutcome()
 			// render 会同步部分模型字段（如 Scroll/FollowBottom，见 view/message_list.go），
 			// 必须在锁内执行，避免与测试的 snapshot 并发读产生 data race。
 			if needsRender {
@@ -807,6 +824,20 @@ func (a *App) applyCommandResult(result commandResult) {
 		if result.err != nil {
 			// 能力探测通过后仍失败（旧服务端 / 会话已释放）：只提示，不影响面板。
 			a.model.ShowError(i18n.T("获取 shell 历史失败: %s", result.err.Error()))
+		}
+		return
+	}
+	if result.kind == commandHistoryPage {
+		// 更早的一页消息由服务端经 session/update 推送（与首屏同一路径），
+		// 这里只解除加载中状态：下一帧渲染据新增行数补偿滚动偏移，视口停在
+		// 用户原本看到的位置（见 SessionState.AdjustScrollForHistoryAnchor）。
+		// 期间用户已换会话时不再触碰新会话的状态。
+		if result.sessionID == "" || a.sess == nil || a.sess.ID() != result.sessionID {
+			return
+		}
+		a.model.SetHistoryLoading(false)
+		if result.err != nil {
+			a.model.ShowError(i18n.T("加载更早的历史失败: %s", result.err.Error()))
 		}
 		return
 	}

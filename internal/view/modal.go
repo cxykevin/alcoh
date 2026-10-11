@@ -405,6 +405,100 @@ func modelContent(t renderer.Theme, m *model.AppModel) *ModelContent {
 	}
 }
 
+// RewindContent 是 /rewind 对话选择器的内容区：列出可撤回的用户消息。
+type RewindContent struct {
+	Theme    renderer.Theme
+	Targets  []model.RewindTarget
+	Selected int
+}
+
+// rewindItemRows 是选择器里每条对话占用的行数：用户内容行、AI 回复行，以及
+// 一条分隔空行。
+const rewindItemRows = 3
+
+// Draw 绘制撤回目标列表：顶部语义提示，下方每条对话占三行——第一行是用户内容
+// （❯ 标记选中项），第二行是灰色 AI 回复，第三行留空；底部是操作提示。
+// 序号自下而上：列表底部（最近一条）是 1 号，往上递增。目标过多时以选中项
+// 为中心滚动窗口。
+func (rc *RewindContent) Draw(c *renderer.Canvas, r renderer.Rect) {
+	t := rc.Theme
+	y := r.Y
+	if y < r.Y+r.H {
+		c.PutText(r.X, y, renderer.Truncate(i18n.T("选择要撤回的消息：该消息及其之后的内容会从对话中移除"), r.W), t.Style(t.TextMuted))
+		y++
+	}
+	y++
+
+	// 可用条目数：提示行之后为列表区域，底部至少保留一行操作提示。
+	available := max((r.H-(y-r.Y)-1)/rewindItemRows, 1)
+	if available > len(rc.Targets) {
+		available = len(rc.Targets)
+	}
+	start := max(rc.Selected-available/2, 0)
+	if maxStart := len(rc.Targets) - available; start > maxStart {
+		start = maxStart
+	}
+	if start < 0 {
+		start = 0
+	}
+
+	for i := start; i < start+available; i++ {
+		if y >= r.Y+r.H {
+			break
+		}
+		target := rc.Targets[i]
+		marker := "  "
+		st := t.Style(t.Text)
+		if i == rc.Selected {
+			marker = "❯ "
+			st = t.Style(t.Primary).WithBold(true)
+		}
+		// 序号自下而上：最下面（最近一条）是 1 号，越往上数字越大。
+		line := marker + i18n.T("%d. %s", len(rc.Targets)-i, rewindLine(target.Text))
+		c.PutText(r.X, y, renderer.Truncate(line, r.W), st)
+		y++
+		drawRewindReply(c, r, y, t, marker, target)
+		y += rewindItemRows - 1
+	}
+
+	y = r.Y + r.H - 1
+	if y >= r.Y {
+		c.PutText(r.X, y, i18n.T("↑↓ 选择    Enter 确认    Esc 取消"), t.Style(t.TextMuted))
+	}
+}
+
+// drawRewindReply 绘制一条对话的第二行：灰色的 AI 回复（对齐到第一行的内容列）。
+// 该轮没有正文回复时这一行留空。
+func drawRewindReply(c *renderer.Canvas, r renderer.Rect, y int, t renderer.Theme, marker string, target model.RewindTarget) {
+	if y >= r.Y+r.H {
+		return
+	}
+	indent := renderer.StringWidth(marker)
+	if reply := renderer.Truncate(rewindLine(target.Reply), r.W-indent); reply != "" {
+		c.PutText(r.X+indent, y, reply, t.Style(t.TextMuted))
+	}
+}
+
+// rewindLine 把消息原文压成一行（取第一个非空行，去制表符与首尾空白），
+// 供选择器列表展示。
+func rewindLine(text string) string {
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(strings.ReplaceAll(line, "\t", " "))
+		if line != "" {
+			return line
+		}
+	}
+	return ""
+}
+
+func rewindContent(t renderer.Theme, m *model.AppModel) *RewindContent {
+	return &RewindContent{
+		Theme:    t,
+		Targets:  m.RewindTargets(),
+		Selected: m.RewindSelect,
+	}
+}
+
 func protocolUpdateCount(m *model.AppModel) int {
 	if m.Active == nil {
 		return 0

@@ -393,6 +393,106 @@ func TestGetConfigMissingField(t *testing.T) {
 	}
 }
 
+// enableV06 声明 alkaid0 v0.6 能力（terminal/history + 历史回放分页）。
+func enableV06(b *ClientBackend) {
+	b.mu.Lock()
+	b.agentCaps = AgentCapabilities{Raw: json.RawMessage(`{"alk.cxykevin.top/alkaid0/v0.6":{}}`)}
+	b.mu.Unlock()
+}
+
+// TestHistoryPaginationCursorRoundTrip 验证历史回放分页的游标往返（alkaid0 v0.6）：
+// session/resume 首屏响应携带的游标被会话句柄记住（MoreHistory），
+// LoadEarlierHistory 用它再发一次 session/resume，并按新响应更新游标——取完
+// 最后一页游标为空，不再发起请求。
+func TestHistoryPaginationCursorRoundTrip(t *testing.T) {
+	ft := &fakeTransport{}
+	resumes := 0
+	ft.set(MethodSessionResume, func(params, result any) error {
+		resumes++
+		p, ok := params.(SessionResumeParams)
+		if !ok {
+			t.Fatalf("params type = %T, want SessionResumeParams", params)
+		}
+		r := result.(*SessionResult)
+		r.SessionID = "sess-1"
+		switch resumes {
+		case 1:
+			if p.Cursor != "" {
+				t.Fatalf("first resume cursor = %q, want empty", p.Cursor)
+			}
+			r.Cursor = "page-2"
+		default:
+			if p.Cursor != "page-2" {
+				t.Fatalf("later resume cursor = %q, want page-2", p.Cursor)
+			}
+			r.Cursor = ""
+		}
+		return nil
+	})
+	b := probeClient(t, ft)
+	defer b.Close()
+	enableV06(b)
+
+	s, err := b.ResumeSession(context.Background(), "sess-1")
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	pager, ok := s.(HistoryPager)
+	if !ok {
+		t.Fatalf("session does not implement HistoryPager: %T", s)
+	}
+	if !pager.MoreHistory() {
+		t.Fatal("first page should report more history (cursor non-empty)")
+	}
+	more, err := pager.LoadEarlierHistory(context.Background())
+	if err != nil {
+		t.Fatalf("load earlier history: %v", err)
+	}
+	if more {
+		t.Error("last page should report no more history")
+	}
+	if pager.MoreHistory() {
+		t.Error("cursor should be cleared after the last page")
+	}
+	// 游标已空：不再发请求。
+	if _, err := pager.LoadEarlierHistory(context.Background()); err != nil {
+		t.Fatalf("load with empty cursor: %v", err)
+	}
+	if resumes != 2 {
+		t.Errorf("session/resume calls = %d, want 2 (no request after the last page)", resumes)
+	}
+}
+
+// TestHistoryPaginationRequiresV06 验证未声明 alkaid0 v0.6 时不再请求更早的历史：
+// 服务端不会下发游标（MoreHistory 为 false），即便直接调用也返回能力错误。
+func TestHistoryPaginationRequiresV06(t *testing.T) {
+	ft := &fakeTransport{}
+	ft.set(MethodSessionResume, func(params, result any) error {
+		p, ok := params.(SessionResumeParams)
+		if !ok {
+			t.Fatalf("params type = %T, want SessionResumeParams", params)
+		}
+		if p.SessionID != "sess-1" {
+			t.Fatalf("params.SessionID = %q, want sess-1", p.SessionID)
+		}
+		r := result.(*SessionResult)
+		r.SessionID = "sess-1"
+		r.Cursor = "page-2"
+		return nil
+	})
+	b := probeClient(t, ft)
+	defer b.Close()
+
+	s, err := b.ResumeSession(context.Background(), "sess-1")
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	pager := s.(HistoryPager)
+	if _, err := pager.LoadEarlierHistory(context.Background()); err == nil {
+		t.Error("expected a capability error without alkaid0 v0.6")
+	}
+}
+
 // TestSetConfig 验证 config/set 发出部分更新 patch 且成功响应（null）不报错。
 func TestSetConfig(t *testing.T) {
 	ft := &fakeTransport{}

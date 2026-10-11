@@ -53,6 +53,9 @@ func (a *App) dispatchKey(ke input.KeyEvent) {
 	case model.ModalModel:
 		a.modelKey(ke)
 		return
+	case model.ModalRewind:
+		a.rewindKey(ke)
+		return
 	case model.ModalServer:
 		a.serverConfigKey(ke)
 		return
@@ -257,6 +260,33 @@ func (a *App) refreshShellHistory() {
 	session := a.sess
 	a.startCommand(commandResult{kind: commandTerminalHistory, sessionID: session.ID()}, func(ctx context.Context) (acp.Session, error) {
 		_, err := control.TerminalHistory(ctx, "")
+		return nil, err
+	})
+}
+
+// loadEarlierHistory 取更早的一页对话历史（alkaid0 v0.6 历史回放分页，
+// 见 docs/acp/extension.md §3.3）。回放的消息由服务端经 session/update 推送，
+// 与首屏一致；这里只负责发起请求与维护加载中状态。服务端未声明 v0.6、
+// 会话句柄未实现分页、或已经翻到活跃分支最早一条时不发请求。
+func (a *App) loadEarlierHistory() {
+	if a.sess == nil || !a.model.HasActive() {
+		return
+	}
+	if a.model.Active.HistoryLoading {
+		return
+	}
+	pager, ok := a.sess.(acp.HistoryPager)
+	if !ok || !pager.MoreHistory() {
+		return
+	}
+	// 回放的消息按服务端 messageId 归位：dbID 更小的旧消息插到已知消息之前，
+	// 视口锚定才按"新增内容在正文前面"补偿（见 SessionState.sortMessagesByID）。
+	// alkaid0 v0.4 会话在激活时已启用，这里保证其它实现分页的后端同样按 ID 定序。
+	a.model.Active.SetAlkaid0MessageOrdering(true)
+	a.model.SetHistoryLoading(true)
+	session := a.sess
+	a.startCommand(commandResult{kind: commandHistoryPage, sessionID: session.ID()}, func(ctx context.Context) (acp.Session, error) {
+		_, err := pager.LoadEarlierHistory(ctx)
 		return nil, err
 	})
 }
@@ -607,6 +637,14 @@ func (a *App) tryLocalSlashCommand() bool {
 		m.Input.Clear()
 		m.CloseSlash()
 		a.openPluginsEditor()
+	case "/rewind":
+		m.Input.Clear()
+		m.CloseSlash()
+		if !m.SupportsAlkaid0V06() {
+			m.ShowError(i18n.T("服务端未声明 alkaid0 v0.6 能力，/rewind 不可用"))
+			return true
+		}
+		a.startRewind()
 	default:
 		// 插件注册的斜杠命令（/xxx 开头的 token 未命中本地命令时尝试插件）。
 		return a.runPluginCommand(name, rest)
@@ -1157,6 +1195,12 @@ func (a *App) messageKey(ke input.KeyEvent) {
 	case ke.Type == input.KeyEnter:
 		m.ToggleFocusItem()
 	}
+	// 已滚到正文顶部（且正文确实超出一屏）时继续取更早的一页：alkaid0 v0.6
+	// 的历史回放是"从最新往更早"翻页，顶部就是当前已知历史的开端
+	// （见 docs/acp/extension.md §3.3）。
+	if m.AtScrollTop() {
+		a.loadEarlierHistory()
+	}
 }
 
 // dispatchMouse 处理鼠标事件：
@@ -1240,6 +1284,14 @@ func (a *App) dispatchMouse(me input.MouseEvent) {
 			m.ModelMove(-1)
 		} else if me.Button == input.MouseWheelDown {
 			m.ModelMove(1)
+		}
+		return
+	case model.ModalRewind:
+		// 滚轮移动对话选择器的选中行（与模型选择菜单一致）。
+		if me.Button == input.MouseWheelUp {
+			m.RewindMove(-1)
+		} else if me.Button == input.MouseWheelDown {
+			m.RewindMove(1)
 		}
 		return
 	case model.ModalServer:
@@ -2034,6 +2086,121 @@ func (a *App) clearPendingPrompt() {
 	a.pendingPrompt = ""
 	a.pendingPromptOut = ""
 	a.pendingPromptCh = nil
+}
+
+// startRewind 处理 /rewind：agent loop 正在执行时先请求停止当前运行，等会话停稳
+// （见 flushPendingRewind）后再打开对话选择器，避免在运行中发送命令轮；会话空闲
+// 时立即打开。调用方已持有 modelMu（tryLocalSlashCommand）。
+func (a *App) startRewind() {
+	if !a.model.SupportsRewind() {
+		a.model.ShowError(i18n.T("当前没有可撤回的对话"))
+		return
+	}
+	if a.sessionExecuting() {
+		a.pendingRewindOpen = true
+		a.pendingRewindCh = time.After(cancelHandoffWait)
+		a.cancelCurrent()
+		return
+	}
+	a.openRewind()
+}
+
+// openRewind 打开 /rewind 对话选择器；没有可选目标（会话里没有可撤回的 DB 消息）
+// 时提示，不留下空选择器。
+func (a *App) openRewind() {
+	if !a.model.OpenRewindModal() {
+		a.model.ShowError(i18n.T("没有可撤回的对话消息"))
+	}
+}
+
+// flushPendingRewind 在会话停稳后打开 /rewind 挂起的对话选择器（先停止再打开）。
+// 用户在这期间已离开该会话（目标不再存在）时静默放弃。
+func (a *App) flushPendingRewind() {
+	if !a.pendingRewindOpen || a.sessionExecuting() {
+		return
+	}
+	a.clearPendingRewind()
+	if !a.model.SupportsRewind() {
+		return
+	}
+	a.openRewind()
+}
+
+// dropPendingRewind 在等待停止超时后放弃本次 /rewind。
+func (a *App) dropPendingRewind() {
+	if !a.pendingRewindOpen {
+		return
+	}
+	a.clearPendingRewind()
+	a.model.ShowInfo(i18n.T("当前运行未在 %dms 内停止，已取消撤回", int(cancelHandoffWait/time.Millisecond)))
+}
+
+// clearPendingRewind 清空 /rewind 挂起状态与等待通道（nil 通道在主循环 select 中禁用）。
+func (a *App) clearPendingRewind() {
+	a.pendingRewindOpen = false
+	a.pendingRewindCh = nil
+}
+
+// rewindKey 处理对话选择器按键：上下选择、回车确认、Esc 取消。
+func (a *App) rewindKey(ke input.KeyEvent) {
+	m := a.model
+	switch ke.Type {
+	case input.KeyUp:
+		m.RewindMove(-1)
+	case input.KeyDown:
+		m.RewindMove(1)
+	case input.KeyEnter:
+		a.confirmRewind()
+	case input.KeyEsc:
+		m.CancelRewind()
+	}
+}
+
+// confirmRewind 确认选择器当前目标：向服务端发送隐藏命令 /__alk_rewind <messageId>
+// （alkaid0 v0.6，见 extension.md §2.7）。实际撤回由服务端处理，结果经
+// alk.cxykevin.top/session/rewind 广播回来后再裁剪正文并回填输入框
+// （见 applyRewindOutcome）。
+func (a *App) confirmRewind() {
+	target, ok := a.model.RewindSelected()
+	if !ok {
+		return
+	}
+	if a.sess == nil || !a.model.HasActive() {
+		a.model.ShowError(i18n.T("当前没有活动会话"))
+		return
+	}
+	if a.sessionExecuting() {
+		// rewind 是一次命令轮，必须在会话空闲时发送；选择器打开期间会话又重新
+		// 执行时放弃本次撤回，让用户稍后重试（不对运行中的命令轮强行插入）。
+		a.model.ShowError(i18n.T("当前运行尚未停止，请稍后重试"))
+		return
+	}
+	// 隐藏命令不走插件 prompt hooks（见 sendPromptRaw），也不会本地回显。
+	a.sendPromptRaw(a.sess, "/__alk_rewind "+target.MessageID)
+}
+
+// applyRewindOutcome 消费最近一次 rewind 的结果：成功时正文已由模型层裁剪
+// （见 AppModel.ApplyEvent），这里把被撤回消息的原文回填输入框，用户改完即可
+// 直接重发；失败时显示服务端给出的原因。
+func (a *App) applyRewindOutcome() {
+	out := a.model.TakeRewindOutcome()
+	if out == nil {
+		return
+	}
+	if !out.Success {
+		reason := out.Error
+		if reason == "" {
+			reason = i18n.T("未知原因")
+		}
+		a.model.ShowError(i18n.T("撤回对话失败: %s", reason))
+		return
+	}
+	if in := a.model.Input; in != nil && out.Text != "" {
+		in.Lines = widget.SplitLines(out.Text)
+		in.CY = len(in.Lines) - 1
+		in.CX = len(in.Lines[in.CY])
+	}
+	a.model.ShowInfo(i18n.T("已撤回对话，原消息已填回输入框"))
 }
 
 func (a *App) cancelCurrent() {

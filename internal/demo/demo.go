@@ -115,13 +115,16 @@ func (b *Backend) NewSession(ctx context.Context, cwd string) (acp.Session, erro
 	return s, nil
 }
 
-// ResumeSession 恢复会话（用同一套脚本）。
+// ResumeSession 恢复会话（用同一套脚本）。恢复出来的会话模拟服务端
+// "最近一页 + 还有更早一页"：正文滚到顶部时客户端会取回更早的一页
+// （alkaid0 v0.6 历史回放分页）。
 func (b *Backend) ResumeSession(ctx context.Context, id string) (acp.Session, error) {
 	s := &session{
-		backend: b,
-		id:      id,
-		title:   "恢复 " + id,
-		done:    make(chan struct{}),
+		backend:     b,
+		id:          id,
+		title:       "恢复 " + id,
+		done:        make(chan struct{}),
+		historyMore: true,
 	}
 	s.start()
 	return s, nil
@@ -160,6 +163,9 @@ type session struct {
 	cancel  chan struct{}
 	effort  string
 	model   string
+	// historyMore 表示还有更早的一页未回放（alkaid0 v0.6 历史回放分页游标）：
+	// 恢复出来的会话为 true，取回更早的一页后置 false。
+	historyMore bool
 }
 
 func (s *session) ID() string    { return s.id }
@@ -217,6 +223,50 @@ func (s *session) RespondElicitation(ctx context.Context, reqID acp.RPCID, actio
 	// Demo 模式暂不实现 elicitation
 	s.backend.push(&acp.StateChangeEvent{SessionID: s.id, State: acp.StateIdle})
 	return nil
+}
+
+// MoreHistory 报告是否还有更早的一页未回放（alkaid0 v0.6 分页游标非空）。
+func (s *session) MoreHistory() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.historyMore
+}
+
+// LoadEarlierHistory 回放更早的一页（alkaid0 v0.6 历史回放分页，见
+// docs/acp/extension.md §3.3）：演示会话在恢复时带一页更早的对话，取回后即到
+// 活跃分支最早一条（返回 false）。消息用 msg_<dbID> 形式的 ID，客户端按 ID
+// 把它们插回已知消息之前——与真实服务端回放同一路径。
+func (s *session) LoadEarlierHistory(ctx context.Context) (bool, error) {
+	s.mu.Lock()
+	if !s.historyMore {
+		s.mu.Unlock()
+		return false, nil
+	}
+	s.historyMore = false
+	s.mu.Unlock()
+	// 留出一小段时间让"正在加载更早的历史…"提示可见（fast 模式按比例缩短）。
+	if !s.sleep(400*time.Millisecond, s.backend.done) {
+		return false, nil
+	}
+	earlier := []struct {
+		id     string
+		text   string
+		isUser bool
+	}{
+		{"msg_91", "（更早的一轮）帮我看下仓库的构建与发布流程。", true},
+		{"msg_92", "构建是 `go build ./...`；发布走 `gh release create`，由 `.github/workflows/build.yml` 自动构建并上传产物。", false},
+		{"msg_93", "（更早的一轮）演示模式怎么跑？", true},
+		{"msg_94", "用 `--demo` 启动内置假后端，不需要真实 agent。", false},
+	}
+	for _, m := range earlier {
+		s.backend.push(&acp.MessageUpdateEvent{
+			SessionID: s.id,
+			IsUser:    m.isUser,
+			Message: acp.Message{MessageID: m.id, ContentSet: true,
+				Content: []acp.ContentBlock{{Type: "text", Text: new(m.text)}}},
+		})
+	}
+	return false, nil
 }
 
 // SetConfigOption 演示更新会话配置：更新对应 config 的 currentValue 并广播。
@@ -301,7 +351,7 @@ func (s *session) start() {
 	// 一条用户思考流片段，验证 user_thought_chunk 走 Message 流水线。
 	s.backend.push(&acp.MessageChunkEvent{
 		SessionID: s.id,
-		MessageID: "user-thought-0",
+		MessageID: "msg_101",
 		IsUser:    true,
 		IsThought: true,
 		Text:      "（用户初始想法：先做一个最小可用版本，再叠加错误处理）",
@@ -310,7 +360,7 @@ func (s *session) start() {
 		SessionID: s.id,
 		IsUser:    true,
 		IsThought: true,
-		Message: acp.Message{MessageID: "user-thought-0", ContentSet: true,
+		Message: acp.Message{MessageID: "msg_101", ContentSet: true,
 			Content: []acp.ContentBlock{{Type: "text", Text: new("（用户初始想法：先做一个最小可用版本，再叠加错误处理）")}}},
 	})
 	// 推送一条欢迎助手消息（附带非文本 ContentBlock 占位）
@@ -319,12 +369,12 @@ func (s *session) start() {
 	imgName := "architecture"
 	s.backend.push(&acp.MessageChunkEvent{
 		SessionID: s.id,
-		MessageID: "welcome",
+		MessageID: "msg_102",
 		Text:      "演示 agent 已就绪。输入提示词试试（如：帮我实现一个 TCP 服务器）。",
 	})
 	s.backend.push(&acp.MessageUpdateEvent{
 		SessionID: s.id,
-		Message: acp.Message{MessageID: "welcome", ContentSet: true,
+		Message: acp.Message{MessageID: "msg_102", ContentSet: true,
 			Content: []acp.ContentBlock{
 				{Type: "text", Text: new("演示 agent 已就绪。输入提示词试试（如：帮我实现一个 TCP 服务器）。")},
 				{Type: "image", MimeType: &imgMime, URI: &imgURI, Name: &imgName},
@@ -368,14 +418,14 @@ func (s *session) runScript(prompt string, done <-chan struct{}) {
 		if i < len(thoughts)-1 {
 			text += "\n"
 		}
-		b.push(&acp.MessageChunkEvent{SessionID: s.id, MessageID: "thought-1", IsThought: true, Text: text})
+		b.push(&acp.MessageChunkEvent{SessionID: s.id, MessageID: "msg_103", IsThought: true, Text: text})
 	}
 	if !s.sleep(120*time.Millisecond, done) {
 		return
 	}
 	b.push(&acp.MessageUpdateEvent{
 		SessionID: s.id,
-		Message:   acp.Message{MessageID: "thought-1", ContentSet: true, Content: []acp.ContentBlock{{Type: "text", Text: new(joinLines(thoughts))}}},
+		Message:   acp.Message{MessageID: "msg_103", ContentSet: true, Content: []acp.ContentBlock{{Type: "text", Text: new(joinLines(thoughts))}}},
 	})
 
 	// 2. 工具调用序列
@@ -414,7 +464,7 @@ func (s *session) runScript(prompt string, done <-chan struct{}) {
 		"这个服务器监听 **8080** 端口，每个连接独立 goroutine 处理。\n",
 		"要查看运行效果可以运行 `go run .`。\n",
 	}
-	msgID := "assistant-1"
+	msgID := "msg_104"
 	for _, seg := range assistant {
 		if !s.sleep(60*time.Millisecond, done) {
 			return
@@ -500,7 +550,7 @@ func (s *session) resumeStream() {
 		if !s.sleep(60*time.Millisecond, done) {
 			return
 		}
-		b.push(&acp.MessageChunkEvent{SessionID: s.id, MessageID: "assistant-2", Text: seg})
+		b.push(&acp.MessageChunkEvent{SessionID: s.id, MessageID: "msg_105", Text: seg})
 	}
 	if !s.sleep(120*time.Millisecond, done) {
 		return

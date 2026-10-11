@@ -111,6 +111,8 @@ func (v *AppView) modalHeight(m *model.AppModel) int {
 	case model.ModalModel:
 		// 顶部"当前"行 + 空行 + 选项列表 + 空行 + 操作提示，再加标题横线 1 行。
 		h = max(3+len(m.ModelOptions())+2, 6)
+	case model.ModalRewind:
+		h = rewindModalHeight(m)
 	case model.ModalExitConfirm:
 		h = 5
 	case model.ModalServer, model.ModalPlugins:
@@ -120,6 +122,12 @@ func (v *AppView) modalHeight(m *model.AppModel) int {
 		h = 0
 	}
 	return h
+}
+
+// rewindModalHeight 返回 /rewind 选择器的高度：顶部提示行 + 空行 + 每条对话
+// rewindItemRows 行（用户内容、AI 回复、空行）+ 空行 + 操作提示，再加标题横线 1 行。
+func rewindModalHeight(m *model.AppModel) int {
+	return max(3+rewindItemRows*len(m.RewindTargets())+2, 6)
 }
 
 // drawModalAtInput 将弹窗作为底部全宽面板绘制，替换输入框和状态栏。
@@ -166,6 +174,10 @@ func (v *AppView) drawModalAtInput(c *renderer.Canvas, r renderer.Rect, m *model
 		h = max(3+len(m.ModelOptions())+2, 6)
 		title = i18n.T("模型选择 (model)")
 		content = modelContent(v.Theme, m)
+	case model.ModalRewind:
+		h = rewindModalHeight(m)
+		title = i18n.T("撤回对话 (rewind)")
+		content = rewindContent(v.Theme, m)
 	case model.ModalServer:
 		// 配置编辑器占满整屏（DrawSheet 全宽面板）。
 		h = r.H

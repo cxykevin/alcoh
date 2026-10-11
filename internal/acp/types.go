@@ -293,6 +293,20 @@ type TerminalControl interface {
 	TerminalHistory(context.Context, string) ([]TerminalInfo, error)
 }
 
+// HistoryPager 暴露 alkaid0 v0.6 的历史回放分页（见 extension.md §3.3）。
+// session/resume 每次最多回放 200 条消息，从活跃分支末端往更早的方向翻页：
+// 首屏拿到的是最近一页，响应携带游标时表示还有更早的消息。
+// 与 TerminalControl / WorkflowControl 一样是可选能力，调用方用类型断言按需取用，
+// 未实现该接口的 backend（如 demo 的分页实现之外的替身）不受影响。
+type HistoryPager interface {
+	// MoreHistory 报告是否还有更早的消息未回放（游标非空）。
+	MoreHistory() bool
+	// LoadEarlierHistory 用上一次响应携带的游标再发一次 session/resume，
+	// 取更早的一页；消息经既有的 session/update 事件流送达（与首屏一致）。
+	// 没有更多历史时不发请求。返回是否仍有更早的一页。
+	LoadEarlierHistory(ctx context.Context) (bool, error)
+}
+
 // WorkflowControl 暴露 alkaid0 v0.5 的 workflow 查询方法（见 extension.md §3.2）。
 // 与 TerminalControl 分开声明：workflow 是可选能力，实现方（含测试替身）可以只实现
 // 终端部分，调用方用类型断言按需取用。

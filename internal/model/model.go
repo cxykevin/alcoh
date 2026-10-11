@@ -56,6 +56,9 @@ const (
 	// ModalPlugins /plugins 本地配置编辑器（复用 /server 的配置树面板），
 	// 用于管理 config.json 的插件列表等本地配置。
 	ModalPlugins
+	// ModalRewind /rewind 对话选择器：选一条历史用户消息撤回到它（alkaid0 v0.6
+	// 的 rewind 协议），并把该消息原文回填输入框。
+	ModalRewind
 )
 
 // Focus 表示会话视图的焦点区域。
@@ -133,6 +136,12 @@ type AppModel struct {
 
 	// ModelSelect 是模型选择菜单当前选中的候选索引。
 	ModelSelect int
+
+	// RewindSelect 是 /rewind 对话选择器当前选中的目标索引。
+	RewindSelect int
+	// rewindOutcome 保存最近一次 rewind 的结果，由 app 在事件循环里消费
+	// （成功则裁剪正文并回填输入框，失败则提示），消费后清空。
+	rewindOutcome *RewindOutcome
 
 	// ServerCfg 是服务端配置树编辑器状态（/server 弹窗）。nil 表示配置
 	// 尚未从 config/get 加载。
@@ -258,6 +267,7 @@ var localSlashCommandInfo = map[string]SlashCommandInfo{
 	"/settings":   {Name: "/settings", Description: "打开本地设置"},
 	"/server":     {Name: "/server", Description: "服务端信息与操作弹窗"},
 	"/plugins":    {Name: "/plugins", Description: "管理本地配置（插件等）"},
+	"/rewind":     {Name: "/rewind", Description: "撤回对话到指定消息（alkaid0 v0.6）"},
 }
 
 // effortLevels 是客户端硬编码的推理强度（ACP v2 thought_level 目录）候选值。
@@ -351,7 +361,7 @@ func (m *AppModel) SlashCompletion() (ghost, description string) {
 // 未列入硬编码列表的 agent 命令优先级为 0。
 func slashCommandPriority(command string) int {
 	switch command {
-	case "/alcoh_help", "/connect", "/effort", "/clear", "/settings", "/server", "/plugins":
+	case "/alcoh_help", "/connect", "/effort", "/clear", "/settings", "/server", "/plugins", "/rewind":
 		return 1
 	default:
 		return 0
@@ -376,6 +386,10 @@ func (m *AppModel) SlashCommands() []string {
 	// /server 仅在服务端声明 alkaid0 扩展能力时可用。
 	if m.SupportsAlkaid0() && !containsString(out, "/server") {
 		out = append(out, "/server")
+	}
+	// /rewind 仅在服务端声明 alkaid0 v0.6 能力（rewind 协议）且有活动会话时可用。
+	if m.SupportsRewind() && !containsString(out, "/rewind") {
+		out = append(out, "/rewind")
 	}
 	if m.Active != nil {
 		for _, command := range m.Active.Commands {
@@ -954,6 +968,85 @@ func (m *AppModel) CancelModel() {
 	}
 }
 
+// RewindOutcome 是一次 rewind 操作的结果，由 app 在事件循环里消费：
+// 成功时裁剪正文并把 Text 回填输入框，失败时提示 Error。
+type RewindOutcome struct {
+	// MessageID 是 rewind 的目标消息 ID（msg_<dbID>）。
+	MessageID string
+	Success   bool
+	// Error 仅失败时非空（服务端给出的原因）。
+	Error string
+	// Text 仅成功时非空：被撤回消息的原文。
+	Text string
+}
+
+// SupportsRewind 报告 /rewind 是否可用：需要服务端声明 alkaid0 v0.6 能力
+// （rewind 协议），且当前有活动会话。
+func (m *AppModel) SupportsRewind() bool {
+	return m.Active != nil && m.SupportsAlkaid0V06()
+}
+
+// RewindTargets 返回当前会话可作为 rewind 目标的用户消息（无活动会话时为空）。
+func (m *AppModel) RewindTargets() []RewindTarget {
+	if m.Active == nil {
+		return nil
+	}
+	return m.Active.RewindTargets()
+}
+
+// OpenRewindModal 打开对话选择器，默认选中最近一条目标。没有可选目标或
+// 能力不足时返回 false，由调用方给出提示。
+func (m *AppModel) OpenRewindModal() bool {
+	targets := m.RewindTargets()
+	if !m.SupportsRewind() || len(targets) == 0 {
+		return false
+	}
+	m.CloseSlash()
+	m.RewindSelect = len(targets) - 1
+	m.SetModal(ModalRewind)
+	return true
+}
+
+// RewindMove 上下移动对话选择器（带环绕）。
+func (m *AppModel) RewindMove(delta int) {
+	targets := m.RewindTargets()
+	if len(targets) == 0 {
+		return
+	}
+	m.RewindSelect = (m.RewindSelect + delta + len(targets)) % len(targets)
+}
+
+// RewindSelected 返回选择器当前选中的目标并关闭弹窗；不在选择器里时返回 false。
+func (m *AppModel) RewindSelected() (RewindTarget, bool) {
+	if m.Modal != ModalRewind {
+		return RewindTarget{}, false
+	}
+	targets := m.RewindTargets()
+	m.SetModal(NoModal)
+	if len(targets) == 0 {
+		return RewindTarget{}, false
+	}
+	idx := m.RewindSelect
+	if idx < 0 || idx >= len(targets) {
+		idx = len(targets) - 1
+	}
+	return targets[idx], true
+}
+
+// CancelRewind 关闭对话选择器且不提交。
+func (m *AppModel) CancelRewind() {
+	if m.Modal == ModalRewind {
+		m.SetModal(NoModal)
+	}
+}
+
+// TakeRewindOutcome 取出并清空最近一次 rewind 的结果；没有时返回 nil。
+func (m *AppModel) TakeRewindOutcome() *RewindOutcome {
+	out := m.rewindOutcome
+	m.rewindOutcome = nil
+	return out
+}
+
 // ApplyEvent 应用一个后端事件。
 func (m *AppModel) ApplyEvent(ev acp.Event) {
 	// 带 sessionId 的事件若不属于当前活动会话（尚未激活，或属于后台会话），
@@ -1069,6 +1162,23 @@ func (m *AppModel) ApplyEvent(ev acp.Event) {
 		if m.HasActive() && e.SessionID == m.Active.ID {
 			m.Active.applyAgentConfig(e.Options)
 			m.Active.ProtocolUpdates = appendProtocolUpdate(m.Active.ProtocolUpdates, e.Raw)
+		}
+	case *acp.RewindEvent:
+		// 会话 rewind 结果（alk.cxykevin.top/session/rewind，见 extension.md §2.7）：
+		// 成功时把该消息及其之后的正文裁掉，与服务端新的活跃分支对齐，并记录被
+		// 撤回消息的原文交给 app 回填输入框；失败时只记录原因，不改动正文。
+		if m.HasActive() && e.SessionID == m.Active.ID {
+			out := &RewindOutcome{MessageID: e.MessageID, Success: e.Success, Error: e.Error}
+			if e.Success {
+				for _, msg := range m.Active.Messages {
+					if msg.MessageID == e.MessageID && msg.Kind == MsgUser {
+						out.Text = msg.Text
+						break
+					}
+				}
+				m.Active.TruncateFrom(e.MessageID)
+			}
+			m.rewindOutcome = out
 		}
 	case *acp.ShellStopEvent:
 		if m.SupportsAlkaid0V05() && m.HasActive() && e.SessionID == m.Active.ID {
@@ -1245,6 +1355,8 @@ func eventSessionID(ev acp.Event) string {
 	case *acp.TerminalListEvent:
 		return e.SessionID
 	case *acp.ShellStopEvent:
+		return e.SessionID
+	case *acp.RewindEvent:
 		return e.SessionID
 	case *acp.WorkflowEvent:
 		return e.SessionID
@@ -1610,6 +1722,32 @@ func (m *AppModel) ScrollBottom() {
 		// Scroll 的实际最大偏移由渲染层写入；这里只需解除旧偏移。
 		s.Scroll = 0
 	}
+}
+
+// AtScrollTop 报告消息区是否可以继续加载更早的一页（alkaid0 v0.6 历史回放分页）：
+// 正文确实超出一屏（MaxScroll > 0）、视口停在顶部、且没有正在进行的加载。
+// 是否还有更早的消息由调用方通过 backend 的分页游标判断（见 app.loadEarlierHistory）。
+func (m *AppModel) AtScrollTop() bool {
+	if !m.HasActive() {
+		return false
+	}
+	s := m.Active
+	return s.Scroll == 0 && s.MaxScroll > 0 && !s.HistoryLoading
+}
+
+// SetHistoryLoading 标记/解除"正在加载更早的历史"：开始时正文顶部显示提示并
+// 阻止重复发起请求，结束时记录视口锚点，让新插入的旧内容不把视口顶下去。
+func (m *AppModel) SetHistoryLoading(loading bool) {
+	if !m.HasActive() {
+		return
+	}
+	s := m.Active
+	if loading {
+		s.HistoryLoading = true
+		return
+	}
+	s.HistoryLoading = false
+	s.BeginHistoryAnchor()
 }
 
 // NextPermissionOption / PrevPermissionOption 移动权限选项选择。

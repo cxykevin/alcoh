@@ -301,7 +301,9 @@ func (b *ClientBackend) ResumeSession(ctx context.Context, id string) (Session, 
 	if len(result.ConfigOptions) > 0 {
 		b.emit(&ConfigOptionUpdateEvent{SessionID: result.SessionID, Options: result.ConfigOptions})
 	}
-	return &clientSession{baseSession: baseSession{id: result.SessionID}, backend: b}, nil
+	// alkaid0 v0.6：响应携带游标表示还有更早的消息未回放，记在会话句柄上，
+	// UI 滚到正文顶部时据此继续翻页（见 extension.md §3.3）。
+	return &clientSession{baseSession: baseSession{id: result.SessionID}, backend: b, historyCursor: result.Cursor}, nil
 }
 
 // DeleteSession 调用 session/delete。
@@ -512,6 +514,11 @@ func (b *ClientBackend) Close() error {
 type clientSession struct {
 	baseSession
 	backend *ClientBackend
+
+	// historyMu 保护历史回放分页游标：首屏游标由 ResumeSession 写入，之后由
+	// app 事件循环（MoreHistory）与后台加载（LoadEarlierHistory）并发读写。
+	historyMu     sync.Mutex
+	historyCursor string
 }
 
 func (s *clientSession) SendPrompt(ctx context.Context, text string) error {
@@ -616,6 +623,51 @@ func (s *clientSession) TerminalHistory(ctx context.Context, id string) ([]Termi
 	// UI 不必为查询结果单独接线（与 SendPrompt 回传 stopReason 同构）。
 	s.backend.emit(&TerminalHistoryEvent{SessionID: s.id, Terminals: result.Terminals})
 	return result.Terminals, nil
+}
+
+// MoreHistory 报告是否还有更早的消息未回放（alkaid0 v0.6 分页游标非空）。
+// 服务端未声明 v0.6 或已回放到活跃分支最早一条时返回 false。
+func (s *clientSession) MoreHistory() bool {
+	s.historyMu.Lock()
+	defer s.historyMu.Unlock()
+	return s.historyCursor != ""
+}
+
+// LoadEarlierHistory 用上次响应携带的游标再发一次 session/resume，回放更早的
+// 一页（alkaid0 v0.6，见 extension.md §3.3）。分页只作用于回放本身：重放的
+// 消息由服务端经 session/update 推送（与首屏一致），configOptions 等仍照常
+// 返回，这里按首屏同样的方式转成配置事件。返回是否仍有更早的一页。
+func (s *clientSession) LoadEarlierHistory(ctx context.Context) (bool, error) {
+	s.historyMu.Lock()
+	cursor := s.historyCursor
+	s.historyMu.Unlock()
+	if cursor == "" {
+		return false, nil
+	}
+	if !s.backend.AgentCapabilities().Has(Alkaid0CapabilityV06) {
+		return false, errors.New("alkaid0 v0.6 history pagination is not supported")
+	}
+	t, err := s.backend.readyTransport()
+	if err != nil {
+		return false, err
+	}
+	var result SessionResult
+	if err := t.Request(ctx, MethodSessionResume, SessionResumeParams{
+		SessionID:  s.id,
+		CWD:        s.backend.config.CWD,
+		ReplayFrom: &ReplayFrom{Type: "start"},
+		Cursor:     cursor,
+	}, &result); err != nil {
+		return false, err
+	}
+	s.historyMu.Lock()
+	s.historyCursor = result.Cursor
+	more := result.Cursor != ""
+	s.historyMu.Unlock()
+	if len(result.ConfigOptions) > 0 {
+		s.backend.emit(&ConfigOptionUpdateEvent{SessionID: s.id, Options: result.ConfigOptions})
+	}
+	return more, nil
 }
 
 // WorkflowStatus 查询 workflow 的完整快照（v0.5）。runID 是 workflow 的 run id
