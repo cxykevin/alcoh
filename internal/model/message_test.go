@@ -26,6 +26,67 @@ func TestAlkaid0MessageOrdering(t *testing.T) {
 	}
 }
 
+func TestAlkaid0CommandMessagesStayAtReceivePosition(t *testing.T) {
+	// 斜杠命令的命令文本与命令回复用合成 ID cmd_<chatID>_<seq>：不入库、没有可与
+	// dbID 比较的序号。它们不能因为"ID 不可比较"而一律沉到正文底部，而要停在收到
+	// 时的位置；同时 msg_<dbID> 仍按 ID 排序。
+	s := NewSession("s1", "test")
+	s.SetAlkaid0MessageOrdering(true)
+	for _, ev := range []struct {
+		id   string
+		user bool
+	}{
+		{"msg_1", true},
+		{"msg_2", false},
+		{"cmd_7_1", true},  // 命令文本
+		{"cmd_7_2", false}, // 命令回复
+		{"msg_3", false},
+	} {
+		s.AppendChunk(&acp.MessageChunkEvent{SessionID: "s1", MessageID: ev.id, IsUser: ev.user, Text: ev.id})
+	}
+	want := []string{"msg_1", "msg_2", "cmd_7_1", "cmd_7_2", "msg_3"}
+	assertMessageOrder(t, s, want)
+
+	// 乱序到达的 msg_<dbID> 仍按 ID 归位：命令消息停在收到时的槽位，前后的正文
+	// 消息按 ID 排序填回其余槽位（cmd_7_1 收到时在 msg_12 之后、msg_2 之前）。
+	shuffled := NewSession("s2", "test")
+	shuffled.SetAlkaid0MessageOrdering(true)
+	for _, id := range []string{"msg_12", "cmd_7_1", "msg_2"} {
+		shuffled.AppendChunk(&acp.MessageChunkEvent{SessionID: "s2", MessageID: id, Text: id})
+	}
+	assertMessageOrder(t, shuffled, []string{"msg_2", "cmd_7_1", "msg_12"})
+}
+
+// assertMessageOrder 校验正文消息与时间线里消息项的顺序一致。
+func assertMessageOrder(t *testing.T, s *SessionState, want []string) {
+	t.Helper()
+	if len(s.Messages) != len(want) {
+		t.Fatalf("got %d messages, want %d", len(s.Messages), len(want))
+	}
+	got := make([]string, len(s.Messages))
+	for i, m := range s.Messages {
+		got[i] = m.MessageID
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("messages = %v, want %v", got, want)
+		}
+	}
+	pos := 0
+	for i, item := range s.Timeline {
+		if item.Message == nil {
+			continue
+		}
+		if item.Message.MessageID != want[pos] {
+			t.Fatalf("timeline[%d] = %s, want %s", i, item.Message.MessageID, want[pos])
+		}
+		pos++
+	}
+	if pos != len(want) {
+		t.Fatalf("timeline has %d message items, want %d", pos, len(want))
+	}
+}
+
 func TestMessageOrderingDisabledByDefault(t *testing.T) {
 	s := NewSession("s1", "test")
 	for _, id := range []string{"msg_12", "msg_2"} {

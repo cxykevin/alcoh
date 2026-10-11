@@ -344,23 +344,24 @@ func (s *SessionState) SetAlkaid0MessageOrdering(enabled bool) {
 	s.sortMessagesByID()
 }
 
+// sortMessagesByID 重排正文消息与时间线里的消息项。
+// alkaid0 的 messageId 有两类：DB 消息用 msg_<dbID>（可比较，直播与回放同源），
+// 斜杠命令的命令文本与命令回复用合成 ID cmd_<chatID>_<seq>——不入库、没有可与
+// dbID 比较的序号（见 extension.md §5.3）。后者若按"不可比较"一律排到最后，
+// 命令与它的回复就会永远沉在正文底部，所以这里只让 msg_<dbID> 参与按 ID 排序，
+// 其余消息留在收到时的位置，随收到时间混进上下文。
 func (s *SessionState) sortMessagesByID() {
 	s.Messages = append(s.Messages[:0], s.receiveMessages...)
 	if s.Alkaid0MessageOrdering {
-		sort.SliceStable(s.Messages, func(i, j int) bool {
-			return compareAlkaid0MessageID(s.Messages[i].MessageID, s.Messages[j].MessageID) < 0
-		})
+		sortAlkaid0Messages(s.Messages)
 	}
-	ordered := make([]*TimelineItem, 0, len(s.receiveMessages))
-	for _, message := range s.receiveMessages {
+	// 时间线里的消息项按展示顺序取出，再填回消息项原有的槽位：槽位不动，
+	// 工具调用 / 终端 / 计划 / 系统提示等非消息项也留在原处。
+	ordered := make([]*TimelineItem, 0, len(s.Messages))
+	for _, message := range s.Messages {
 		if item := s.timelineIndex[messageTimelineKey(message.MessageID, message.Kind)]; item != nil {
 			ordered = append(ordered, item)
 		}
-	}
-	if s.Alkaid0MessageOrdering {
-		sort.SliceStable(ordered, func(i, j int) bool {
-			return compareAlkaid0MessageID(ordered[i].Message.MessageID, ordered[j].Message.MessageID) < 0
-		})
 	}
 	pos := 0
 	for i, item := range s.Timeline {
@@ -368,6 +369,28 @@ func (s *SessionState) sortMessagesByID() {
 			s.Timeline[i] = ordered[pos]
 			pos++
 		}
+	}
+}
+
+// sortAlkaid0Messages 按 messageId 排列消息：带可比较 ID（msg_<dbID>）的消息按
+// ID 升序回填到它们收到时占的槽位（修正直播/回放里乱序到达的落位）；ID 不可比较
+// 的消息（cmd_<chatID>_<seq> 等）保持原槽位，于是命令与其回复混在上下文里。
+func sortAlkaid0Messages(messages []*Message) {
+	slots := make([]int, 0, len(messages))
+	for i, m := range messages {
+		if _, ok := alkaid0MessageIDNumber(m.MessageID); ok {
+			slots = append(slots, i)
+		}
+	}
+	sortable := make([]*Message, 0, len(slots))
+	for _, slot := range slots {
+		sortable = append(sortable, messages[slot])
+	}
+	sort.SliceStable(sortable, func(i, j int) bool {
+		return compareAlkaid0MessageID(sortable[i].MessageID, sortable[j].MessageID) < 0
+	})
+	for i, slot := range slots {
+		messages[slot] = sortable[i]
 	}
 }
 
