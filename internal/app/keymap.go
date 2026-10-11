@@ -1961,14 +1961,21 @@ func (a *App) submitPrompt() {
 	if a.sess == nil || a.model.Input == nil {
 		return
 	}
-	// 先经插件 hooks 裁决（可改写/拦截），通过后才消费输入框；拦截时输入
-	// 框保留原文，便于用户修改后重试。
 	text := a.model.Input.Text()
 	if text == "" {
 		return
 	}
+	// 先经插件 hooks 裁决（可改写/拦截），通过后才消费输入框；拦截时输入
+	// 框保留原文，便于用户修改后重试。
 	out, blocked := a.promptHook(a.sess.ID(), text)
 	if blocked {
+		return
+	}
+	// agent loop 正在执行：不允许再往里发新输入（后端会静默丢弃，或与服务端
+	// 当前 turn 冲突）。先请求停止当前运行，停稳后再把裁决后的文本发出去；
+	// 窗口内没停下来就放弃发送，输入框内容保持原样。
+	if a.sessionExecuting() {
+		a.holdPromptUntilStopped(text, out)
 		return
 	}
 	if a.model.SubmitInput() == "" {
@@ -1976,6 +1983,57 @@ func (a *App) submitPrompt() {
 	}
 	// 已裁决的文本直接发送，不再二次触发 hooks（见 sendPromptRaw）。
 	a.sendPromptRaw(a.sess, out)
+}
+
+// sessionExecuting 报告当前会话是否有一个 agent loop 正在执行：状态为
+// running（回复进行中）或 requires_action（等待用户处理权限等）都算执行中。
+func (a *App) sessionExecuting() bool {
+	return a.model.HasActive() && a.model.Active.Running()
+}
+
+// holdPromptUntilStopped 处理"运行中提交"：请求取消当前运行，并把待发送文本
+// 挂起，等事件循环观察到会话停稳（回到 idle）后发送（见 flushPendingPrompt）。
+// 输入框在等待期间保持原样：用户改动过输入则以用户当前输入为准；cancelHandoffWait
+// 内没停下来同样放弃发送。
+func (a *App) holdPromptUntilStopped(text, out string) {
+	a.pendingPrompt = text
+	a.pendingPromptOut = out
+	a.pendingPromptCh = time.After(cancelHandoffWait)
+	a.cancelCurrent()
+}
+
+// flushPendingPrompt 在会话停稳后发送挂起的 prompt（先停止再发送）。输入框已
+// 被用户改动、或已经离开该会话视图时放弃本次发送（sticky 输入以用户为准）。
+func (a *App) flushPendingPrompt() {
+	if a.pendingPrompt == "" || a.sessionExecuting() {
+		return
+	}
+	text, out := a.pendingPrompt, a.pendingPromptOut
+	a.clearPendingPrompt()
+	if !a.model.HasActive() || a.sess == nil || a.model.Input == nil || a.model.Input.Text() != text {
+		return
+	}
+	if a.model.SubmitInput() == "" {
+		return
+	}
+	// 裁决在挂起前已完成，这里直接发送，不再二次触发 hooks（见 sendPromptRaw）。
+	a.sendPromptRaw(a.sess, out)
+}
+
+// dropPendingPrompt 在等待停止超时后放弃挂起的 prompt（输入框保持原样）。
+func (a *App) dropPendingPrompt() {
+	if a.pendingPrompt == "" {
+		return
+	}
+	a.clearPendingPrompt()
+	a.model.ShowInfo(i18n.T("当前运行未在 %dms 内停止，未发送", int(cancelHandoffWait/time.Millisecond)))
+}
+
+// clearPendingPrompt 清空挂起状态与等待通道（nil 通道在主循环 select 中禁用）。
+func (a *App) clearPendingPrompt() {
+	a.pendingPrompt = ""
+	a.pendingPromptOut = ""
+	a.pendingPromptCh = nil
 }
 
 func (a *App) cancelCurrent() {

@@ -100,6 +100,18 @@ type App struct {
 	firstSessionOpID uint64
 
 	lastCtrlCAt time.Time
+
+	// pendingPrompt 是"运行中提交 → 先停止再发送"的待发送文本：agent loop
+	// 执行期间用户回车提交时，先请求取消当前运行并把文本暂存在这里，会话
+	// 停稳（回到 idle）后由事件循环发送。等待期间输入框保持原样，用户改过
+	// 输入则不发送。
+	pendingPrompt string
+	// pendingPromptOut 是 pendingPrompt 经插件 hooks 裁决后的待发送文本；
+	// 挂起期间不再二次触发 hooks（与发送前裁决一次的原语义一致）。
+	pendingPromptOut string
+	// pendingPromptCh 是等待会话停稳的超时通道（cancelHandoffWait）；没有
+	// 挂起文本时为 nil，主循环 select 中该分支被禁用。
+	pendingPromptCh <-chan time.Time
 }
 
 type commandKind uint8
@@ -505,6 +517,11 @@ func (a *App) withModelRead(fn func()) {
 // 不把进程永远留在退出路径里。
 const shutdownCleanupTimeout = 3 * time.Second
 
+// cancelHandoffWait 是"运行中提交 → 先停止再发送"允许等待会话停稳的最长时间。
+// agent loop 执行期间用户提交输入时先请求取消；会话在这个窗口内回到 idle 就把
+// 输入发出去，超过它仍未停止（服务端未响应取消等）就放弃发送，输入框保持原样。
+const cancelHandoffWait = 200 * time.Millisecond
+
 // Run 启动事件循环，直到用户退出。结束时恢复终端。
 func (a *App) Run() error {
 	if err := a.term.EnterRaw(); err != nil {
@@ -615,6 +632,11 @@ func (a *App) Run() error {
 				a.spinFrame++
 				needsRender = true
 			}
+		case <-a.pendingPromptCh:
+			// "运行中提交 → 先停止再发送"等待超时：会话在 cancelHandoffWait
+			// 内没有停稳，放弃发送，输入框内容保持原样。
+			a.withModel(a.dropPendingPrompt)
+			needsRender = true
 		}
 		// drain 积压后端事件，合并到一帧。
 		quitting := false
@@ -626,6 +648,8 @@ func (a *App) Run() error {
 			if a.model.ExpireError(time.Now()) {
 				needsRender = true
 			}
+			// 会话停稳后发送"运行中提交"挂起的 prompt（先停止再发送）。
+			a.flushPendingPrompt()
 			// render 会同步部分模型字段（如 Scroll/FollowBottom，见 view/message_list.go），
 			// 必须在锁内执行，避免与测试的 snapshot 并发读产生 data race。
 			if needsRender {

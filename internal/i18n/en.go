@@ -161,6 +161,7 @@ var en = map[string]string{
 	"字段 %s 是必需的":                                            "Field %s is required",
 	"字段 %s 的值必须是枚举值之一":                                      "Field %s must be one of the allowed values",
 	"序列化表单数据失败":                                             "Failed to serialize form data",
+	"当前运行未在 %dms 内停止，未发送":                                   "Current run did not stop within %dms; not sent",
 
 	// ---- 权限/请求 ----
 	"权限请求":                     "Permission request",
