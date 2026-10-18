@@ -53,6 +53,10 @@ func newWSBackend(urlStr, cwd string) acp.Backend {
 				Form: &emptyObj,
 				URL:  &emptyObj,
 			},
+			// 声明会话消息队列能力：服务端据此推送 msgqueue_update，并把
+			// 会话执行中提交的输入入队而不是终止当前生成。是否真正启用
+			// 队列交互还要看服务端是否同时声明 alkaid0 v0.6 与 msgqueue。
+			MsgQueue: true,
 		},
 		CWD: cwd,
 	})
@@ -142,6 +146,8 @@ func main() {
 					Form: &emptyObj,
 					URL:  &emptyObj,
 				},
+				// 与 WebSocket backend 一致：声明会话消息队列能力。
+				MsgQueue: true,
 			},
 		})
 		if err != nil {

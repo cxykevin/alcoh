@@ -293,6 +293,22 @@ type TerminalControl interface {
 	TerminalHistory(context.Context, string) ([]TerminalInfo, error)
 }
 
+// MsgQueueControl 暴露 alkaid0 会话消息队列的查询与管理方法
+// （alk.cxykevin.top/msgqueue，见 ../alkaid0/docs/acp/extension.md §3.10）。
+// 与 TerminalControl 一样是可选能力，调用方用类型断言按需取用。服务端需同时
+// 声明 alkaid0 v0.6 与 msgqueue 能力，客户端才启用队列交互。
+type MsgQueueControl interface {
+	// ListMsgQueue 拉取当前会话的完整队列快照。
+	ListMsgQueue(ctx context.Context) (MsgQueueSnapshot, error)
+	// CancelMsgQueueItem 取消（删除）一条排队项。
+	CancelMsgQueueItem(ctx context.Context, itemID string) error
+	// UpdateMsgQueueItem 修改排队项：prompt 项改 text，command 项改 args
+	// （服务端据此重建 text）。text/args 为 nil 表示不修改。
+	UpdateMsgQueueItem(ctx context.Context, itemID string, text, args *string) error
+	// ClearMsgQueue 清空当前会话的全部排队项。
+	ClearMsgQueue(ctx context.Context) error
+}
+
 // HistoryPager 暴露 alkaid0 v0.6 的历史回放分页（见 extension.md §3.3）。
 // session/resume 每次最多回放 200 条消息，从活跃分支末端往更早的方向翻页：
 // 首屏拿到的是最近一页，响应携带游标时表示还有更早的消息。

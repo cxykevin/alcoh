@@ -150,6 +150,22 @@ type RewindEvent struct {
 	Raw   json.RawMessage
 }
 
+// MsgQueueUpdateEvent 对应 alk.cxykevin.top/msgqueue_update：会话消息队列
+// 的全量快照变化（alkaid0 v0.6 同期的 msgqueue 能力，见 extension.md §2.8）。
+// Revision 单调递增，客户端应丢弃 revision 小于已知值的乱序事件。
+type MsgQueueUpdateEvent struct {
+	SessionID string
+	Revision  uint64
+	// Reason 是 enqueued / started / updated / removed / cleared / flushed / snapshot。
+	Reason string
+	// Items 是本次变化后的全量剩余队列（FIFO 顺序）。
+	Items []MsgQueueItem
+	// Item 是本次变化的那一项；cleared / flushed 时为 nil。started 事件里
+	// Item.MessageID 是该条消息出队落库后的真实 msg_<dbID>。
+	Item *MsgQueueItem
+	Raw  json.RawMessage
+}
+
 // WorkflowStatusEvent 携带 workflow/status 的查询结果（由客户端主动查询后广播，与
 // TerminalHistoryEvent 同构）。它含完整图、当前 agent 状态与有序事件日志：模型据此
 // 重建 workflow 状态（日志按 sequence 重放），因此已结束的 workflow 也能显示
@@ -224,6 +240,7 @@ func (*TerminalHistoryEvent) isEvent()      {}
 func (*TerminalListEvent) isEvent()         {}
 func (*ShellStopEvent) isEvent()            {}
 func (*RewindEvent) isEvent()               {}
+func (*MsgQueueUpdateEvent) isEvent()       {}
 func (*WorkflowEvent) isEvent()             {}
 func (*WorkflowStatusEvent) isEvent()       {}
 func (*CommandsUpdateEvent) isEvent()       {}

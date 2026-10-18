@@ -73,6 +73,10 @@ func (sb *StatusBar) Draw(c *renderer.Canvas, r renderer.Rect, m *model.AppModel
 		if n := m.PendingPermissionCount(); n > 0 {
 			spans = append(spans, Span{Text: "  +" + itoa(n) + " perm", Style: st})
 		}
+		// 消息队列里的待发送项（alkaid0 v0.6 + msgqueue）；/queue 可管理。
+		if n := len(s.MsgQueue); n > 0 {
+			spans = append(spans, Span{Text: "  ⇢ " + itoa(n) + " queued", Style: st})
+		}
 		if s.WorkingDir != "" {
 			spans = append(spans, Span{Text: "  " + s.WorkingDir, Style: st})
 		}

@@ -113,6 +113,8 @@ func (v *AppView) modalHeight(m *model.AppModel) int {
 		h = max(3+len(m.ModelOptions())+2, 6)
 	case model.ModalRewind:
 		h = rewindModalHeight(m)
+	case model.ModalMsgQueue:
+		h = queueModalHeight(m)
 	case model.ModalExitConfirm:
 		h = 5
 	case model.ModalServer, model.ModalPlugins:
@@ -128,6 +130,20 @@ func (v *AppView) modalHeight(m *model.AppModel) int {
 // rewindItemRows 行（用户内容、AI 回复、空行）+ 空行 + 操作提示，再加标题横线 1 行。
 func rewindModalHeight(m *model.AppModel) int {
 	return max(3+rewindItemRows*len(m.RewindTargets())+2, 6)
+}
+
+// queueModalHeight 返回 /queue 面板的高度：标题行 + 顶部提示 + 空行 + 队列项
+// （最多 10 行，更多时窗口滚动）+ 底部操作提示。队列为空时保留一行空状态。
+// 内容区需要 提示 + 空行 + n + 操作提示 = n+3 行，加上下边框共 n+5。
+func queueModalHeight(m *model.AppModel) int {
+	n := len(m.QueueItems())
+	if n < 1 {
+		n = 1
+	}
+	if n > 10 {
+		n = 10
+	}
+	return 5 + n
 }
 
 // drawModalAtInput 将弹窗作为底部全宽面板绘制，替换输入框和状态栏。
@@ -178,6 +194,10 @@ func (v *AppView) drawModalAtInput(c *renderer.Canvas, r renderer.Rect, m *model
 		h = rewindModalHeight(m)
 		title = i18n.T("撤回对话 (rewind)")
 		content = rewindContent(v.Theme, m)
+	case model.ModalMsgQueue:
+		h = queueModalHeight(m)
+		title = i18n.T("排队消息 (msgqueue)")
+		content = queueContent(v.Theme, m)
 	case model.ModalServer:
 		// 配置编辑器占满整屏（DrawSheet 全宽面板）。
 		h = r.H
@@ -420,8 +440,9 @@ func (v *AppView) drawSession(c *renderer.Canvas, r renderer.Rect, m *model.AppM
 	if m.SlashOpen {
 		slashH = min(8, r.H/3)
 	}
+	queueH := queueListHeight(m)
 
-	msgH := max(r.H-spacerH-statusH-sepH-sep2H-inputH-planH-slashH, 1)
+	msgH := max(r.H-spacerH-statusH-sepH-sep2H-inputH-planH-slashH-queueH, 1)
 
 	y := r.Y
 	msgRect := renderer.NewRect(r.X, y, r.W, msgH)
@@ -444,6 +465,10 @@ func (v *AppView) drawSession(c *renderer.Canvas, r renderer.Rect, m *model.AppM
 	if slashH > 0 {
 		(&SlashPanel{Theme: v.Theme}).Draw(c, renderer.NewRect(r.X, y, r.W, slashH), m)
 		y += slashH
+	}
+	if queueH > 0 {
+		v.drawQueueList(c, renderer.NewRect(r.X, y, r.W, queueH), m)
+		y += queueH
 	}
 
 	sepStyle := v.Theme.Style(v.Theme.BorderSubtle)

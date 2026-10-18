@@ -119,6 +119,18 @@ type App struct {
 	// pendingRewindCh 是 /rewind 等待会话停稳的超时通道（cancelHandoffWait）；
 	// 没有待打开的选择器时为 nil，主循环 select 中该分支被禁用。
 	pendingRewindCh <-chan time.Time
+
+	// queueEdit 表示正在编辑一条排队项：输入框回车提交时走 msgqueue/update，
+	// 而不是发送新 prompt（见 startQueueEdit / submitQueueEdit）。
+	queueEdit *msgQueueEdit
+}
+
+// msgQueueEdit 是 /queue 面板里正在编辑的排队项。
+type msgQueueEdit struct {
+	SessionID string
+	ItemID    string
+	Kind      string
+	Command   string
 }
 
 type commandKind uint8
@@ -137,6 +149,10 @@ const (
 	commandTerminalStatus
 	commandTerminalList
 	commandTerminalWorkflowStatus
+	commandMsgQueueList
+	commandMsgQueueCancel
+	commandMsgQueueUpdate
+	commandMsgQueueClear
 )
 
 type commandResult struct {
@@ -149,6 +165,7 @@ type commandResult struct {
 	cfgSeq     uint64 // config/get 请求序号，用于丢弃乱序晚回的旧结果
 	models     []provider.Model
 	terminalID string
+	queue      *acp.MsgQueueSnapshot
 	err        error
 }
 
@@ -416,6 +433,11 @@ type modelSnapshot struct {
 	WorkflowAgentScroll int      // Agent 列表向上回看的行数
 	WorkflowAgents      []string // 选中节点各 agent 的状态（waiting / running / success / failure）
 	WorkflowLogs        []string // 选中节点的输出行（终值结果 + 日志）
+
+	// 会话消息队列（/queue 面板/输入框上方排队框）快照，供测试轮询。
+	QueueItems   []acp.MsgQueueItem
+	QueueSel     int
+	QueueFocused bool
 }
 
 // snapshot 返回当前模型状态快照，供测试在应用运行期间安全轮询。
@@ -472,6 +494,9 @@ func (a *App) snapshot() modelSnapshot {
 		s.ActiveRunning = a.model.Active.Running()
 		s.ActiveScroll = a.model.Active.Scroll
 		s.FollowBottom = a.model.Active.FollowBottom
+		s.QueueItems = append([]acp.MsgQueueItem(nil), a.model.Active.MsgQueue...)
+		s.QueueSel = a.model.QueueSelect
+		s.QueueFocused = a.model.QueueFocused
 	}
 	return s
 }
@@ -853,6 +878,43 @@ func (a *App) applyCommandResult(result commandResult) {
 	if result.kind == commandTerminalWorkflowStatus {
 		// workflow 快照经 WorkflowStatusEvent 应用到模型（图/节点/日志重建）；
 		// 终端不是 workflow（run 已过期或类型不符）时失败无需打扰用户。
+		return
+	}
+	if result.kind == commandMsgQueueList {
+		// 全量快照只在仍是同一会话时应用；revision 由模型判新旧，丢弃乱序晚回
+		// 的旧快照。会话已切换时旧队列内容不应污染当前面板。
+		if a.sess == nil || a.sess.ID() != result.sessionID {
+			return
+		}
+		if result.err != nil {
+			a.model.ShowError(i18n.T("获取排队消息失败: %s", result.err.Error()))
+			return
+		}
+		if result.queue != nil && a.model.HasActive() {
+			a.model.Active.ApplyMsgQueue(result.queue.Revision, result.queue.Items)
+		}
+		return
+	}
+	if result.kind == commandMsgQueueCancel || result.kind == commandMsgQueueUpdate || result.kind == commandMsgQueueClear {
+		if result.sessionID != "" && (a.sess == nil || a.sess.ID() != result.sessionID) {
+			return
+		}
+		if result.err != nil {
+			a.model.ShowError(i18n.T("消息队列操作失败: %s", result.err.Error()))
+			// 取消项在本地已被移出排队框；服务端失败时重新拉取快照恢复。
+			if result.kind == commandMsgQueueCancel {
+				a.refreshMsgQueue()
+			}
+			return
+		}
+		switch result.kind {
+		case commandMsgQueueCancel:
+			a.model.ShowInfo(i18n.T("已取消排队消息"))
+		case commandMsgQueueUpdate:
+			a.model.ShowInfo(i18n.T("排队消息已更新"))
+		default:
+			a.model.ShowInfo(i18n.T("已清空排队消息"))
+		}
 		return
 	}
 	if result.kind == commandSessionDelete {

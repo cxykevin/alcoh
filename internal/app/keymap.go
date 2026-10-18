@@ -56,6 +56,9 @@ func (a *App) dispatchKey(ke input.KeyEvent) {
 	case model.ModalRewind:
 		a.rewindKey(ke)
 		return
+	case model.ModalMsgQueue:
+		a.queueKey(ke)
+		return
 	case model.ModalServer:
 		a.serverConfigKey(ke)
 		return
@@ -391,7 +394,8 @@ func (a *App) sessionKey(ke input.KeyEvent) {
 			// 则直接执行本地命令 / 提交 prompt，避免要求用户再按一次 Enter。
 			if a.slashTokenMatchesSelection() {
 				m.CloseSlash()
-				if a.tryLocalSlashCommand() {
+				// 正在编辑排队项时，输入框内容属于该排队项，不当作斜杠命令执行。
+				if a.queueEdit == nil && a.tryLocalSlashCommand() {
 					return
 				}
 				a.submitPrompt()
@@ -490,6 +494,48 @@ func (a *App) sessionKey(ke input.KeyEvent) {
 		}
 		return
 	}
+	// 排队框焦点：↑↓ 选择、Tab/空格/i 编辑、Backspace/Delete 删除。
+	// ↑ 在队列最顶上再按一次才交还输入框（浏览 history）。
+	if m.QueueFocused {
+		switch ke.Type {
+		case input.KeyUp:
+			if m.QueueFocusMove(-1) {
+				return
+			}
+			m.BlurQueue()
+			ib := &widget.InputBox{Buf: m.Input, Style: a.view.Theme.Style(a.view.Theme.Text)}
+			if ib.OnKey(ke) {
+				m.UpdateSlashState()
+			}
+			return
+		case input.KeyDown:
+			m.QueueFocusMove(1)
+			return
+		case input.KeyTab:
+			a.startQueueEdit()
+			return
+		case input.KeyBackspace, input.KeyDelete:
+			a.deleteFocusedQueueItem()
+			return
+		case input.KeyEsc:
+			m.BlurQueue()
+			return
+		case input.KeyRune:
+			if ke.IsCtrl() || ke.IsAlt() {
+				return
+			}
+			if ke.Rune == ' ' || ke.Rune == 'i' {
+				a.startQueueEdit()
+			}
+			return
+		}
+		return
+	}
+	// Esc 取消排队项编辑（输入框内容属于该排队项，不打断 agent 运行）。
+	if ke.Type == input.KeyEsc && a.queueEdit != nil {
+		a.cancelQueueEdit()
+		return
+	}
 	// 按 Esc 打断正在进行的 AI 响应。无论焦点在输入框还是消息区都生效；
 	// 会话空闲时不动作（避免误触清空输入或误退出）。
 	if ke.Type == input.KeyEsc {
@@ -527,6 +573,13 @@ func (a *App) sessionKey(ke input.KeyEvent) {
 		a.messageKey(ke)
 		return
 	}
+	// 存在排队项时 ↑ 先聚焦输入框上方的排队框；在排队框里到顶再按 ↑ 才回到
+	// 输入历史（见上面的 QueueFocused 分支）。
+	if ke.Type == input.KeyUp && a.queueEdit == nil && !m.SlashOpen && len(m.QueueItems()) > 0 {
+		if m.FocusQueue() {
+			return
+		}
+	}
 	ib := &widget.InputBox{Buf: m.Input, Style: a.view.Theme.Style(a.view.Theme.Text)}
 	if ib.OnKey(ke) {
 		m.UpdateSlashState()
@@ -534,6 +587,11 @@ func (a *App) sessionKey(ke input.KeyEvent) {
 	}
 	switch {
 	case ke.Type == input.KeyEnter:
+		// 编辑排队项：回车提交该条目的新内容（走 msgqueue/update），不发送 prompt。
+		if a.queueEdit != nil {
+			a.submitQueueEdit()
+			return
+		}
 		if a.tryLocalSlashCommand() {
 			return
 		}
@@ -657,6 +715,10 @@ func (a *App) tryLocalSlashCommand() bool {
 			return true
 		}
 		a.startRewind()
+	case "/queue":
+		m.Input.Clear()
+		m.CloseSlash()
+		a.openMsgQueue()
 	default:
 		// 插件注册的斜杠命令（/xxx 开头的 token 未命中本地命令时尝试插件）。
 		return a.runPluginCommand(name, rest)
@@ -2025,6 +2087,11 @@ func (a *App) submitPrompt() {
 	if a.sess == nil || a.model.Input == nil {
 		return
 	}
+	// 排队项编辑中：回车保存该条目，不发送新 prompt（见 submitQueueEdit）。
+	if a.queueEdit != nil {
+		a.submitQueueEdit()
+		return
+	}
 	text := a.model.Input.Text()
 	if text == "" {
 		return
@@ -2039,6 +2106,16 @@ func (a *App) submitPrompt() {
 	// 当前 turn 冲突）。先请求停止当前运行，停稳后再把裁决后的文本发出去；
 	// 窗口内没停下来就放弃发送，输入框内容保持原样。
 	if a.sessionExecuting() {
+		// 服务端支持会话消息队列时：运行中提交直接交给服务端排队（服务端广播
+		// msgqueue_update），不取消当前运行。停止再发送只在没有队列能力时兜底。
+		if a.model.SupportsMsgQueue() {
+			if a.model.SubmitInput() == "" {
+				return
+			}
+			a.sendPromptRaw(a.sess, out)
+			a.model.ShowInfo(i18n.T("已加入排队消息（/queue 管理）"))
+			return
+		}
 		a.holdPromptUntilStopped(text, out)
 		return
 	}

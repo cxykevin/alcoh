@@ -188,6 +188,13 @@ type SessionState struct {
 	terminalHistory      map[string]*TerminalState
 	terminalHistoryOrder []string
 
+	// MsgQueue 是服务端会话消息队列的全量快照（alkaid0 v0.6 + msgqueue）。
+	// 队列项尚未写入主消息库，只有出队后才会以 user_message 进入正文。
+	MsgQueue []acp.MsgQueueItem
+	// MsgQueueRevision 是最近一次应用的队列版本号；更小的 revision 视为
+	// 乱序/过期快照并丢弃。
+	MsgQueueRevision uint64
+
 	ProtocolUpdates []json.RawMessage
 	Scroll          int
 	// FollowBottom 为 true 时消息区锁定底部：新内容到达自动跟随，
@@ -775,6 +782,18 @@ func (s *SessionState) MarkStreamingDone() {
 			m.Done = true
 		}
 	}
+}
+
+// ApplyMsgQueue 应用一次消息队列全量快照（msgqueue_update）。revision 单调
+// 递增：小于已知版本的事件视为乱序/过期并丢弃；相等时允许重复应用（内容
+// 应与当前一致）。
+func (s *SessionState) ApplyMsgQueue(revision uint64, items []acp.MsgQueueItem) bool {
+	if revision < s.MsgQueueRevision {
+		return false
+	}
+	s.MsgQueueRevision = revision
+	s.MsgQueue = append([]acp.MsgQueueItem(nil), items...)
+	return true
 }
 
 func (s *SessionState) ApplyToolCall(ev *acp.ToolCallUpdateEvent) {

@@ -138,6 +138,30 @@ func DecodeSessionUpdatePayload(sessionID string, raw json.RawMessage) (Event, e
 			Error:     update.Error,
 			Raw:       append(json.RawMessage(nil), raw...),
 		}, nil
+	case "alk.cxykevin.top/msgqueue_update":
+		// 会话消息队列变化（msgqueue 能力）：每次推送剩余队列的全量快照，
+		// revision 单调递增（见 extension.md §2.8）。
+		var update struct {
+			Revision uint64         `json:"revision"`
+			Reason   string         `json:"reason"`
+			Items    []MsgQueueItem `json:"items"`
+			Item     *MsgQueueItem  `json:"item"`
+		}
+		if err := json.Unmarshal(raw, &update); err != nil {
+			return nil, err
+		}
+		items := update.Items
+		if items == nil {
+			items = []MsgQueueItem{}
+		}
+		return &MsgQueueUpdateEvent{
+			SessionID: sessionID,
+			Revision:  update.Revision,
+			Reason:    update.Reason,
+			Items:     items,
+			Item:      update.Item,
+			Raw:       append(json.RawMessage(nil), raw...),
+		}, nil
 	case "alk.cxykevin.top/shell_stop":
 		var update struct {
 			RunID      string `json:"runId"`

@@ -670,6 +670,84 @@ func (s *clientSession) LoadEarlierHistory(ctx context.Context) (bool, error) {
 	return more, nil
 }
 
+// SupportsMsgQueue 报告服务端是否同时声明 alkaid0 v0.6 与 msgqueue 能力：
+// 消息队列与 v0.6 同期实现（未发版），只声明 msgqueue 而缺少 v0.6 的服务端
+// 不按队列客户端对待，避免客户端把输入交给看不到的队列。
+func (b *ClientBackend) SupportsMsgQueue() bool {
+	caps := b.AgentCapabilities()
+	return caps.Has(Alkaid0CapabilityV06) && caps.Has(Alkaid0CapabilityMsgQueue)
+}
+
+func (s *clientSession) msgQueueReady() error {
+	if !s.backend.SupportsMsgQueue() {
+		return errors.New("alkaid0 msgqueue is not supported")
+	}
+	return nil
+}
+
+// ListMsgQueue 拉取当前会话的消息队列快照。
+func (s *clientSession) ListMsgQueue(ctx context.Context) (MsgQueueSnapshot, error) {
+	if err := s.msgQueueReady(); err != nil {
+		return MsgQueueSnapshot{}, err
+	}
+	t, err := s.backend.readyTransport()
+	if err != nil {
+		return MsgQueueSnapshot{}, err
+	}
+	var result MsgQueueSnapshot
+	if err := t.Request(ctx, MethodMsgQueueList, MsgQueueListParams{SessionID: s.id}, &result); err != nil {
+		return MsgQueueSnapshot{}, err
+	}
+	if result.Items == nil {
+		result.Items = []MsgQueueItem{}
+	}
+	return result, nil
+}
+
+// CancelMsgQueueItem 取消一条排队项；服务端随后广播 removed 事件。
+func (s *clientSession) CancelMsgQueueItem(ctx context.Context, itemID string) error {
+	if err := s.msgQueueReady(); err != nil {
+		return err
+	}
+	t, err := s.backend.readyTransport()
+	if err != nil {
+		return err
+	}
+	var result MsgQueueSnapshot
+	return t.Request(ctx, MethodMsgQueueCancel, MsgQueueCancelParams{SessionID: s.id, ItemID: itemID}, &result)
+}
+
+// UpdateMsgQueueItem 修改一条排队项；服务端随后广播 updated 事件。
+func (s *clientSession) UpdateMsgQueueItem(ctx context.Context, itemID string, text, args *string) error {
+	if err := s.msgQueueReady(); err != nil {
+		return err
+	}
+	t, err := s.backend.readyTransport()
+	if err != nil {
+		return err
+	}
+	var result MsgQueueSnapshot
+	return t.Request(ctx, MethodMsgQueueUpdate, MsgQueueUpdateParams{
+		SessionID: s.id,
+		ItemID:    itemID,
+		Text:      text,
+		Args:      args,
+	}, &result)
+}
+
+// ClearMsgQueue 清空当前会话的全部排队项；服务端随后广播 cleared 事件。
+func (s *clientSession) ClearMsgQueue(ctx context.Context) error {
+	if err := s.msgQueueReady(); err != nil {
+		return err
+	}
+	t, err := s.backend.readyTransport()
+	if err != nil {
+		return err
+	}
+	var result MsgQueueSnapshot
+	return t.Request(ctx, MethodMsgQueueClear, MsgQueueClearParams{SessionID: s.id}, &result)
+}
+
 // WorkflowStatus 查询 workflow 的完整快照（v0.5）。runID 是 workflow 的 run id
 // （@temp/run/<n>，与 terminal ID 同值）；workflow 已结束或不在内存中时同样可查，
 // 响应含当前状态、完整图与按 sequence 排序的事件日志（见 extension.md §3.2）。

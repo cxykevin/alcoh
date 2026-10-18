@@ -59,6 +59,9 @@ const (
 	// ModalRewind /rewind 对话选择器：选一条历史用户消息撤回到它（alkaid0 v0.6
 	// 的 rewind 协议），并把该消息原文回填输入框。
 	ModalRewind
+	// ModalMsgQueue /queue 会话消息队列面板：查看、取消、清空与编辑排队项
+	// （alkaid0 v0.6 + msgqueue 能力）。
+	ModalMsgQueue
 )
 
 // Focus 表示会话视图的焦点区域。
@@ -139,6 +142,11 @@ type AppModel struct {
 
 	// RewindSelect 是 /rewind 对话选择器当前选中的目标索引。
 	RewindSelect int
+	// QueueSelect 是 /queue 面板/输入框上方排队框当前选中的排队项索引。
+	QueueSelect int
+	// QueueFocused 表示输入框上方的排队框是否获得焦点：存在排队项时按 ↑ 进入，
+	// 此时 ↑↓ 在队列内移动、Tab/空格/i 编辑、Backspace/Delete 删除。
+	QueueFocused bool
 	// rewindOutcome 保存最近一次 rewind 的结果，由 app 在事件循环里消费
 	// （成功则裁剪正文并回填输入框，失败则提示），消费后清空。
 	rewindOutcome *RewindOutcome
@@ -268,6 +276,7 @@ var localSlashCommandInfo = map[string]SlashCommandInfo{
 	"/server":     {Name: "/server", Description: "服务端信息与操作弹窗"},
 	"/plugins":    {Name: "/plugins", Description: "管理本地配置（插件等）"},
 	"/rewind":     {Name: "/rewind", Description: "撤回对话到指定消息（alkaid0 v0.6）"},
+	"/queue":      {Name: "/queue", Description: "查看与管理排队消息（alkaid0 msgqueue）"},
 }
 
 // effortLevels 是客户端硬编码的推理强度（ACP v2 thought_level 目录）候选值。
@@ -361,7 +370,7 @@ func (m *AppModel) SlashCompletion() (ghost, description string) {
 // 未列入硬编码列表的 agent 命令优先级为 0。
 func slashCommandPriority(command string) int {
 	switch command {
-	case "/alcoh_help", "/connect", "/effort", "/clear", "/settings", "/server", "/plugins", "/rewind":
+	case "/alcoh_help", "/connect", "/effort", "/clear", "/settings", "/server", "/plugins", "/rewind", "/queue":
 		return 1
 	default:
 		return 0
@@ -390,6 +399,10 @@ func (m *AppModel) SlashCommands() []string {
 	// /rewind 仅在服务端声明 alkaid0 v0.6 能力（rewind 协议）且有活动会话时可用。
 	if m.SupportsRewind() && !containsString(out, "/rewind") {
 		out = append(out, "/rewind")
+	}
+	// /queue 仅在服务端同时声明 alkaid0 v0.6 与 msgqueue 能力且有活动会话时可用。
+	if m.QueueAvailable() && !containsString(out, "/queue") {
+		out = append(out, "/queue")
 	}
 	if m.Active != nil {
 		for _, command := range m.Active.Commands {
@@ -1183,6 +1196,14 @@ func (m *AppModel) ApplyEvent(ev acp.Event) {
 			}
 			m.rewindOutcome = out
 		}
+	case *acp.MsgQueueUpdateEvent:
+		// 会话消息队列快照（alkaid0 v0.6 + msgqueue）：全量替换本地队列。
+		// 只声明 msgqueue 而缺少 v0.6 的服务端不启用队列交互，事件直接忽略。
+		if m.SupportsMsgQueue() && m.HasActive() && e.SessionID == m.Active.ID {
+			if m.Active.ApplyMsgQueue(e.Revision, e.Items) {
+				m.clampQueueSelect()
+			}
+		}
 	case *acp.ShellStopEvent:
 		if m.SupportsAlkaid0V05() && m.HasActive() && e.SessionID == m.Active.ID {
 			if e.TerminalID != "" {
@@ -1360,6 +1381,8 @@ func eventSessionID(ev acp.Event) string {
 	case *acp.ShellStopEvent:
 		return e.SessionID
 	case *acp.RewindEvent:
+		return e.SessionID
+	case *acp.MsgQueueUpdateEvent:
 		return e.SessionID
 	case *acp.WorkflowEvent:
 		return e.SessionID

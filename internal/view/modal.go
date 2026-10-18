@@ -499,6 +499,88 @@ func rewindContent(t renderer.Theme, m *model.AppModel) *RewindContent {
 	}
 }
 
+// QueueContent 是 /queue 会话消息队列面板的内容区：列出服务端队列的全量
+// 快照（FIFO）。队列项尚未进入正文，出队后才会以 user_message 显示。
+type QueueContent struct {
+	Theme    renderer.Theme
+	Items    []acp.MsgQueueItem
+	Selected int
+}
+
+// queueItemRows 是队列面板里每一项占用的行数：每项一行，过长文本截断。
+const queueItemRows = 1
+
+// Draw 绘制排队消息列表：顶部提示，随后每项一行（❯ 标记选中项），底部是
+// 操作提示。条目过多时以选中项为中心滚动窗口。
+func (qc *QueueContent) Draw(c *renderer.Canvas, r renderer.Rect) {
+	t := qc.Theme
+	y := r.Y
+	if y < r.Y+r.H {
+		hint := i18n.T("排队消息 %d 条：出队后才会发送", len(qc.Items))
+		c.PutText(r.X, y, renderer.Truncate(hint, r.W), t.Style(t.TextMuted))
+		y++
+	}
+	y++ // 空行
+
+	available := max(r.H-(y-r.Y)-1, 1)
+	start := max(qc.Selected-available/2, 0)
+	if maxStart := len(qc.Items) - available; start > maxStart {
+		start = maxStart
+	}
+	if start < 0 {
+		start = 0
+	}
+	if len(qc.Items) == 0 {
+		c.PutText(r.X, y, i18n.T("（队列为空）"), t.Style(t.TextMuted))
+	} else {
+		for i := start; i < start+available && i < len(qc.Items); i++ {
+			if y >= r.Y+r.H-1 {
+				break
+			}
+			item := qc.Items[i]
+			marker := "  "
+			st := t.Style(t.Text)
+			if i == qc.Selected {
+				marker = "❯ "
+				st = t.Style(t.Primary).WithBold(true)
+			}
+			line := marker + itoa(i+1) + ". " + queueItemLine(item)
+			c.PutText(r.X, y, renderer.Truncate(line, r.W), st)
+			y += queueItemRows
+		}
+	}
+
+	y = r.Y + r.H - 1
+	if y >= r.Y {
+		c.PutText(r.X, y, i18n.T("↑↓ 选择    e 编辑    d 取消    c 清空    Esc 关闭"), t.Style(t.TextMuted))
+	}
+}
+
+// queueItemLine 把排队项压成一行展示：prompt 直接显示文本，command 显示命令
+// 与参数。多行文本只取第一个非空行。
+func queueItemLine(item acp.MsgQueueItem) string {
+	text := rewindLine(item.Text)
+	if item.Kind == model.MsgQueueKindCommand {
+		if text == "" && item.Command != "" {
+			text = strings.TrimSpace(item.Command + " " + item.Args)
+		}
+		if text == "" {
+			text = item.Command
+		}
+		return i18n.T("[命令] %s", text)
+	}
+	return i18n.T("[消息] %s", text)
+}
+
+// queueContent 构造 /queue 面板内容。
+func queueContent(t renderer.Theme, m *model.AppModel) *QueueContent {
+	return &QueueContent{
+		Theme:    t,
+		Items:    m.QueueItems(),
+		Selected: m.QueueSelect,
+	}
+}
+
 func protocolUpdateCount(m *model.AppModel) int {
 	if m.Active == nil {
 		return 0

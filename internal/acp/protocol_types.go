@@ -26,6 +26,12 @@ const (
 	Alkaid0CapabilityV04 = "alk.cxykevin.top/alkaid0/v0.4"
 	// Alkaid0CapabilityV05 gates the private terminal protocol.
 	Alkaid0CapabilityV05 = "alk.cxykevin.top/alkaid0/v0.5"
+	// Alkaid0CapabilityMsgQueue 是会话消息队列能力标记（alk.cxykevin.top/msgqueue）。
+	// 客户端必须在 initialize 的 capabilities 顶层显式声明该键，服务端才会向该
+	// 连接推送队列事件（见 ../alkaid0/docs/acp/extension.md §2.8）。服务端侧该
+	// 能力与 v0.6 同期实现，客户端只在服务端同时声明 v0.6 与 msgqueue 时启用。
+	Alkaid0CapabilityMsgQueue = "alk.cxykevin.top/msgqueue"
+
 	// Alkaid0CapabilityV06 是已结束终端内容查询能力（terminal/history）。
 	// 终端 ID 与 run id 统一为 @temp/run/<n>，终端内容持久化在该路径下，
 	// 因此客户端可凭 terminalId 取回已结束终端（含服务端重启前结束的）。
@@ -44,6 +50,12 @@ const (
 	MethodTerminalHistory = "alk.cxykevin.top/session/terminal/history"
 	// MethodWorkflowStatus 查询 workflow 的完整快照与事件日志（alkaid0 v0.5）。
 	MethodWorkflowStatus = "alk.cxykevin.top/session/terminal/workflow/status"
+
+	// 会话消息队列方法（alk.cxykevin.top/msgqueue，见 extension.md §3.10）。
+	MethodMsgQueueList   = "alk.cxykevin.top/session/msgqueue/list"
+	MethodMsgQueueCancel = "alk.cxykevin.top/session/msgqueue/cancel"
+	MethodMsgQueueUpdate = "alk.cxykevin.top/session/msgqueue/update"
+	MethodMsgQueueClear  = "alk.cxykevin.top/session/msgqueue/clear"
 
 	// SessionCursorField 是 alkaid0 v0.6 历史回放分页的扩展字段名。它出现在
 	// session/resume 响应里表示还有更早的消息未回放；把它原样作为下一次
@@ -64,6 +76,53 @@ type ConfigSetParams struct {
 	Config json.RawMessage `json:"config"`
 }
 
+// MsgQueueItem 是会话消息队列中的一项（alk.cxykevin.top/msgqueue，见
+// extension.md §2.8）。prompt 项是待发送的普通消息；command 项是参与 loop 的
+// 斜杠命令，出队时才执行。
+type MsgQueueItem struct {
+	ID      string `json:"id"`
+	Kind    string `json:"kind"` // prompt | command
+	Command string `json:"command,omitempty"`
+	Args    string `json:"args,omitempty"`
+	Text    string `json:"text"`
+	// CreatedAt 是 RFC3339 时间；为空的项来自旧服务端/持久化副本。
+	CreatedAt string `json:"createdAt,omitempty"`
+	// MessageID 仅在 started 事件里可能非空：该项出队落库后得到的真实消息 ID。
+	MessageID string `json:"messageId,omitempty"`
+}
+
+// MsgQueueSnapshot 是队列方法返回的全量快照。Revision 单调递增，客户端据此
+// 丢弃乱序/过期的快照。
+type MsgQueueSnapshot struct {
+	Revision uint64         `json:"revision"`
+	Items    []MsgQueueItem `json:"items"`
+}
+
+// MsgQueueCancelParams 是 msgqueue/cancel 请求参数。
+type MsgQueueCancelParams struct {
+	SessionID string `json:"sessionId"`
+	ItemID    string `json:"itemId"`
+}
+
+// MsgQueueUpdateParams 是 msgqueue/update 请求参数：prompt 项改 text，
+// command 项改 args 并由服务端据此重建 text。字段为 nil 表示不修改。
+type MsgQueueUpdateParams struct {
+	SessionID string  `json:"sessionId"`
+	ItemID    string  `json:"itemId"`
+	Text      *string `json:"text,omitempty"`
+	Args      *string `json:"args,omitempty"`
+}
+
+// MsgQueueClearParams 是 msgqueue/clear 请求参数。
+type MsgQueueClearParams struct {
+	SessionID string `json:"sessionId"`
+}
+
+// MsgQueueListParams 是 msgqueue/list 请求参数。
+type MsgQueueListParams struct {
+	SessionID string `json:"sessionId"`
+}
+
 // ClientInfo 标识 ACP 客户端。
 type ClientInfo struct {
 	Name    string `json:"name"`
@@ -81,7 +140,10 @@ type ClientCapabilities struct {
 	FileSystem  *json.RawMessage       `json:"fs,omitempty"`
 	Terminal    *json.RawMessage       `json:"terminal,omitempty"`
 	Elicitation *ElicitationCapability `json:"elicitation,omitempty"`
-	Raw         json.RawMessage        `json:"-"`
+	// MsgQueue 为 true 时在 capabilities 顶层声明 alk.cxykevin.top/msgqueue：
+	// 服务端据此向本连接推送会话消息队列事件（值为 {} 对象）。
+	MsgQueue bool            `json:"-"`
+	Raw      json.RawMessage `json:"-"`
 }
 
 // ElicitationCapability 表示客户端支持的 elicitation 模式。
@@ -113,6 +175,9 @@ func (c ClientCapabilities) MarshalJSON() ([]byte, error) {
 			return nil, fmt.Errorf("failed to marshal elicitation capability: %w", err)
 		}
 		values["elicitation"] = elicitationData
+	}
+	if c.MsgQueue {
+		values[Alkaid0CapabilityMsgQueue] = json.RawMessage("{}")
 	}
 	return json.Marshal(values)
 }
