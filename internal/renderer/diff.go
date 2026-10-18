@@ -25,6 +25,16 @@ func Diff(back, front *Buffer, aw *AnsiWriter) {
 			if f.Width == 0 && b.Width != 0 && x > 0 {
 				x--
 			}
+			// conhost 覆盖宽字符时可能只擦掉半个字：含宽字符的 run 先按整段
+			// 宽度铺一遍空格，再写正文（见 AnsiWriter.wideClear）。
+			if aw.wideClear {
+				if from, end, wide := changedRun(back, front, x, y); wide && end > from {
+					aw.MoveTo(y, from)
+					for i := from; i < end; i++ {
+						aw.WriteSpace(front.Get(i, y).Style)
+					}
+				}
+			}
 			aw.MoveTo(y, x)
 			for x < W {
 				b = back.Get(x, y)
@@ -74,6 +84,40 @@ func Diff(back, front *Buffer, aw *AnsiWriter) {
 			}
 		}
 	}
+}
+
+// changedRun 计算从 x 开始的变化 run 的擦除区间 [clearFrom, end) 以及它是否
+// 涉及宽字符。end 是 run 结束列（不含），按 Diff 的写入步进推进：宽字符占 2 列，
+// 续列占 1 列。clearFrom 跳过 run 开头的续列——那半格属于左侧未变化的宽字符，
+// 擦掉会把原字符打坏。
+func changedRun(back, front *Buffer, x, y int) (clearFrom, end int, wide bool) {
+	W := front.W
+	clearFrom = x
+	if front.Get(x, y).Width == 0 {
+		clearFrom = x + 1
+	}
+	end = x
+	for end < W {
+		b, f := back.Get(end, y), front.Get(end, y)
+		if b.Equal(f) {
+			break
+		}
+		if f.Width == 2 || b.Width == 2 {
+			wide = true
+		}
+		if f.Width == 2 {
+			end += 2
+		} else {
+			end++
+		}
+	}
+	if end > W {
+		end = W
+	}
+	if clearFrom > end {
+		clearFrom = end
+	}
+	return clearFrom, end, wide
 }
 
 // Render 将 back→front 的差异渲染到 w。

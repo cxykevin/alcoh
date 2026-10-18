@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cxykevin/alcoh/internal/i18n"
 	"github.com/cxykevin/alcoh/internal/model"
 	"github.com/cxykevin/alcoh/internal/renderer"
 )
@@ -304,5 +305,31 @@ func TestConfigTreeDrawAddingKey(t *testing.T) {
 	}
 	if !strings.Contains(rows[h-1], "Enter 添加") {
 		t.Errorf("add-key hint row = %q, want Enter 添加", rows[h-1])
+	}
+}
+
+// TestConfigTreeEditorRecordsInputCursor 配置编辑器底部的值输入框要把文本
+// 光标位置记录到 canvas：帧尾硬件光标据此落到编辑处，IME 候选框跟随输入。
+func TestConfigTreeEditorRecordsInputCursor(t *testing.T) {
+	ed := model.NewConfigEditor(configTreeSample())
+	ed.Move(1) // Server
+	ed.Enter()
+	ed.BeginEdit() // host，预填 127.0.0.1，光标在末尾
+	if !ed.Editing || ed.EditNode == nil {
+		t.Fatal("BeginEdit 应进入编辑模式")
+	}
+	const w, h = 60, 12
+	b := renderer.NewBuffer(w, h)
+	c := renderer.NewCanvas(b)
+	(&ConfigTree{Theme: renderer.DefaultTheme(), Tree: ed}).Draw(c, renderer.NewRect(0, 0, w, h))
+
+	x, y, ok := c.InputCursor()
+	if !ok {
+		t.Fatal("配置编辑器未记录输入光标")
+	}
+	prompt := i18n.T("编辑 %s: ", ed.EditNode.DisplayKey())
+	wantX := renderer.StringWidth(prompt) + renderer.StringWidth(ed.EditInput.Text())
+	if x != wantX || y != h-2 {
+		t.Fatalf("输入光标在 (%d,%d)，期望 (%d,%d)", x, y, wantX, h-2)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"runtime"
 	"sync"
 	"time"
 
@@ -1047,8 +1048,20 @@ func (a *App) render() bool {
 	// 统一 diff：首帧时 front 是哨兵，等价于"从全空屏幕"开始 → 整屏输出；
 	// 之后 front 是上一帧，增量输出。
 	aw := renderer.NewAnsiWriter(a.mode)
+	// Windows conhost 覆盖宽字符时可能只擦掉半个字，滚动后会残留中文：
+	// 写含宽字符的 run 前先铺一遍空格再写正文（Windows Terminal 上同样安全）。
+	aw.SetWideClear(runtime.GOOS == "windows")
 	renderer.Diff(a.front, a.back, aw)
 	if aw.Len() > 0 {
+		// 每帧结束把硬件光标移到输入框的文本光标处：终端会停在最后一次
+		// 写入的单元格，某些终端（尤其 conhost）会因此滚动或让光标随输出
+		// 漂移；同时 IME 候选框需要跟随输入位置。输入框不可见（弹窗、
+		// 首页列表聚焦、shell 面板）时退回左上角固定位置。
+		if a.view.InputCursorVisible {
+			aw.MoveTo(a.view.InputCursorY, a.view.InputCursorX)
+		} else {
+			aw.HomeCursor()
+		}
 		if a.frames != nil {
 			if !a.frames.TryFrame(aw.Bytes()) {
 				return false

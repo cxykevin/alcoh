@@ -19,8 +19,10 @@ func refWidth(r rune) int {
 		return 1 // ASCII
 	case r == '…':
 		return 1 // 省略号：截断补位字符
-	case r == '✅' || r == '❌' || r == '✨' || r == '⚡' || r == '☕' || r == '⭐':
+	case r == '✅' || r == '❌' || r == '✨' || r == '⚡' || r == '☕' || r == '⭐' || r == '👍':
 		return 2 // Emoji_Presentation=Yes：终端按 2 列
+	case r >= 0x1F3FB && r <= 0x1F3FF:
+		return 0 // Emoji_Modifier：附着在前一个 emoji 上，不单独占列
 	case r >= 0x4E00 && r <= 0x9FFF:
 		return 2 // CJK 统一表意
 	case r == '，' || r == '。':
@@ -54,6 +56,13 @@ func TestRuneWidthEmojiPresentation(t *testing.T) {
 			t.Errorf("runeWidth(%q U+%04X) = %d, want 2", r, r, got)
 		}
 	}
+	// Unicode 17 自带 emoji 呈现的字符（表格由 UCD 生成，不能再靠手写补丁）。
+	newerEmoji := []rune{'🫠', '🪿', '🫩', '\U0001F6D8'}
+	for _, r := range newerEmoji {
+		if got := runeWidth(r); got != 2 {
+			t.Errorf("runeWidth(%q U+%04X) = %d, want 2 (Emoji_Presentation)", r, r, got)
+		}
+	}
 	// 零宽：组合记号、ZWSP、变体选择符、半角谚文填充符。
 	zero := []rune{'\u0301', '\u200B', '\uFE0F', '\uFFA0'}
 	for _, r := range zero {
@@ -63,13 +72,31 @@ func TestRuneWidthEmojiPresentation(t *testing.T) {
 	}
 }
 
-// TestWidthTablesSorted 保证三张区间表按 lo 升序且互不重叠——inRanges 是二分查找，
+// TestRuneWidthEmojiModifier 回归：肤色修饰符（Emoji_Modifier）附着在前一个
+// emoji 上，终端只画 2 列。本地按单字符 2 列计算时 👍🏽 在缓冲里占 4 列、
+// 终端只前进 2 列，整行左移并留下上一帧的字符。
+func TestRuneWidthEmojiModifier(t *testing.T) {
+	modifiers := []rune{0x1F3FB, 0x1F3FC, 0x1F3FD, 0x1F3FE, 0x1F3FF} // 🏻🏼🏽🏾🏿
+	for _, r := range modifiers {
+		if got := runeWidth(r); got != 0 {
+			t.Errorf("runeWidth(%q U+%04X) = %d, want 0 (Emoji_Modifier)", r, r, got)
+		}
+	}
+	if got := StringWidth("👍🏽"); got != 2 {
+		t.Errorf("StringWidth(👍🏽) = %d, want 2", got)
+	}
+	// 区域指示符：单独 1 列，成对组成的旗帜合计 2 列（不能按 2+2=4）。
+	if got := StringWidth("🇨🇳"); got != 2 {
+		t.Errorf("StringWidth(🇨🇳) = %d, want 2", got)
+	}
+}
+
+// TestWidthTablesSorted 保证两张区间表按 lo 升序且互不重叠——inRanges 是二分查找，
 // 顺序错误会静默算错宽度（正是"行尾残留"这类问题的来源）。
 func TestWidthTablesSorted(t *testing.T) {
 	tables := map[string][]runeRange{
-		"zeroWidth":       zeroWidth,
-		"wideRanges":      wideRanges,
-		"emojiWideRanges": emojiWideRanges,
+		"zeroWidth":  zeroWidth,
+		"wideRanges": wideRanges,
 	}
 	for name, tbl := range tables {
 		prev := rune(-1)
@@ -81,6 +108,14 @@ func TestWidthTablesSorted(t *testing.T) {
 				t.Fatalf("%s[%d]: 顺序错误或区间重叠（lo=%#x <= 上一项 hi=%#x）", name, i, rr.lo, prev)
 			}
 			prev = rr.hi
+		}
+	}
+	// 零宽优先：两张表不能有交集，否则生成器漏掉了优先级处理。
+	for _, w := range wideRanges {
+		for r := w.lo; r <= w.hi; r++ {
+			if inRanges(r, zeroWidth) {
+				t.Fatalf("wideRanges %#x..%#x 与 zeroWidth 重叠（rune %#x）", w.lo, w.hi, r)
+			}
 		}
 	}
 }
@@ -250,7 +285,7 @@ func TestDiffRunStartingAtContinuation(t *testing.T) {
 // 参考宽度终端必须逐格等于目标帧（覆盖宽字符换行、截断、清尾）。
 func TestDiffEmojiRandomFrames(t *testing.T) {
 	const W, H = 36, 8
-	alphabet := []rune("abc xyz 中文字符测试完成需要检查残留问题✅❌✨")
+	alphabet := []rune("abc xyz 中文字符测试完成需要检查残留问题✅❌✨👍🏽")
 	r := rand.New(rand.NewSource(20260926))
 
 	back := NewBuffer(W, H)

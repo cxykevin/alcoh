@@ -725,6 +725,8 @@ func (ib *InputBox) Draw(c *renderer.Canvas, r renderer.Rect) {
 		cx, cy, cursorRune := visualCursorPosition(b, promptW, r.W)
 		cy -= start
 		if cy >= 0 && cy < viewH {
+			// 记录光标位置：帧尾把硬件光标移到这里，IME 候选框跟随输入框。
+			c.SetInputCursor(r.X+cx, r.Y+cy)
 			line := b.Lines[b.CY]
 			st := ib.Cursor
 			if cursorRune < len(line) {

@@ -137,17 +137,50 @@ func (b *Buffer) Clear() {
 type Canvas struct {
 	B    *Buffer
 	Clip Rect
+	// inputCursor 记录本帧输入框文本光标的位置，由 Sub 共享：子 canvas 里
+	// 绘制的输入框也要能被根 canvas 读到。
+	inputCursor *inputCursor
+}
+
+// inputCursor 是输入框文本光标的屏幕坐标（0-based）。
+type inputCursor struct {
+	x, y int
+	set  bool
 }
 
 // NewCanvas 为 buffer 的整个区域创建 canvas。
 func NewCanvas(b *Buffer) *Canvas {
-	return &Canvas{B: b, Clip: NewRect(0, 0, b.W, b.H)}
+	return &Canvas{B: b, Clip: NewRect(0, 0, b.W, b.H), inputCursor: &inputCursor{}}
 }
 
 // Sub 返回指定矩形区域的子 canvas（先与 Clip 求交）。
 func (c *Canvas) Sub(r Rect) *Canvas {
 	r = r.Intersect(c.Clip)
-	return &Canvas{B: c.B, Clip: r}
+	return &Canvas{B: c.B, Clip: r, inputCursor: c.inputCursor}
+}
+
+// SetInputCursor 记录输入框文本光标的位置（0-based 屏幕坐标）。帧尾据此把
+// 硬件光标移到输入位置，让 IME 候选框跟随输入框；同帧多次记录以后画的为准。
+func (c *Canvas) SetInputCursor(x, y int) {
+	if c.inputCursor == nil {
+		return
+	}
+	c.inputCursor.x, c.inputCursor.y, c.inputCursor.set = x, y, true
+}
+
+// ClearInputCursor 清掉本帧已记录的输入光标位置（帧开始时调用）。
+func (c *Canvas) ClearInputCursor() {
+	if c.inputCursor != nil {
+		c.inputCursor.set = false
+	}
+}
+
+// InputCursor 返回本帧最近记录的输入框光标；ok=false 表示本帧没有输入框。
+func (c *Canvas) InputCursor() (x, y int, ok bool) {
+	if c.inputCursor == nil || !c.inputCursor.set {
+		return 0, 0, false
+	}
+	return c.inputCursor.x, c.inputCursor.y, true
 }
 
 // Put 将 cell 写入 clip 内的 (x,y)。裁剪检查在 Index 前完成。

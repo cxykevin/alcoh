@@ -31,6 +31,13 @@ type AppView struct {
 	BodyToggles map[int]ToggleRef
 	// ShellPreviewRect records the screen area containing the terminal preview.
 	ShellPreviewRect renderer.Rect
+	// InputCursorX/Y/InputCursorVisible 记录最近一帧输入框文本光标的屏幕
+	// 坐标（0-based，渲染时从 canvas 读取）。主输入框与弹窗内的编辑输入框
+	// （如配置编辑器）都经 widget.InputBox 记录，后画的覆盖先画的；帧尾把
+	// 硬件光标放到这里，IME 候选框就会跟随输入位置。没有输入框时为 false。
+	InputCursorX       int
+	InputCursorY       int
+	InputCursorVisible bool
 
 	// msgList 是复用的正文渲染器：它的按条目缓存跨帧保留，使帧耗时只与
 	// "本帧真正变化的条目"相关，而不是随会话长度线性增长（长会话流式输出时的
@@ -57,6 +64,10 @@ func NewAppView(theme renderer.Theme) *AppView {
 
 // Draw 绘制整个屏幕。
 func (v *AppView) Draw(c *renderer.Canvas, r renderer.Rect, m *model.AppModel) {
+	// 先清掉上一帧的输入光标坐标：本帧没有绘制输入框（弹窗、首页列表聚焦、
+	// shell 面板）时不能让旧位置残留。
+	v.InputCursorVisible = false
+	c.ClearInputCursor()
 	contentRect := r
 	if m.Modal != model.NoModal {
 		modalH := min(v.modalHeight(m), contentRect.H)
@@ -84,6 +95,9 @@ func (v *AppView) Draw(c *renderer.Canvas, r renderer.Rect, m *model.AppModel) {
 	if m.Modal != model.NoModal {
 		v.drawModalAtInput(c, r, m)
 	}
+	// 本帧最后绘制的输入框（含配置编辑器的底部输入框）决定硬件光标位置：
+	// 主输入框先画、弹窗后画，因此弹窗内的编辑光标会覆盖主输入框。
+	v.InputCursorX, v.InputCursorY, v.InputCursorVisible = c.InputCursor()
 }
 
 func (v *AppView) modalHeight(m *model.AppModel) int {

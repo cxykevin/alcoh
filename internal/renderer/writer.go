@@ -31,11 +31,30 @@ type AnsiWriter struct {
 	hasLast     bool
 	mode        ColorMode
 	initialized bool
+	// wideClear 表示写含宽字符的变化 run 前，先按 run 宽度铺一遍空格。
+	// Windows conhost 覆盖宽字符时可能只清掉半个字，行尾留下旧字符（中文残留）；
+	// 先擦后写可以规避，Windows Terminal 等终端上同样安全。
+	wideClear bool
 }
 
 // NewAnsiWriter 创建 AnsiWriter。
 func NewAnsiWriter(mode ColorMode) *AnsiWriter {
 	return &AnsiWriter{buf: &bytes.Buffer{}, mode: mode, curRow: -1, curCol: -1}
+}
+
+// SetWideClear 启用/关闭"写含宽字符的变化 run 前先按 run 宽度铺一遍空格"
+// 的兼容处理（见 wideClear 字段）。
+func (aw *AnsiWriter) SetWideClear(on bool) { aw.wideClear = on }
+
+// HomeCursorSeq 把光标移到左上角（1,1）。
+const HomeCursorSeq = "\x1b[H"
+
+// HomeCursor 把终端光标归位到左上角，并同步虚拟游标。
+// 每帧末尾调用：终端会停在最后一次写入的单元格上，某些终端（尤其 conhost）
+// 还会因此滚动或让隐藏光标随输出漂移；固定回左上角后下一帧起点稳定。
+func (aw *AnsiWriter) HomeCursor() {
+	aw.raw(HomeCursorSeq)
+	aw.curRow, aw.curCol = 0, 0
 }
 
 // Bytes 返回累积的 ANSI 字节。
