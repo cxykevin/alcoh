@@ -183,7 +183,10 @@ type AppModel struct {
 	ErrorExpires time.Time
 	// ErrorInfo 表示底部提示是信息性提示（非错误），渲染时用亮蓝色而非错误红。
 	ErrorInfo bool
-	Quitting  bool
+	// Reconnecting 表示 transport 断开后正在自动重连：状态栏与主页持续显示
+	// 重连提示，连接恢复后清除。
+	Reconnecting bool
+	Quitting     bool
 }
 
 // Selection 描述一次鼠标选择。X 为屏幕列（0-based），Y 为纵坐标：
@@ -1296,11 +1299,46 @@ func (m *AppModel) ApplyEvent(ev acp.Event) {
 		if e.Session != nil {
 			m.ActivateSession(e.Session.ID(), e.Session.Title())
 		}
+	case *acp.HistoryReloadEvent:
+		// 断线重连后的历史对齐：先清空正文，随后 session/resume 的回放按服务端
+		// 活跃分支重建。非活动会话（例如主页预创建会话）直接忽略。
+		if m.HasActive() && e.SessionID == m.Active.ID {
+			m.Active.ResetHistory()
+			m.ClearSelection()
+		}
+	case *acp.ReconnectEvent:
+		m.applyReconnectEvent(e)
 	case *acp.BackendErrorEvent:
 		if e.Err != nil {
 			m.ShowError(e.Err.Error())
 		} else {
 			m.ShowError("ACP backend error")
+		}
+	}
+}
+
+// applyReconnectEvent 把自动重连进展映射为界面状态：重连期间 Reconnecting 保持
+// 为 true（状态栏与主页持续提示），连接恢复后清除；达到上限时显示失败原因。
+func (m *AppModel) applyReconnectEvent(e *acp.ReconnectEvent) {
+	if e == nil {
+		return
+	}
+	switch e.Phase {
+	case acp.ReconnectStarted:
+		m.Reconnecting = true
+		m.ShowInfo(i18n.T("连接已断开，正在自动重连…"))
+	case acp.ReconnectAttemptFailed:
+		m.Reconnecting = true
+		m.ShowInfo(i18n.T("重连失败，正在重试（第 %d 次）…", e.Attempt))
+	case acp.ReconnectSucceeded:
+		m.Reconnecting = false
+		m.ShowInfo(i18n.T("连接已恢复"))
+	case acp.ReconnectGiveUp:
+		m.Reconnecting = false
+		if e.Err != nil {
+			m.ShowError(i18n.T("自动重连失败: %s", e.Err.Error()))
+		} else {
+			m.ShowError(i18n.T("自动重连失败"))
 		}
 	}
 }

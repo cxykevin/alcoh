@@ -656,7 +656,7 @@ func (a *App) Run() error {
 				})
 				needsRender = true
 			} else {
-				a.withModel(func() { a.model.ApplyEvent(ev) })
+				a.withModel(func() { a.applyEvent(ev) })
 				// 事件观察 hook：异步广播给订阅的插件（不等待响应）。
 				a.plugins.NotifyUpdate(ev)
 				needsRender = true
@@ -734,6 +734,57 @@ func (a *App) handleTermEvent(ev term.Event) {
 	case term.EventQuit:
 		a.model.Quitting = true
 	}
+}
+
+// applyEvent 应用一个后端事件。重连事件除更新模型提示外，还要在成功时把当前
+// 会话重新绑定到新连接（见 acp.SessionReattacher）。调用方必须已持有 modelMu。
+func (a *App) applyEvent(ev acp.Event) {
+	a.model.ApplyEvent(ev)
+	if re, ok := ev.(*acp.ReconnectEvent); ok {
+		a.applyReconnectEvent(re)
+	}
+}
+
+// applyReconnectEvent 处理自动重连的结果：连接恢复后重新绑定活动会话，让服务端
+// 把状态/消息队列/终端快照与断线期间错过的消息补发到当前视图；在主页时顺带刷新
+// 会话列表。调用方必须已持有 modelMu。
+func (a *App) applyReconnectEvent(ev *acp.ReconnectEvent) {
+	if ev == nil || ev.Phase != acp.ReconnectSucceeded {
+		return
+	}
+	// 重连时重新握手可能带回新的能力声明（例如服务端升级），同步给模型，
+	// 让 /server、/queue 等按能力门控的命令保持正确。
+	a.model.SetAgentInfo(a.backend.AgentInfo(), a.backend.AgentCapabilities())
+	a.reattachSession()
+	if a.model.View == model.ViewHome {
+		a.refreshSessionsLocked()
+	}
+}
+
+// reattachSession 把当前会话重新绑定到重连后的 transport。会话句柄保持不变，
+// 历史分页游标也不受影响；重放的消息经既有事件通道 upsert。调用方已持有 modelMu。
+func (a *App) reattachSession() {
+	s := a.sess
+	if s == nil {
+		return
+	}
+	// 只重新绑定界面真正显示着的会话：主页时是预创建会话（服务端不支持
+	// session.delete 时 a.sess 可能残留上一个会话的句柄，不能为它重建绑定，
+	// 否则服务端会重放一个看不见的会话）；会话视图时必须是当前活动会话。
+	if a.model.View == model.ViewHome {
+		if a.model.PreSession == nil || a.model.PreSession.ID != s.ID() {
+			return
+		}
+	} else if a.model.Active == nil || a.model.Active.ID != s.ID() {
+		return
+	}
+	reattacher, ok := s.(acp.SessionReattacher)
+	if !ok {
+		return
+	}
+	a.startCommand(commandResult{kind: commandSessionAction, sessionID: s.ID()}, func(ctx context.Context) (acp.Session, error) {
+		return nil, reattacher.Reattach(ctx)
+	})
 }
 
 func (a *App) applyCommandResult(result commandResult) {
@@ -1038,7 +1089,7 @@ func (a *App) drain(eventsCh <-chan acp.Event) bool {
 			if !ok {
 				return changed
 			}
-			a.model.ApplyEvent(ev)
+			a.applyEvent(ev)
 			a.plugins.NotifyUpdate(ev)
 			changed = true
 		default:

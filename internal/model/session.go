@@ -787,6 +787,37 @@ func (s *SessionState) MarkStreamingDone() {
 	}
 }
 
+// ResetHistory 清空会话正文与全部由正文派生的状态，准备用服务端 session/resume
+// 的回放按活跃分支重建（断线重连后的历史对齐，见 acp.HistoryReloadEvent）。
+// 消息、工具调用、计划、正文时间线与滚动位置全部丢弃；活动终端清空后由服务端
+// 的 terminal_update(full) 重新补发并重建正文卡片；已结束终端是服务端持久化
+// 资源，保留在 shell 面板历史段。命令/配置/用量等会话元数据也保留。
+func (s *SessionState) ResetHistory() {
+	s.Messages = nil
+	s.receiveMessages = nil
+	s.msgIndex = map[string]*Message{}
+
+	s.ToolCalls = map[string]*ToolCall{}
+	s.ToolOrder = nil
+
+	s.Plan = nil
+	s.PlanExpanded = false
+
+	s.Timeline = nil
+	s.timelineIndex = map[string]*TimelineItem{}
+
+	s.terminals = map[string]*TerminalState{}
+	s.terminalOrder = nil
+
+	s.Scroll = 0
+	s.FollowBottom = true
+	s.MaxScroll = 0
+	s.Rows = 0
+	s.HistoryLoading = false
+	s.historyAnchor = 0
+	s.historyAnchoring = false
+}
+
 // ApplyMsgQueue 应用一次消息队列全量快照（msgqueue_update）。revision 单调
 // 递增：小于已知版本的事件视为乱序/过期并丢弃；相等时允许重复应用（内容
 // 应与当前一致）。

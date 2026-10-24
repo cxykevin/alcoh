@@ -81,6 +81,37 @@ type BackendErrorEvent struct {
 	Err error
 }
 
+// HistoryReloadEvent 表示一次断线重连后的历史重载：客户端应清空该会话的本地
+// 正文（消息、工具调用、计划等），随后 session/resume 的回放会按服务端的
+// 活跃分支重建，避免 upsert 在旧内容上叠加时留下空洞或已废弃分支的残留。
+// 终端历史、命令与配置等会话元数据不受影响（服务端会另行补发快照）。
+type HistoryReloadEvent struct {
+	SessionID string
+}
+
+// ReconnectPhase 描述自动重连的进展阶段。
+type ReconnectPhase uint8
+
+const (
+	// ReconnectStarted 表示 transport 意外断开，已开始自动重连。
+	ReconnectStarted ReconnectPhase = iota + 1
+	// ReconnectSucceeded 表示重新连上并完成 initialize 握手。
+	ReconnectSucceeded
+	// ReconnectAttemptFailed 表示某一次尝试失败，稍后仍会退避重试。
+	ReconnectAttemptFailed
+	// ReconnectGiveUp 表示达到最大尝试次数，backend 即将关闭。
+	ReconnectGiveUp
+)
+
+// ReconnectEvent 报告 transport 的自动重连进展（见 ClientConfig.Reconnect）。
+// Phase 为 ReconnectStarted / ReconnectSucceeded 等；Attempt 是第几次尝试
+// （Started 时为 0）；Err 是触发重连或本次尝试失败的原因。
+type ReconnectEvent struct {
+	Phase   ReconnectPhase
+	Attempt int
+	Err     error
+}
+
 // NewSessionEvent 表示会话建立完成。
 type NewSessionEvent struct {
 	Session Session
@@ -255,5 +286,7 @@ func (*StateChangeEvent) isEvent()          {}
 func (*UsageUpdateEvent) isEvent()          {}
 func (*SessionListEvent) isEvent()          {}
 func (*BackendErrorEvent) isEvent()         {}
+func (*HistoryReloadEvent) isEvent()        {}
+func (*ReconnectEvent) isEvent()            {}
 func (*NewSessionEvent) isEvent()           {}
 func (*ElicitationRequestEvent) isEvent()   {}

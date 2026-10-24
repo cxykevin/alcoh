@@ -2,6 +2,7 @@ package view
 
 import (
 	"github.com/cxykevin/alcoh/internal/acp"
+	"github.com/cxykevin/alcoh/internal/i18n"
 	"github.com/cxykevin/alcoh/internal/model"
 	"github.com/cxykevin/alcoh/internal/renderer"
 )
@@ -69,6 +70,10 @@ func (sb *StatusBar) Draw(c *renderer.Canvas, r renderer.Rect, m *model.AppModel
 			spans = append(spans, Span{Text: "  " + idle, Style: st})
 		default:
 			spans = append(spans, Span{Text: "  ● idle", Style: st})
+		}
+		if m.Reconnecting {
+			// 断线自动重连：连接恢复前持续显示，避免长退避期间看起来像卡死。
+			spans = append(spans, Span{Text: "  ⟳ " + i18n.T("重连中…"), Style: t.Style(t.Info)})
 		}
 		if n := m.PendingPermissionCount(); n > 0 {
 			spans = append(spans, Span{Text: "  +" + itoa(n) + " perm", Style: st})

@@ -19,12 +19,21 @@ type WSClientConfig struct {
 	DialTimeout time.Duration
 	// ReadLimit 限制单个 JSON-RPC 帧大小；<=0 时由 transport 决定。
 	ReadLimit int64
+	// Reconnect 覆盖断线后的自动重连策略；nil 时启用默认策略
+	// （首次 1 秒、退避上限 30 秒、无限重试）。
+	Reconnect *ReconnectConfig
 }
 
 // NewWSClientBackend 创建通过 WebSocket 连接远程 ACP agent 的 backend。
 // 生命周期与 stdio 版本一致：调用方需在退出前 Close 以回收连接。
 func NewWSClientBackend(config WSClientConfig) *ClientBackend {
 	wsConfig := WSConfig{URL: config.URL, DialTimeout: config.DialTimeout, ReadLimit: config.ReadLimit}
+	// WebSocket 默认启用自动重连：断线后重建连接并重新握手，长连接不会因为
+	// 一次网络抖动就整个退出。
+	reconnect := config.Reconnect
+	if reconnect == nil {
+		reconnect = &ReconnectConfig{}
+	}
 	return NewClientBackend(ClientConfig{
 		ClientInfo:      config.ClientInfo,
 		Capabilities:    config.Capabilities,
@@ -33,5 +42,6 @@ func NewWSClientBackend(config WSClientConfig) *ClientBackend {
 		TransportFactory: func(ctx context.Context, handler IncomingHandler, onError TransportErrorHandler) (Transport, error) {
 			return NewWSTransport(ctx, wsConfig, handler, onError)
 		},
+		Reconnect: reconnect,
 	})
 }

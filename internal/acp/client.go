@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"sync"
 
@@ -25,6 +24,11 @@ type ClientConfig struct {
 	// TransportFactory 覆盖默认的 stdio 启动逻辑（如 WebSocket 连接）。
 	// 为 nil 时 NewClientBackend 使用本地子进程 stdio。
 	TransportFactory TransportFactory
+	// Reconnect 控制 transport 意外断开后的自动重连；nil 表示不重连。
+	// 只有 TransportFactory 可以重复执行并重新建连（如 WebSocket）时才应配置：
+	// 重连成功后 backend 会重新完成 initialize 握手，并由调用方复用
+	// SessionReattacher 把活动会话重新绑定到新连接。
+	Reconnect *ReconnectConfig
 }
 
 type backendState uint8
@@ -33,6 +37,7 @@ const (
 	backendNew backendState = iota
 	backendInitializing
 	backendReady
+	backendReconnecting
 	backendClosing
 	backendClosed
 )
@@ -49,6 +54,9 @@ type ClientBackend struct {
 	terminalErr    error
 	agentCaps      AgentCapabilities
 	agentInfo      AgentInfo
+
+	// reconnectCancel 取消进行中的重连循环；非 nil 时说明正在重连。
+	reconnectCancel context.CancelFunc
 
 	// inbound 是 callback 的私有队列；eventRelay 是 public events 的唯一 sender
 	// 和 closer，因此 Close 与 callback 不会产生 send-on-closed panic。
@@ -137,6 +145,9 @@ func (b *ClientBackend) Initialize(ctx context.Context) error {
 	case backendReady:
 		b.mu.Unlock()
 		return nil
+	case backendReconnecting:
+		b.mu.Unlock()
+		return errors.New("ACP backend is reconnecting")
 	case backendClosing, backendClosed:
 		b.mu.Unlock()
 		return errors.New("ACP backend is closed")
@@ -168,18 +179,7 @@ func (b *ClientBackend) Initialize(ctx context.Context) error {
 	b.transport = t
 	b.mu.Unlock()
 
-	var result InitializeResult
-	err = t.Request(ctx, MethodInitialize, InitializeParams{
-		ProtocolVersion: b.config.ProtocolVersion,
-		Capabilities:    b.config.Capabilities,
-		Info:            b.config.ClientInfo,
-	}, &result)
-	if err == nil && result.ProtocolVersion != b.config.ProtocolVersion {
-		err = fmt.Errorf("ACP protocol version mismatch: agent=%d client=%d", result.ProtocolVersion, b.config.ProtocolVersion)
-	}
-	if err == nil {
-		err = t.Notify(MethodInitialized, InitializedParams{})
-	}
+	result, err := b.handshake(ctx, t, 0)
 	b.finishInitialize(t, err, result.Capabilities, result.Info)
 	if err != nil {
 		go b.shutdown(true, err)
@@ -211,6 +211,9 @@ func (b *ClientBackend) finishInitialize(t Transport, err error, caps AgentCapab
 func (b *ClientBackend) readyTransport() (Transport, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if b.state == backendReconnecting {
+		return nil, errors.New("ACP backend is reconnecting")
+	}
 	if b.state != backendReady || b.transport == nil {
 		if b.terminalErr != nil {
 			return nil, b.terminalErr
@@ -304,6 +307,41 @@ func (b *ClientBackend) ResumeSession(ctx context.Context, id string) (Session, 
 	// alkaid0 v0.6：响应携带游标表示还有更早的消息未回放，记在会话句柄上，
 	// UI 滚到正文顶部时据此继续翻页（见 extension.md §3.3）。
 	return &clientSession{baseSession: baseSession{id: result.SessionID}, backend: b, historyCursor: result.Cursor}, nil
+}
+
+// Reattach 在自动重连后重新加载会话历史（见 SessionReattacher）。
+// 先广播 HistoryReloadEvent 让 UI 清空本地正文，再用 replayFrom: start 让服务端
+// 按活跃分支重放最近的消息（断线期间可能产生的空洞、另一条分支的残留都会因此
+// 消失）；响应游标成为新的分页起点，供用户继续向前翻页。
+func (s *clientSession) Reattach(ctx context.Context) error {
+	t, err := s.backend.readyTransport()
+	if err != nil {
+		return err
+	}
+	// 回放是 upsert 语义：不清空旧内容就无法对齐（缺口无法补、废弃分支无法删）。
+	s.backend.emit(&HistoryReloadEvent{SessionID: s.id})
+	s.historyMu.Lock()
+	s.historyCursor = ""
+	s.historyMu.Unlock()
+	var result SessionResult
+	if err := t.Request(ctx, MethodSessionResume, SessionResumeParams{
+		SessionID:  s.id,
+		CWD:        s.backend.config.CWD,
+		ReplayFrom: &ReplayFrom{Type: "start"},
+	}, &result); err != nil {
+		return err
+	}
+	if result.SessionID == "" {
+		result.SessionID = s.id
+	}
+	// 本地历史已按本次回放重建，分页游标必须取响应里的值（而不是断线前那个）。
+	s.historyMu.Lock()
+	s.historyCursor = result.Cursor
+	s.historyMu.Unlock()
+	if len(result.ConfigOptions) > 0 {
+		s.backend.emit(&ConfigOptionUpdateEvent{SessionID: result.SessionID, Options: result.ConfigOptions})
+	}
+	return nil
 }
 
 // DeleteSession 调用 session/delete。
@@ -469,6 +507,24 @@ func (b *ClientBackend) respondInvalidParams(request *RPCRequest, err error) {
 }
 
 func (b *ClientBackend) handleTransportError(err error) {
+	b.mu.Lock()
+	if b.state == backendReconnecting {
+		// 重连过程中本次尝试失败由 reconnectLoop 处理；不能再次触发关闭。
+		b.mu.Unlock()
+		return
+	}
+	if b.config.Reconnect != nil && b.state == backendReady {
+		old := b.transport
+		b.transport = nil
+		b.state = backendReconnecting
+		b.mu.Unlock()
+		b.emit(&ReconnectEvent{Phase: ReconnectStarted, Err: err})
+		// 回调可能运行在 transport reader 内：重连（含关闭旧 transport）必须
+		// 放到独立 goroutine，否则会在等待 reader 退出时自锁。
+		go b.reconnectLoop(old)
+		return
+	}
+	b.mu.Unlock()
 	// 回调可能运行在 transport reader 内；优先开始关闭，避免 event queue 满时
 	// emit 反压住 reader，进而与 transport.Close 相互等待。
 	go b.shutdown(true, err)
@@ -490,10 +546,17 @@ func (b *ClientBackend) shutdown(unexpected bool, err error) {
 		}
 		b.state = backendClosing
 		t := b.transport
+		b.transport = nil
 		b.permissions = make(map[string]permissionPending)
 		b.elicitations = make(map[string]elicitationPending)
+		cancelReconnect := b.reconnectCancel
+		b.reconnectCancel = nil
 		b.mu.Unlock()
 
+		// 先停掉重连循环，避免 shutdown 之后它又装上新 transport。
+		if cancelReconnect != nil {
+			cancelReconnect()
+		}
 		if t != nil {
 			_ = t.Close()
 		}

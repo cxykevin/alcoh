@@ -334,6 +334,22 @@ type HistoryPager interface {
 	LoadEarlierHistory(ctx context.Context) (bool, error)
 }
 
+// SessionReattacher 由支持断线自动重连的后端会话实现（见 ClientConfig.Reconnect）。
+// transport 重连并重新握手成功后，调用方用它把既有会话重新绑定到新连接，
+// 不更换客户端句柄；与后端一样是可选能力，调用方按类型断言取用。
+type SessionReattacher interface {
+	// Reattach 在新连接上重新加载会话历史：先广播 HistoryReloadEvent 让 UI
+	// 清空本地正文，再执行 session/resume（replayFrom: start）。服务端把会话
+	// 绑定到新连接，补发当前状态、消息队列、终端与 plan 快照，并按活跃分支
+	// 重放最近的消息；断线期间错过的内容会补齐，被 rewind 掉的分支不会残留。
+	// 重建后的分页游标取本次响应的游标，可继续向前翻页。
+	//
+	// 断线时间不受服务端 Server.SessionTimeout 限制：即使会话已被释放，
+	// session/resume 也会按 sessionId 从数据库冷加载并重新注册（见 alkaid0
+	// SessionResume 的冷还原分支），因此超过保留窗口后重连同样能恢复会话。
+	Reattach(ctx context.Context) error
+}
+
 // WorkflowControl 暴露 alkaid0 v0.5 的 workflow 查询方法（见 extension.md §3.2）。
 // 与 TerminalControl 分开声明：workflow 是可选能力，实现方（含测试替身）可以只实现
 // 终端部分，调用方用类型断言按需取用。

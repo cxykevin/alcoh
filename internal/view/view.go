@@ -92,6 +92,12 @@ func (v *AppView) Draw(c *renderer.Canvas, r renderer.Rect, m *model.AppModel) {
 		}
 		c.PutText(contentRect.X+1, contentRect.Y+contentRect.H-2, renderer.Truncate(text, contentRect.W-2), style)
 	}
+	// 首页没有状态栏：重连期间在底部提示行持续显示，避免长退避期间看起来像卡死。
+	// 会话视图由状态栏的“重连中…”承担，不重复。
+	if m.Error == "" && m.Reconnecting && m.View == model.ViewHome && m.Modal == model.NoModal && contentRect.W > 2 && contentRect.H >= 2 {
+		c.PutText(contentRect.X+1, contentRect.Y+contentRect.H-2,
+			renderer.Truncate(i18n.T("正在重连…"), contentRect.W-2), v.Theme.Style(v.Theme.Info))
+	}
 	if m.Modal != model.NoModal {
 		v.drawModalAtInput(c, r, m)
 	}
