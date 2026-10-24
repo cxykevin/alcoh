@@ -95,6 +95,7 @@ var en = map[string]string{
 	"连接模型服务商（模板自动填 base_url，填 key 拉取模型列表）": "Connect a model provider (template fills base_url; key fetches the model list)",
 	"撤回对话到指定消息（alkaid0 v0.6）":              "Rewind the conversation to a chosen message (alkaid0 v0.6)",
 	"查看与管理排队消息（alkaid0 msgqueue）":          "View and manage queued messages (alkaid0 msgqueue)",
+	"查看与删除定时任务（alkaid0 cron）":              "View and delete scheduled jobs (alkaid0 cron)",
 	"切换模型":        "Switch model",
 	"清除会话，返回会话列表": "Clear session, return to session list",
 	"打开本地设置":      "Open local settings",
@@ -197,6 +198,21 @@ var en = map[string]string{
 	"排队消息 %d":                                 "%d queued message(s)",
 	"%d 条排队消息  ↑↓ 选择  Tab/空格/i 编辑  ⌫ 删除  Esc 返回": "%d queued message(s)  ↑↓ select  Tab/space/i edit  ⌫ delete  Esc back",
 	"已删除排队消息，内容已放回输入框":                           "Queued message removed; its content was put back into the input box",
+
+	// ---- 会话定时任务（cron）----
+	"服务端未声明 cron 能力，/cron 不可用":            "/cron unavailable: server does not declare the cron capability",
+	"定时任务 (cron)":                         "Scheduled jobs (cron)",
+	"定时任务 %d 条：由 AI 通过 cron 工具创建":         "%d scheduled job(s), created by the AI with the cron tool",
+	"↑↓ 选择    d 取消定时任务    r 刷新    Esc 关闭": "↑↓ select    d cancel job    r refresh    Esc close",
+	"（暂无定时任务）":                            "(no scheduled jobs)",
+	"周期":                                  "recurring",
+	"一次":                                  "one-shot",
+	"（无提示词）":                              "(no prompt)",
+	"（无法计算下次触发时间）":                        "(cannot compute the next run time)",
+	"下次: %s":                              "Next: %s",
+	"获取定时任务失败: %s":                        "Failed to fetch scheduled jobs: %s",
+	"删除定时任务失败: %s":                        "Failed to delete the scheduled job: %s",
+	"已删除定时任务":                             "Scheduled job deleted",
 
 	// ---- 权限/请求 ----
 	"权限请求":                     "Permission request",
@@ -413,4 +429,9 @@ var en = map[string]string{
 	"合并相似":        "Merge similar",
 	"最小间隔":        "Min interval",
 	"最大次数":        "Max times",
+	// ---- 服务端配置：事件钩子（Hooks）----
+	"事件钩子":    "Event hooks",
+	"定时任务唤醒时": "On cron wakeup",
+	"收到用户消息时": "On user message",
+	"回合结束时":   "On task finish",
 }

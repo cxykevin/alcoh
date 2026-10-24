@@ -748,6 +748,50 @@ func (s *clientSession) ClearMsgQueue(ctx context.Context) error {
 	return t.Request(ctx, MethodMsgQueueClear, MsgQueueClearParams{SessionID: s.id}, &result)
 }
 
+// SupportsCron 报告服务端是否声明会话定时任务能力（alk.cxykevin.top/cron）。
+func (b *ClientBackend) SupportsCron() bool {
+	return b.AgentCapabilities().Has(Alkaid0CapabilityCron)
+}
+
+func (s *clientSession) cronReady() error {
+	if !s.backend.SupportsCron() {
+		return errors.New("alkaid0 cron is not supported")
+	}
+	return nil
+}
+
+// ListCrons 列出当前会话的定时任务（按 id 升序，服务端已排序）。
+func (s *clientSession) ListCrons(ctx context.Context) ([]CronJob, error) {
+	if err := s.cronReady(); err != nil {
+		return nil, err
+	}
+	t, err := s.backend.readyTransport()
+	if err != nil {
+		return nil, err
+	}
+	var result CronListResult
+	if err := t.Request(ctx, MethodCronList, CronListParams{SessionID: s.id}, &result); err != nil {
+		return nil, err
+	}
+	if result.Jobs == nil {
+		result.Jobs = []CronJob{}
+	}
+	return result.Jobs, nil
+}
+
+// DeleteCron 删除当前会话下的一条定时任务。
+func (s *clientSession) DeleteCron(ctx context.Context, id uint32) error {
+	if err := s.cronReady(); err != nil {
+		return err
+	}
+	t, err := s.backend.readyTransport()
+	if err != nil {
+		return err
+	}
+	var result CronDeleteResult
+	return t.Request(ctx, MethodCronDelete, CronDeleteParams{SessionID: s.id, ID: id}, &result)
+}
+
 // WorkflowStatus 查询 workflow 的完整快照（v0.5）。runID 是 workflow 的 run id
 // （@temp/run/<n>，与 terminal ID 同值）；workflow 已结束或不在内存中时同样可查，
 // 响应含当前状态、完整图与按 sequence 排序的事件日志（见 extension.md §3.2）。

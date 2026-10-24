@@ -581,6 +581,91 @@ func queueContent(t renderer.Theme, m *model.AppModel) *QueueContent {
 	}
 }
 
+// CronContent 是 /cron 定时任务面板的内容区：列出服务端为当前会话保存的
+// 定时任务（由 AI 的 cron 工具创建）。每条任务占 cronItemRows 行：表达式与
+// 类型、提示词、下次触发时间。
+type CronContent struct {
+	Theme    renderer.Theme
+	Jobs     []acp.CronJob
+	Selected int
+}
+
+// cronItemRows 是每条定时任务占用的行数。
+const cronItemRows = 3
+
+// Draw 绘制定时任务列表：顶部提示，随后每条任务占三行（❯ 标记选中项），
+// 底部是操作提示。任务过多时以选中项为中心滚动窗口。
+func (cc *CronContent) Draw(c *renderer.Canvas, r renderer.Rect) {
+	t := cc.Theme
+	y := r.Y
+	if y < r.Y+r.H {
+		hint := i18n.T("定时任务 %d 条：由 AI 通过 cron 工具创建", len(cc.Jobs))
+		c.PutText(r.X, y, renderer.Truncate(hint, r.W), t.Style(t.TextMuted))
+		y++
+	}
+	y++ // 空行
+
+	available := max((r.H-(y-r.Y)-1)/cronItemRows, 1)
+	start := max(cc.Selected-available/2, 0)
+	if maxStart := len(cc.Jobs) - available; start > maxStart {
+		start = maxStart
+	}
+	if start < 0 {
+		start = 0
+	}
+	if len(cc.Jobs) == 0 {
+		c.PutText(r.X, y, i18n.T("（暂无定时任务）"), t.Style(t.TextMuted))
+	} else {
+		for i := start; i < start+available && i < len(cc.Jobs); i++ {
+			if y+cronItemRows > r.Y+r.H-1 {
+				break
+			}
+			job := cc.Jobs[i]
+			marker := "  "
+			st := t.Style(t.Text)
+			if i == cc.Selected {
+				marker = "❯ "
+				st = t.Style(t.Primary).WithBold(true)
+			}
+			kind := i18n.T("周期")
+			if job.RunOnce {
+				kind = i18n.T("一次")
+			}
+			line := marker + i18n.T("#%d  %s  [%s]", job.ID, job.Cron, kind)
+			c.PutText(r.X, y, renderer.Truncate(line, r.W), st)
+			y++
+
+			prompt := rewindLine(job.Prompt)
+			if prompt == "" {
+				prompt = i18n.T("（无提示词）")
+			}
+			c.PutText(r.X+2, y, renderer.Truncate(prompt, max(r.W-2, 0)), t.Style(t.Text))
+			y++
+
+			next := i18n.T("（无法计算下次触发时间）")
+			if len(job.NextRuns) > 0 && job.NextRuns[0] != "" {
+				next = i18n.T("下次: %s", job.NextRuns[0])
+			}
+			c.PutText(r.X+2, y, renderer.Truncate(next, max(r.W-2, 0)), t.Style(t.TextMuted))
+			y++
+		}
+	}
+
+	y = r.Y + r.H - 1
+	if y >= r.Y {
+		c.PutText(r.X, y, i18n.T("↑↓ 选择    d 取消定时任务    r 刷新    Esc 关闭"), t.Style(t.TextMuted))
+	}
+}
+
+// cronContent 构造 /cron 面板内容。
+func cronContent(t renderer.Theme, m *model.AppModel) *CronContent {
+	return &CronContent{
+		Theme:    t,
+		Jobs:     m.CronJobs(),
+		Selected: m.CronSelect,
+	}
+}
+
 func protocolUpdateCount(m *model.AppModel) int {
 	if m.Active == nil {
 		return 0

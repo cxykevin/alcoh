@@ -129,6 +129,8 @@ func (v *AppView) modalHeight(m *model.AppModel) int {
 		h = rewindModalHeight(m)
 	case model.ModalMsgQueue:
 		h = queueModalHeight(m)
+	case model.ModalCron:
+		h = cronModalHeight(m)
 	case model.ModalExitConfirm:
 		h = 5
 	case model.ModalServer, model.ModalPlugins:
@@ -158,6 +160,20 @@ func queueModalHeight(m *model.AppModel) int {
 		n = 10
 	}
 	return 5 + n
+}
+
+// cronModalHeight 返回 /cron 面板的高度：顶部提示 + 空行 + 每条任务
+// cronItemRows 行（最多 4 条，更多时窗口滚动）+ 底部操作提示，再加边框 2 行。
+// 没有任务时只保留一行空状态。
+func cronModalHeight(m *model.AppModel) int {
+	n := len(m.CronJobs())
+	if n == 0 {
+		return 6
+	}
+	if n > 4 {
+		n = 4
+	}
+	return cronItemRows*n + 5
 }
 
 // drawModalAtInput 将弹窗作为底部全宽面板绘制，替换输入框和状态栏。
@@ -212,6 +228,10 @@ func (v *AppView) drawModalAtInput(c *renderer.Canvas, r renderer.Rect, m *model
 		h = queueModalHeight(m)
 		title = i18n.T("排队消息 (msgqueue)")
 		content = queueContent(v.Theme, m)
+	case model.ModalCron:
+		h = cronModalHeight(m)
+		title = i18n.T("定时任务 (cron)")
+		content = cronContent(v.Theme, m)
 	case model.ModalServer:
 		// 配置编辑器占满整屏（DrawSheet 全宽面板）。
 		h = r.H

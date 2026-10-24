@@ -59,6 +59,9 @@ func (a *App) dispatchKey(ke input.KeyEvent) {
 	case model.ModalMsgQueue:
 		a.queueKey(ke)
 		return
+	case model.ModalCron:
+		a.cronKey(ke)
+		return
 	case model.ModalServer:
 		a.serverConfigKey(ke)
 		return
@@ -719,6 +722,10 @@ func (a *App) tryLocalSlashCommand() bool {
 		m.Input.Clear()
 		m.CloseSlash()
 		a.openMsgQueue()
+	case "/cron":
+		m.Input.Clear()
+		m.CloseSlash()
+		a.openCron()
 	default:
 		// 插件注册的斜杠命令（/xxx 开头的 token 未命中本地命令时尝试插件）。
 		return a.runPluginCommand(name, rest)
@@ -1129,10 +1136,11 @@ func (a *App) activateConfigRow(ed *model.ConfigEditor) {
 }
 
 // activateAddRow 处理「(新增)」行：Model.Models 直接分配数字键新增空模型；
-// Context.Phrase.Phrases 数组直接追加元素；本地配置 plugins 数组追加插件条目
-// （仅入内存，编辑该条目字段时才写回，见 AddPluginsItem）；本地配置根页无
-// plugins 段时直接新建该段并追加首条目（AddPluginsArray）；名称键 map
-// （Agent.Agents、Context.LSP.LanguageServers）进入新增键名输入。
+// Context.Phrase.Phrases 与 Hooks 事件数组（OnCronjobWakeup / OnUserMessage /
+// OnTaskFinish）直接追加元素，本地配置 plugins 数组追加插件条目（仅入内存，
+// 编辑该条目字段时才写回，见 AddPluginsItem）；本地配置根页无 plugins 段时
+// 直接新建该段并追加首条目（AddPluginsArray）；名称键 map（Agent.Agents、
+// Context.LSP.LanguageServers）进入新增键名输入。
 func (a *App) activateAddRow(ed *model.ConfigEditor) {
 	if ed.IsModels() {
 		patch, ok := ed.AddModelsItem()
@@ -1150,6 +1158,15 @@ func (a *App) activateAddRow(ed *model.ConfigEditor) {
 				// 本地插件数组：仅在内存中追加条目并进入其子页，编辑该条目
 				// 任一字段时才随整体数组写回（避免把空条目凭空持久化）。
 				ed.AddPluginsItem()
+				return
+			}
+			// Hooks 事件数组（Hooks.OnCronjobWakeup / OnUserMessage /
+			// OnTaskFinish）：追加一条空命令并选中该行，用户按 Enter 进入
+			// 值编辑。元素是字符串、没有子页面，重载后的选中行由配置导航
+			// 状态恢复（故不设置 serverCfgFocus）。
+			if patch, ok := ed.AddHooksItem(); ok {
+				a.serverCfgFocus = nil
+				a.applyEditorPatch(ed, patch)
 				return
 			}
 			patch, ok := ed.AddPhrasesItem()
@@ -1364,6 +1381,14 @@ func (a *App) dispatchMouse(me input.MouseEvent) {
 			m.RewindMove(-1)
 		} else if me.Button == input.MouseWheelDown {
 			m.RewindMove(1)
+		}
+		return
+	case model.ModalCron:
+		// 滚轮移动定时任务面板的选中行。
+		if me.Button == input.MouseWheelUp {
+			m.CronMove(-1)
+		} else if me.Button == input.MouseWheelDown {
+			m.CronMove(1)
 		}
 		return
 	case model.ModalServer:

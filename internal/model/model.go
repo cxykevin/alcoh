@@ -62,6 +62,9 @@ const (
 	// ModalMsgQueue /queue 会话消息队列面板：查看、取消、清空与编辑排队项
 	// （alkaid0 v0.6 + msgqueue 能力）。
 	ModalMsgQueue
+	// ModalCron /cron 会话定时任务面板：查看与删除 cron 工具创建的任务
+	// （alk.cxykevin.top/cron 能力）。
+	ModalCron
 )
 
 // Focus 表示会话视图的焦点区域。
@@ -144,6 +147,8 @@ type AppModel struct {
 	RewindSelect int
 	// QueueSelect 是 /queue 面板/输入框上方排队框当前选中的排队项索引。
 	QueueSelect int
+	// CronSelect 是 /cron 面板当前选中的定时任务索引。
+	CronSelect int
 	// QueueFocused 表示输入框上方的排队框是否获得焦点：存在排队项时按 ↑ 进入，
 	// 此时 ↑↓ 在队列内移动、Tab/空格/i 编辑、Backspace/Delete 删除。
 	QueueFocused bool
@@ -277,6 +282,7 @@ var localSlashCommandInfo = map[string]SlashCommandInfo{
 	"/plugins":    {Name: "/plugins", Description: "管理本地配置（插件等）"},
 	"/rewind":     {Name: "/rewind", Description: "撤回对话到指定消息（alkaid0 v0.6）"},
 	"/queue":      {Name: "/queue", Description: "查看与管理排队消息（alkaid0 msgqueue）"},
+	"/cron":       {Name: "/cron", Description: "查看与删除定时任务（alkaid0 cron）"},
 }
 
 // effortLevels 是客户端硬编码的推理强度（ACP v2 thought_level 目录）候选值。
@@ -370,7 +376,7 @@ func (m *AppModel) SlashCompletion() (ghost, description string) {
 // 未列入硬编码列表的 agent 命令优先级为 0。
 func slashCommandPriority(command string) int {
 	switch command {
-	case "/alcoh_help", "/connect", "/effort", "/clear", "/settings", "/server", "/plugins", "/rewind", "/queue":
+	case "/alcoh_help", "/connect", "/effort", "/clear", "/settings", "/server", "/plugins", "/rewind", "/queue", "/cron":
 		return 1
 	default:
 		return 0
@@ -403,6 +409,10 @@ func (m *AppModel) SlashCommands() []string {
 	// /queue 仅在服务端同时声明 alkaid0 v0.6 与 msgqueue 能力且有活动会话时可用。
 	if m.QueueAvailable() && !containsString(out, "/queue") {
 		out = append(out, "/queue")
+	}
+	// /cron 仅在服务端声明 cron 能力且有活动会话时可用。
+	if m.CronAvailable() && !containsString(out, "/cron") {
+		out = append(out, "/cron")
 	}
 	if m.Active != nil {
 		for _, command := range m.Active.Commands {
@@ -613,6 +623,11 @@ func (m *AppModel) SupportsAlkaid0V05() bool {
 // SupportsAlkaid0V06 报告服务端是否支持已结束终端内容查询（terminal/history）。
 func (m *AppModel) SupportsAlkaid0V06() bool {
 	return m.AgentCaps.Has(acp.Alkaid0CapabilityV06)
+}
+
+// SupportsCron 报告服务端是否支持会话定时任务查询/删除（alk.cxykevin.top/cron）。
+func (m *AppModel) SupportsCron() bool {
+	return m.AgentCaps.Has(acp.Alkaid0CapabilityCron)
 }
 
 // SupportsSessionDelete 报告服务端是否声明 session/delete 能力；仅当为 true

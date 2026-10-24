@@ -1286,3 +1286,73 @@ func TestConfigEditorSerialization(t *testing.T) {
 		t.Error("serialized tree should contain Version")
 	}
 }
+
+// TestConfigEditorAddHooksItem 验证服务端配置 Hooks 的事件数组页（命令列表）
+// 提供「(新增)」行：追加一条空命令、选中新行，patch 为整个数组（数组字段由
+// config/set 整体替换）。三个事件互相独立；Hooks 对象页与服务端配置根页都不
+// 允许新增键（事件名是服务端固定字段）。
+func TestConfigEditorAddHooksItem(t *testing.T) {
+	ed := NewConfigEditor(json.RawMessage(`{"Version":1,"Hooks":{"OnCronjobWakeup":[],"OnUserMessage":["notify-send hi"],"OnTaskFinish":[]}}`))
+	ed.Focus([]string{"Hooks", "OnUserMessage"}) // 数组页：[0, (新增)]
+	if !ed.CanAdd() {
+		t.Fatal("Hooks.OnUserMessage should allow add")
+	}
+	if got := ed.AddRowIndex(); got != 1 {
+		t.Fatalf("add row index = %d, want 1", got)
+	}
+	ed.Move(1)
+	if !ed.OnAddRow() {
+		t.Fatal("should be on add row")
+	}
+	patch, ok := ed.AddHooksItem()
+	if !ok {
+		t.Fatal("AddHooksItem should succeed on Hooks.OnUserMessage")
+	}
+	ev := ed.Root.findChild("Hooks").findChild("OnUserMessage")
+	if len(ev.Children) != 2 {
+		t.Fatalf("OnUserMessage children = %d, want 2", len(ev.Children))
+	}
+	if n := ev.Children[1]; n.Kind != ConfigString || n.Str != "" {
+		t.Errorf("new element: kind=%v str=%q, want empty ConfigString", n.Kind, n.Str)
+	}
+	if ed.Selected != 1 {
+		t.Errorf("selected = %d, want 1 (new element)", ed.Selected)
+	}
+	if string(patch) != `{"Hooks":{"OnUserMessage":["notify-send hi",""]}}` {
+		t.Errorf("patch = %s", patch)
+	}
+	// 另一个事件数组同样可新增，且互不影响。
+	ed.Focus([]string{"Hooks", "OnCronjobWakeup"})
+	if !ed.CanAdd() {
+		t.Error("Hooks.OnCronjobWakeup should allow add")
+	}
+	if _, ok := ed.AddHooksItem(); !ok {
+		t.Error("AddHooksItem should succeed on OnCronjobWakeup")
+	}
+	if n := ed.Root.findChild("Hooks").findChild("OnUserMessage"); len(n.Children) != 2 {
+		t.Errorf("OnUserMessage children = %d after adding to another event, want 2", len(n.Children))
+	}
+	// Hooks 对象页不允许新增键；服务端配置根页也不提供新增。
+	ed.Focus([]string{"Hooks"})
+	if ed.CanAdd() {
+		t.Error("Hooks object page must not allow adding keys")
+	}
+	ed.Focus(nil)
+	if ed.CanAdd() {
+		t.Error("server config root must not allow add")
+	}
+}
+
+// TestConfigEditorAddHooksItemRejectsOther 验证 AddHooksItem 只对 Hooks 事件
+// 数组生效，避免在其它数组页或对象页误触发。
+func TestConfigEditorAddHooksItemRejectsOther(t *testing.T) {
+	ed := NewConfigEditor(json.RawMessage(`{"Hooks":{"OnUserMessage":[]},"Context":{"Phrase":{"Phrases":[]}}}`))
+	ed.Focus([]string{"Context", "Phrase", "Phrases"})
+	if _, ok := ed.AddHooksItem(); ok {
+		t.Fatal("AddHooksItem must not apply to Phrases")
+	}
+	ed.Focus([]string{"Hooks"})
+	if _, ok := ed.AddHooksItem(); ok {
+		t.Fatal("AddHooksItem must not apply to the Hooks object page")
+	}
+}

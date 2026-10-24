@@ -37,6 +37,11 @@ const (
 	// 因此客户端可凭 terminalId 取回已结束终端（含服务端重启前结束的）。
 	Alkaid0CapabilityV06 = "alk.cxykevin.top/alkaid0/v0.6"
 
+	// Alkaid0CapabilityCron 是会话定时任务查询/删除能力标记
+	// （alk.cxykevin.top/cron，见 ../alkaid0/docs/acp/extension.md §3.11）。
+	// 纯请求-响应、无推送；/cron 面板据此门控。
+	Alkaid0CapabilityCron = "alk.cxykevin.top/cron"
+
 	// MethodConfigGet 是 alkaid0 扩展方法：获取完整服务端配置。见 docs/acp/extension.md。
 	MethodConfigGet = "alk.cxykevin.top/config/get"
 
@@ -56,6 +61,11 @@ const (
 	MethodMsgQueueCancel = "alk.cxykevin.top/session/msgqueue/cancel"
 	MethodMsgQueueUpdate = "alk.cxykevin.top/session/msgqueue/update"
 	MethodMsgQueueClear  = "alk.cxykevin.top/session/msgqueue/clear"
+
+	// 会话定时任务方法（alk.cxykevin.top/cron，见 extension.md §3.11）：
+	// 纯请求-响应，无推送；新增/修改仍由 AI 的 cron 工具负责。
+	MethodCronList   = "alk.cxykevin.top/session/cron/list"
+	MethodCronDelete = "alk.cxykevin.top/session/cron/delete"
 
 	// SessionCursorField 是 alkaid0 v0.6 历史回放分页的扩展字段名。它出现在
 	// session/resume 响应里表示还有更早的消息未回放；把它原样作为下一次
@@ -121,6 +131,44 @@ type MsgQueueClearParams struct {
 // MsgQueueListParams 是 msgqueue/list 请求参数。
 type MsgQueueListParams struct {
 	SessionID string `json:"sessionId"`
+}
+
+// CronJob 是会话定时任务的展示快照（alk.cxykevin.top/cron，见
+// extension.md §3.11）。任务由 AI 的 cron 工具创建，客户端只做查看与删除。
+type CronJob struct {
+	// ID 与 @cron 行首的数字、cron 工具的 id 参数一致。
+	ID uint32 `json:"id"`
+	// Cron 是标准 5 段表达式（@daily 等简写在入库时已展开）。
+	Cron string `json:"cron"`
+	// Prompt 到点后投递到会话的提示词（不含 "[cronjob] " 前缀）。
+	Prompt string `json:"prompt"`
+	// RunOnce 为 true 表示投递一次后自动删除。
+	RunOnce bool `json:"runOnce"`
+	// Workdir 是任务所属工作目录（绝对路径）。
+	Workdir string `json:"workdir"`
+	// NextRuns 是接下来 4 次（一次性任务 1 次）触发时间，本地时区。
+	NextRuns []string `json:"nextRuns"`
+}
+
+// CronListParams 是 cron/list 请求参数。
+type CronListParams struct {
+	SessionID string `json:"sessionId"`
+}
+
+// CronListResult 是 cron/list 响应。
+type CronListResult struct {
+	Jobs []CronJob `json:"jobs"`
+}
+
+// CronDeleteParams 是 cron/delete 请求参数。
+type CronDeleteParams struct {
+	SessionID string `json:"sessionId"`
+	ID        uint32 `json:"id"`
+}
+
+// CronDeleteResult 是 cron/delete 响应。
+type CronDeleteResult struct {
+	ID uint32 `json:"id"`
 }
 
 // ClientInfo 标识 ACP 客户端。

@@ -166,6 +166,11 @@ var configKeyLabels = map[string]string{
 	"BM25RetentionScore":  "BM25 保留分数",
 	// Feedback。
 	"DisableAutoTelemetry": "禁用自动遥测",
+	// Hooks（事件钩子：事件名 → 命令数组）。
+	"Hooks":           "事件钩子",
+	"OnCronjobWakeup": "定时任务唤醒时",
+	"OnUserMessage":   "收到用户消息时",
+	"OnTaskFinish":    "回合结束时",
 	// 其他已知字段。
 	"TitleModel":        "标题模型",
 	"FetchProxy":        "抓取代理",
@@ -772,7 +777,9 @@ func (ed *ConfigEditor) CanAdd() bool {
 				(n.Parent.Parent != nil && n.Parent.Parent.Key == "RewriteHeaders"))
 		}
 	case ConfigArray:
-		return n.Key == "plugins" || (n.Key == "Phrases" && n.Parent != nil && n.Parent.Key == "Phrase")
+		return n.Key == "plugins" ||
+			(n.Key == "Phrases" && n.Parent != nil && n.Parent.Key == "Phrase") ||
+			isHooksEventArray(n)
 	}
 	return false
 }
@@ -1298,6 +1305,39 @@ func (ed *ConfigEditor) AddPhrasesItem() (json.RawMessage, bool) {
 	ed.EntryIdx = append(ed.EntryIdx, ed.Selected)
 	ed.Stack = append(ed.Stack, child)
 	ed.Selected = 0
+	return nodePatch(n.Path, n.AsValue()), true
+}
+
+// isHooksEventArray 报告 n 是否为服务端 Hooks 配置下的事件数组
+// （Hooks.OnCronjobWakeup / OnUserMessage / OnTaskFinish，值为命令字符串）。
+// 这些数组在编辑器里可直接追加命令（元素是字符串，不需要键名），与
+// Context.Phrase.Phrases、本地 plugins 一样由「(新增)」行进入新增流程。
+func isHooksEventArray(n *ConfigNode) bool {
+	if n == nil || n.Kind != ConfigArray || n.Parent == nil || n.Parent.Key != "Hooks" {
+		return false
+	}
+	switch n.Key {
+	case "OnCronjobWakeup", "OnUserMessage", "OnTaskFinish":
+		return true
+	}
+	return false
+}
+
+// AddHooksItem 在 Hooks 事件数组页（如 Hooks.OnUserMessage）的「(新增)」行上
+// 追加一条空命令，并把选中行移到该元素上。元素是字符串、没有子页面，用户按
+// Enter 即进入值编辑；新增写回后整配置重载按导航状态恢复选中行（不设
+// serverCfgFocus，Focus 只会进入容器节点、对字符串元素无效）。
+// 数组字段服务端 config/set 整体替换，返回的 patch 为整个数组（含新元素与
+// 全部兄弟元素）。
+func (ed *ConfigEditor) AddHooksItem() (json.RawMessage, bool) {
+	n := ed.Current()
+	if !isHooksEventArray(n) {
+		return nil, false
+	}
+	key := strconv.Itoa(len(n.Children))
+	child := buildConfigNode(key, append(n.Path, key), n, "")
+	n.Children = append(n.Children, child)
+	ed.Selected = len(n.Children) - 1
 	return nodePatch(n.Path, n.AsValue()), true
 }
 

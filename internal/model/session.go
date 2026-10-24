@@ -194,6 +194,9 @@ type SessionState struct {
 	// MsgQueueRevision 是最近一次应用的队列版本号；更小的 revision 视为
 	// 乱序/过期快照并丢弃。
 	MsgQueueRevision uint64
+	// Crons 是服务端会话定时任务的全量快照（alk.cxykevin.top/cron）。
+	// 任务不主动推送，由 /cron 面板打开或删除后重新查询刷新。
+	Crons []acp.CronJob
 
 	ProtocolUpdates []json.RawMessage
 	Scroll          int

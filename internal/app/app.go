@@ -154,6 +154,8 @@ const (
 	commandMsgQueueCancel
 	commandMsgQueueUpdate
 	commandMsgQueueClear
+	commandCronList
+	commandCronDelete
 )
 
 type commandResult struct {
@@ -167,6 +169,8 @@ type commandResult struct {
 	models     []provider.Model
 	terminalID string
 	queue      *acp.MsgQueueSnapshot
+	crons      []acp.CronJob
+	cronID     uint32
 	err        error
 }
 
@@ -439,6 +443,10 @@ type modelSnapshot struct {
 	QueueItems   []acp.MsgQueueItem
 	QueueSel     int
 	QueueFocused bool
+
+	// 会话定时任务（/cron 面板）快照，供测试轮询。
+	CronJobs []acp.CronJob
+	CronSel  int
 }
 
 // snapshot 返回当前模型状态快照，供测试在应用运行期间安全轮询。
@@ -498,6 +506,8 @@ func (a *App) snapshot() modelSnapshot {
 		s.QueueItems = append([]acp.MsgQueueItem(nil), a.model.Active.MsgQueue...)
 		s.QueueSel = a.model.QueueSelect
 		s.QueueFocused = a.model.QueueFocused
+		s.CronJobs = append([]acp.CronJob(nil), a.model.Active.Crons...)
+		s.CronSel = a.model.CronSelect
 	}
 	return s
 }
@@ -916,6 +926,36 @@ func (a *App) applyCommandResult(result commandResult) {
 		default:
 			a.model.ShowInfo(i18n.T("已清空排队消息"))
 		}
+		return
+	}
+	if result.kind == commandCronList {
+		// 任务列表归属当前会话：会话已切换时旧结果不应污染新面板。
+		if a.sess == nil || a.sess.ID() != result.sessionID {
+			return
+		}
+		if result.err != nil {
+			a.model.ShowError(i18n.T("获取定时任务失败: %s", result.err.Error()))
+			return
+		}
+		a.model.ApplyCrons(result.crons)
+		return
+	}
+	if result.kind == commandCronDelete {
+		if result.sessionID != "" && (a.sess == nil || a.sess.ID() != result.sessionID) {
+			return
+		}
+		if result.err != nil {
+			a.model.ShowError(i18n.T("删除定时任务失败: %s", result.err.Error()))
+			// 本地已先移出该任务；失败时重新拉取列表恢复。
+			a.refreshCron()
+			return
+		}
+		// 列表查询可能在删除前发出、删除后才返回：按 id 再移除一次，避免
+		// 已被删除的任务短暂回到面板。
+		a.model.RemoveCron(result.cronID)
+		a.model.ShowInfo(i18n.T("已删除定时任务"))
+		// 删除后重新查询，以服务端（含调度器重载）的结果为准。
+		a.refreshCron()
 		return
 	}
 	if result.kind == commandSessionDelete {

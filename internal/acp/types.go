@@ -309,6 +309,17 @@ type MsgQueueControl interface {
 	ClearMsgQueue(ctx context.Context) error
 }
 
+// CronControl 暴露 alkaid0 会话定时任务的查询与删除方法
+// （alk.cxykevin.top/cron，见 ../alkaid0/docs/acp/extension.md §3.11）。
+// 与 TerminalControl / MsgQueueControl 一样是可选能力，调用方用类型断言按需取用。
+// 新增/修改任务仍由 AI 的 cron 工具负责，这里只支持查看与删除。
+type CronControl interface {
+	// ListCrons 列出当前会话的定时任务（按 id 升序）。
+	ListCrons(ctx context.Context) ([]CronJob, error)
+	// DeleteCron 删除当前会话下的一条定时任务；id 必须属于该会话。
+	DeleteCron(ctx context.Context, id uint32) error
+}
+
 // HistoryPager 暴露 alkaid0 v0.6 的历史回放分页（见 extension.md §3.3）。
 // session/resume 每次最多回放 200 条消息，从活跃分支末端往更早的方向翻页：
 // 首屏拿到的是最近一页，响应携带游标时表示还有更早的消息。

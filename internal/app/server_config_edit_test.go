@@ -211,3 +211,88 @@ func nodeChild(n *model.ConfigNode, key string) *model.ConfigNode {
 	}
 	return nil
 }
+
+// TestServerConfigEditorAddHooksItem 回归测试：Hooks 的事件数组页（命令列表）
+// 提供「(新增)」行——Enter 追加一条空命令并写回整个数组（服务端对数组字段整体
+// 替换）；整配置重载后仍停在该数组页并选中新行（元素是字符串、没有子页面，
+// 用户按 Enter 即可编辑）。
+func TestServerConfigEditorAddHooksItem(t *testing.T) {
+	ft := newFakeTerm()
+	b := &alkaid0Backend{Backend: demo.New(true)}
+	// 预置含 Hooks 的服务端配置（alkaid0 v0.6.3 起 config/get 的结构）。
+	b.cfg = map[string]any{}
+	seed := `{"Version":1,"Hooks":{"OnCronjobWakeup":[],"OnTaskFinish":["echo done"],"OnUserMessage":[]}}`
+	if err := json.Unmarshal([]byte(seed), &b.cfg); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+	a := New(ft, b)
+	done := runApp(t, a)
+
+	time.Sleep(100 * time.Millisecond)
+	for _, r := range "/server" {
+		ft.sendKey(input.RuneKey(r, input.ModNone))
+	}
+	ft.sendKey(input.SimpleKey(input.KeyEnter)) // 打开编辑器
+	waitAtomic(t, &b.gets, 1, "config/get calls")
+	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.ServerCfg })
+
+	// 根页 [Hooks, Version] → Hooks 对象页 [OnCronjobWakeup, OnTaskFinish,
+	// OnUserMessage] → OnTaskFinish 数组页 [0, (新增)]。
+	ft.sendKey(input.SimpleKey(input.KeyEnter)) // Hooks
+	ft.sendKey(input.SimpleKey(input.KeyDown))  // OnTaskFinish
+	ft.sendKey(input.SimpleKey(input.KeyEnter)) // 数组页
+	ft.sendKey(input.SimpleKey(input.KeyDown))  // (新增)
+	ft.sendKey(input.SimpleKey(input.KeyEnter)) // 新增一条命令
+
+	waitAtomic(t, &b.sets, 1, "config/set calls after add")
+	waitNotSaving(t, a)
+
+	b.mu.Lock()
+	patches := append([]json.RawMessage(nil), b.patches...)
+	b.mu.Unlock()
+	if len(patches) != 1 {
+		t.Fatalf("set patches = %d, want 1", len(patches))
+	}
+	var patch struct {
+		Hooks struct {
+			OnTaskFinish []string `json:"OnTaskFinish"`
+		} `json:"Hooks"`
+	}
+	if err := json.Unmarshal(patches[0], &patch); err != nil {
+		t.Fatalf("unmarshal patch: %v", err)
+	}
+	got := patch.Hooks.OnTaskFinish
+	if len(got) != 2 || got[0] != "echo done" || got[1] != "" {
+		t.Fatalf("patch OnTaskFinish = %q, want [\"echo done\" \"\"]", got)
+	}
+
+	// 重载后仍停在 OnTaskFinish 数组页（选中新行由导航状态恢复）。
+	waitSnapshot(t, a, func(s modelSnapshot) bool {
+		return s.ServerCfg && !s.ServerSaving && s.ServerCurKey == "OnTaskFinish"
+	})
+	a.modelMu.RLock()
+	ed := a.model.ServerCfg
+	var rows int
+	var newValue string
+	if ed != nil {
+		if cur := ed.Current(); cur != nil {
+			rows = len(cur.Children)
+			if rows > 1 {
+				newValue = cur.Children[rows-1].Str
+			}
+		}
+	}
+	a.modelMu.RUnlock()
+	if rows != 2 {
+		t.Fatalf("OnTaskFinish rows = %d, want 2 (echo done + new empty)", rows)
+	}
+	if newValue != "" {
+		t.Errorf("new row value = %q, want empty", newValue)
+	}
+
+	ft.sendKey(input.SimpleKey(input.KeyEsc))
+	ft.sendKey(input.RuneKey('q', input.ModCtrl))
+	time.Sleep(50 * time.Millisecond)
+	ft.sendKey(input.RuneKey('y', input.ModNone))
+	waitRun(t, done)
+}
