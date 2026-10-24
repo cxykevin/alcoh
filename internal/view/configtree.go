@@ -183,7 +183,11 @@ func (ct *ConfigTree) draw(c *renderer.Canvas, r renderer.Rect, ed *model.Config
 		c.PutText(r.X, bottomY, i18n.T("Esc 取消    Enter 添加键"), t.Style(t.TextMuted))
 		return
 	}
-	c.PutText(r.X, bottomY, i18n.T("Esc 关闭   ↑↓ 选择   Enter 进入/编辑   ← 返回   r 刷新"), t.Style(t.TextMuted))
+	hint := i18n.T("Esc 关闭   ↑↓ 选择   Enter 进入/编辑   ← 返回   r 刷新")
+	if ed.CanDeleteHook() {
+		hint = i18n.T("Esc 关闭   ↑↓ 选择   Enter 编辑   d 删除命令   ← 返回   r 刷新")
+	}
+	c.PutText(r.X, bottomY, hint, t.Style(t.TextMuted))
 }
 
 // drawModelPick 在配置树面板内居中绘制模型选择框：标题是被编辑的键，内容为

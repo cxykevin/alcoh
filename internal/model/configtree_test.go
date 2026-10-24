@@ -1356,3 +1356,59 @@ func TestConfigEditorAddHooksItemRejectsOther(t *testing.T) {
 		t.Fatal("AddHooksItem must not apply to the Hooks object page")
 	}
 }
+
+// TestConfigEditorDeleteHooksItem 验证 Hooks 事件数组页可以删除选中的命令：
+// patch 为整个数组、剩余元素索引与 Path 重排、选中行收敛；非 Hooks 页不提供
+// 该删除动作。
+func TestConfigEditorDeleteHooksItem(t *testing.T) {
+	ed := NewConfigEditor(json.RawMessage(`{"Version":1,"Hooks":{"OnCronjobWakeup":["echo a","echo b"],"OnUserMessage":[],"OnTaskFinish":[]}}`))
+	ed.Focus([]string{"Hooks", "OnCronjobWakeup"})
+	if !ed.CanDeleteHook() {
+		t.Fatal("Hooks.OnCronjobWakeup should allow deleting the selected command")
+	}
+	patch, ok := ed.DeleteSelectedHook()
+	if !ok {
+		t.Fatal("DeleteSelectedHook should succeed")
+	}
+	if string(patch) != `{"Hooks":{"OnCronjobWakeup":["echo b"]}}` {
+		t.Fatalf("patch = %s", patch)
+	}
+	ev := ed.Root.findChild("Hooks").findChild("OnCronjobWakeup")
+	if len(ev.Children) != 1 {
+		t.Fatalf("remaining children = %d, want 1", len(ev.Children))
+	}
+	rest := ev.Children[0]
+	if rest.Key != "0" || rest.Str != "echo b" {
+		t.Errorf("remaining child = key %q value %q, want 0/echo b", rest.Key, rest.Str)
+	}
+	if len(rest.Path) != 3 || rest.Path[0] != "Hooks" || rest.Path[1] != "OnCronjobWakeup" || rest.Path[2] != "0" {
+		t.Errorf("remaining child path = %v, want [Hooks OnCronjobWakeup 0]", rest.Path)
+	}
+	if ed.Selected != 0 {
+		t.Errorf("selected = %d, want 0", ed.Selected)
+	}
+
+	// 删除最后一条：空数组、选中落到「(新增)」行，不再提供删除。
+	patch, ok = ed.DeleteSelectedHook()
+	if !ok {
+		t.Fatal("DeleteSelectedHook should remove the last command")
+	}
+	if string(patch) != `{"Hooks":{"OnCronjobWakeup":[]}}` {
+		t.Fatalf("patch after last delete = %s", patch)
+	}
+	if len(ev.Children) != 0 || ed.Selected != 0 {
+		t.Errorf("after last delete: children = %d selected = %d, want 0/0", len(ev.Children), ed.Selected)
+	}
+	if ed.CanDeleteHook() {
+		t.Error("empty Hooks array should not offer command deletion")
+	}
+
+	// 非 Hooks 页不提供该动作。
+	ed.Focus([]string{"Hooks"})
+	if ed.CanDeleteHook() {
+		t.Error("Hooks object page should not offer command deletion")
+	}
+	if _, ok := ed.DeleteSelectedHook(); ok {
+		t.Error("DeleteSelectedHook should reject a non-Hooks page")
+	}
+}

@@ -296,3 +296,23 @@ func TestServerConfigEditorAddHooksItem(t *testing.T) {
 	ft.sendKey(input.RuneKey('y', input.ModNone))
 	waitRun(t, done)
 }
+
+// TestConfigEditorKeyDeletesHooksItem 验证 /server 的 Hooks 命令数组页里 d 键
+// 走 DeleteSelectedHook：选中命令从树中移除（写回 patch 由模型测试覆盖）。
+func TestConfigEditorKeyDeletesHooksItem(t *testing.T) {
+	a := New(newFakeTerm(), demo.New(true))
+	ed := model.NewConfigEditor(json.RawMessage(`{"Hooks":{"OnUserMessage":["echo a","echo b"]}}`))
+	ed.Focus([]string{"Hooks", "OnUserMessage"})
+	a.model.ServerCfg = ed
+
+	if !a.configEditorKey(input.RuneKey('d', input.ModNone), ed, func() {}) {
+		t.Fatal("d on a Hooks command row should be handled")
+	}
+	ev := nodeChild(nodeChild(ed.Root, "Hooks"), "OnUserMessage")
+	if ev == nil {
+		t.Fatal("Hooks.OnUserMessage missing after delete")
+	}
+	if len(ev.Children) != 1 || ev.Children[0].Str != "echo b" {
+		t.Fatalf("OnUserMessage after delete = %v, want [echo b]", ev.Children)
+	}
+}

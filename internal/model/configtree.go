@@ -1341,6 +1341,44 @@ func (ed *ConfigEditor) AddHooksItem() (json.RawMessage, bool) {
 	return nodePatch(n.Path, n.AsValue()), true
 }
 
+// CanDeleteHook 报告当前页面是否选中了一条 Hooks 事件命令：/server 的
+// Hooks.OnCronjobWakeup / OnUserMessage / OnTaskFinish 都是字符串数组，
+// 元素没有子页面，删除入口放在数组页的 d 键上（见 app.configEditorKey）。
+func (ed *ConfigEditor) CanDeleteHook() bool {
+	if !isHooksEventArray(ed.Current()) {
+		return false
+	}
+	n := ed.SelectedNode()
+	return n != nil && n.Kind == ConfigString
+}
+
+// DeleteSelectedHook 删除当前 Hooks 事件数组页选中的命令，返回整数组写回
+// patch。数组字段由服务端 config/set 整体替换；删除后重排剩余元素的 Key
+// 与 Path，并把选中行收敛到相邻命令（删空时落到「(新增)」行）。
+func (ed *ConfigEditor) DeleteSelectedHook() (json.RawMessage, bool) {
+	n := ed.Current()
+	if !isHooksEventArray(n) {
+		return nil, false
+	}
+	idx := ed.Selected
+	if idx < 0 || idx >= len(n.Children) {
+		return nil, false
+	}
+	n.Children = append(n.Children[:idx], n.Children[idx+1:]...)
+	for i, c := range n.Children {
+		ik := strconv.Itoa(i)
+		c.Key = ik
+		setPath(c, append(append([]string(nil), n.Path...), ik))
+	}
+	if ed.Selected >= len(n.Children) {
+		ed.Selected = len(n.Children) - 1
+	}
+	if ed.Selected < 0 {
+		ed.Selected = 0
+	}
+	return nodePatch(n.Path, n.AsValue()), true
+}
+
 // AddPluginsItem 在本地配置 plugins 数组页的「(新增)」行上追加一个插件条目
 // （{Name:"", Command:"", Disabled:false}），并自动进入其子页面选中首行。
 // 新条目标记为 pending（尚未写回）：不立即保存，直到该条目任一字段被编辑时

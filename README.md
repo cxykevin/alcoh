@@ -207,7 +207,7 @@ agent 经 `run` 工具启动的终端会实时推送到 shells 面板（仅当�
   选择框，直接进入值编辑
   Hooks（事件钩子）的三个事件数组（`Hooks.OnCronjobWakeup`、`Hooks.OnUserMessage`、
   `Hooks.OnTaskFinish`）页末尾有「(新增)」行：`Enter` 追加一条空命令并写回整个数组，
-  新增行保持选中，再按 `Enter` 即可编辑命令文本
+  新增行保持选中，再按 `Enter` 即可编辑命令文本；选中某条命令按 `d` 删除并写回整个数组
 - `/rewind`：撤回对话到指定消息（仅当服务端声明 `alk.cxykevin.top/alkaid0/v0.6` 且会话中有可撤回的用户消息时可用）。
   `↑`/`↓`（或滚轮）选择目标、`Enter` 确认、`Esc` 取消；列表**自下而上编号**（最近一条是 1 号），
   每条目标占三行（用户原文、该轮 AI 回复、空行）。agent 正在运行时先请求停止（`session/cancel`），

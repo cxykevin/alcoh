@@ -1033,6 +1033,13 @@ func (a *App) configEditorKey(ke input.KeyEvent, ed *model.ConfigEditor, onRefre
 		a.activateConfigRow(ed)
 	case ke.Type == input.KeyEnter:
 		a.activateConfigRow(ed)
+	case ke.Type == input.KeyRune && ke.Rune == 'd' && !ke.IsCtrl() && !ke.IsAlt():
+		// Hooks 事件数组页：删除选中的命令（数组整体替换写回）。
+		patch, ok := ed.DeleteSelectedHook()
+		if !ok {
+			return false
+		}
+		a.applyEditorPatch(ed, patch)
 	case ke.Type == input.KeyRune && ke.Rune == 'r':
 		onRefresh()
 	default:
