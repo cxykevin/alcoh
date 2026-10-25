@@ -121,6 +121,11 @@ type App struct {
 	// 没有待打开的选择器时为 nil，主循环 select 中该分支被禁用。
 	pendingRewindCh <-chan time.Time
 
+	// escRewindAt 是输入框为空时最近一次按 Esc 的时刻：窗口（escRewindWindow）
+	// 内再按一次 Esc 打开撤回选择器。输入框非空时 Esc 只负责清空输入，不参与
+	// 连按判定；其它按键会打断连按计数。
+	escRewindAt time.Time
+
 	// queueEdit 表示正在编辑一条排队项：输入框回车提交时走 msgqueue/update，
 	// 而不是发送新 prompt（见 startQueueEdit / submitQueueEdit）。
 	queueEdit *msgQueueEdit

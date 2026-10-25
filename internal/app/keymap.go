@@ -17,6 +17,9 @@ import (
 	"github.com/cxykevin/alcoh/internal/widget"
 )
 
+// escRewindWindow 是"输入框为空时连按两次 Esc 打开撤回选择器"的连按判定窗口。
+const escRewindWindow = 500 * time.Millisecond
+
 // dispatchKey 分发按键事件（插件按键拦截优先，再按模态/视图）。
 func (a *App) dispatchKey(ke input.KeyEvent) {
 	// 插件 key hooks：仅当命中插件声明的按键绑定时才发起 IPC；返回 handled
@@ -381,6 +384,11 @@ func (a *App) refreshShellPanel() {
 
 func (a *App) sessionKey(ke input.KeyEvent) {
 	m := a.model
+	// 连按两次 Esc 只认相邻的两次 Esc：其它按键打断计数，避免隔很久的两次
+	// Esc 被当成连按。
+	if ke.Type != input.KeyEsc {
+		a.escRewindAt = time.Time{}
+	}
 	if m.SlashOpen {
 		switch ke.Type {
 		case input.KeyUp:
@@ -539,12 +547,29 @@ func (a *App) sessionKey(ke input.KeyEvent) {
 		a.cancelQueueEdit()
 		return
 	}
-	// 按 Esc 打断正在进行的 AI 响应。无论焦点在输入框还是消息区都生效；
-	// 会话空闲时不动作（避免误触清空输入或误退出）。
+	// Esc 在会话视图的语义（按优先级）：
+	//   1. 输入框有内容：清空输入（不打断正在进行的运行，避免误触丢失运行进度）；
+	//   2. 输入框为空且会话运行中：打断本次运行；
+	//   3. 输入框为空且会话空闲：连按两次（escRewindWindow 内）打开撤回选择器。
 	if ke.Type == input.KeyEsc {
-		if m.HasActive() && m.Active.Running() {
-			a.cancelCurrent()
+		if !m.InputEmpty() {
+			m.Input.Clear()
+			m.UpdateSlashState()
+			a.escRewindAt = time.Time{}
+			return
 		}
+		if m.HasActive() && m.Active.Running() {
+			a.escRewindAt = time.Time{}
+			a.cancelCurrent()
+			return
+		}
+		now := time.Now()
+		if !a.escRewindAt.IsZero() && now.Sub(a.escRewindAt) <= escRewindWindow {
+			a.escRewindAt = time.Time{}
+			a.startRewind()
+			return
+		}
+		a.escRewindAt = now
 		return
 	}
 	if ke.Type == input.KeyTab {
