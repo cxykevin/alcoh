@@ -36,12 +36,14 @@ func setConfigDir(t *testing.T) string {
 	return dir
 }
 
-// trackBackend 包装 demo backend，记录会话 Cancel 调用次数，用于验证
-// /clear 默认会取消运行中的会话、/clear on 不取消。
+// trackBackend 包装 demo backend，记录会话 Cancel 与 session/list 调用次数，
+// 用于验证 /clear 默认会取消运行中的会话、/clear on 不取消，以及返回主页时
+// 重新拉取会话列表。
 type trackBackend struct {
 	*demo.Backend
 	mu      sync.Mutex
 	cancels int
+	lists   int
 }
 
 func (b *trackBackend) NewSession(ctx context.Context, cwd string) (acp.Session, error) {
@@ -60,10 +62,25 @@ func (b *trackBackend) ResumeSession(ctx context.Context, id string) (acp.Sessio
 	return &trackSession{Session: s, b: b}, nil
 }
 
+// ListSessionsPage 记录 session/list 调用次数，用于验证 /clear 回主页时
+// 会重新拉取会话列表。
+func (b *trackBackend) ListSessionsPage(ctx context.Context, cursor string) (acp.SessionPage, error) {
+	b.mu.Lock()
+	b.lists++
+	b.mu.Unlock()
+	return b.Backend.ListSessionsPage(ctx, cursor)
+}
+
 func (b *trackBackend) cancelCount() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.cancels
+}
+
+func (b *trackBackend) listCount() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.lists
 }
 
 // trackSession 包装 acp.Session，在 Cancel 时对 backend 计数。
@@ -302,6 +319,36 @@ func TestHomeFlow(t *testing.T) {
 	}
 }
 
+// titlelessSession 模拟真实 alkaid0 的 session/resume 句柄：只带 ID、不带标题
+// （标题只出现在 session/list 与后续 session_info_update）。其余方法沿用被包装
+// 的 demo 会话。
+type titlelessSession struct{ acp.Session }
+
+func (s *titlelessSession) Title() string { return "" }
+
+// TestResumeResultUsesHomeListTitle 验证恢复会话的结果进入界面后，活动会话标题
+// 取自主页会话列表：真实 alkaid0 的 session/resume 只回 ID，不先填标题时状态栏
+// 会显示 sess_<id>:<cwd> 这种原始会话 ID。
+func TestResumeResultUsesHomeListTitle(t *testing.T) {
+	b := demo.New(true)
+	defer b.Close()
+	s, err := b.ResumeSession(context.Background(), "demo-0")
+	if err != nil {
+		t.Fatalf("resume demo session: %v", err)
+	}
+	a := New(newFakeTerm(), b)
+	a.model.Sessions = []*acp.SessionInfo{{SessionID: "demo-0", Title: "示例会话（可恢复）"}}
+
+	a.applyCommandResult(commandResult{kind: commandSession, session: &titlelessSession{Session: s}})
+
+	if a.model.Active == nil {
+		t.Fatal("active session should be set after resume result")
+	}
+	if got := a.model.Active.Title; got != "示例会话（可恢复）" {
+		t.Errorf("active title = %q, want home list title %q", got, "示例会话（可恢复）")
+	}
+}
+
 func TestSettingsAndSlashFlow(t *testing.T) {
 	setConfigDir(t)
 	ft := newFakeTerm()
@@ -483,6 +530,54 @@ func TestClearOnKeepsRunningSession(t *testing.T) {
 	}
 	if n := tb.cancelCount(); n != 0 {
 		t.Errorf("expected /clear on NOT to cancel, got %d cancel(s)", n)
+	}
+}
+
+// TestClearRefreshesHomeSessionList 验证 /clear 返回主页时会重新拉取会话列表
+// （默认与 on 两种形式）：进入会话期间的变更无需再按 r 手动刷新。
+func TestClearRefreshesHomeSessionList(t *testing.T) {
+	cases := []struct {
+		name    string
+		command string
+	}{
+		{"default", "/clear"},
+		{"on", "/clear on"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			setConfigDir(t)
+			ft := newFakeTerm()
+			tb := &trackBackend{Backend: demo.New(true)}
+			a := New(ft, tb)
+			done := runApp(t, a)
+
+			// 先等启动时的首屏 session/list 完成，避免把它算进 /clear 的刷新。
+			waitCondition(t, "startup session list loaded", func() bool { return tb.listCount() >= 1 })
+			before := tb.listCount()
+
+			for _, r := range "hello" {
+				ft.sendKey(input.RuneKey(r, input.ModNone))
+			}
+			ft.sendKey(input.SimpleKey(input.KeyEnter))
+			time.Sleep(200 * time.Millisecond)
+
+			for _, r := range tc.command {
+				ft.sendKey(input.RuneKey(r, input.ModNone))
+			}
+			ft.sendKey(input.SimpleKey(input.KeyEnter))
+			waitCondition(t, "session list refreshed after "+tc.command, func() bool {
+				return tb.listCount() > before
+			})
+
+			ft.sendKey(input.RuneKey('q', input.ModCtrl))
+			time.Sleep(50 * time.Millisecond)
+			ft.sendKey(input.RuneKey('y', input.ModNone))
+			waitRun(t, done)
+
+			if a.model.View != model.ViewHome {
+				t.Errorf("expected home view after %s, got %v", tc.command, a.model.View)
+			}
+		})
 	}
 }
 

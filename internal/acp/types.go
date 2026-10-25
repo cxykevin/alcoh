@@ -320,6 +320,15 @@ type CronControl interface {
 	DeleteCron(ctx context.Context, id uint32) error
 }
 
+// BackgroundControl 暴露 alkaid0 会话后台运行模式的查询方法
+// （alk.cxykevin.top/session/get_background，见 ../alkaid0/docs/acp/extension.md
+// §3.7）。模式由服务端命令 /background on|off 修改，客户端只做查询与展示。
+// 与 TerminalControl / CronControl 一样是可选能力，调用方用类型断言按需取用。
+type BackgroundControl interface {
+	// GetBackground 报告会话在全部客户端断开后是否保持运行。
+	GetBackground(ctx context.Context) (bool, error)
+}
+
 // HistoryPager 暴露 alkaid0 v0.6 的历史回放分页（见 extension.md §3.3）。
 // session/resume 每次最多回放 200 条消息，从活跃分支末端往更早的方向翻页：
 // 首屏拿到的是最近一页，响应携带游标时表示还有更早的消息。

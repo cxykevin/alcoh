@@ -65,6 +65,9 @@ func (a *App) dispatchKey(ke input.KeyEvent) {
 	case model.ModalCron:
 		a.cronKey(ke)
 		return
+	case model.ModalTasks:
+		a.tasksKey(ke)
+		return
 	case model.ModalServer:
 		a.serverConfigKey(ke)
 		return
@@ -699,16 +702,14 @@ func (a *App) tryLocalSlashCommand() bool {
 	case "/clear":
 		m.Input.Clear()
 		m.CloseSlash()
-		if rest == "on" {
-			// /clear on：不取消正在运行的会话，直接返回会话列表。
-			a.goHome()
-			return true
-		}
-		// 默认：若会话仍在运行（未被取消），先停掉再返回会话列表。
-		if m.Active != nil && m.Active.Running() {
+		// /clear on 不取消正在运行的会话；默认先停掉再返回会话列表。
+		if rest != "on" && m.Active != nil && m.Active.Running() {
 			a.cancelCurrent()
 		}
 		a.goHome()
+		// 返回主页后重新拉取会话列表：离开会话期间的变更（本会话的新消息、
+		// 其它客户端新建的会话）立即反映在主页列表上，不必再按 r 手动刷新。
+		a.refreshSessionsLocked()
 	case "/settings":
 		m.Input.Clear()
 		m.CloseSlash()
@@ -749,6 +750,16 @@ func (a *App) tryLocalSlashCommand() bool {
 		m.Input.Clear()
 		m.CloseSlash()
 		a.openCron()
+	case "/tasks":
+		m.Input.Clear()
+		m.CloseSlash()
+		a.openTasks()
+	case "/background":
+		// 客户端覆盖指令：直接发送服务端 /background 命令，始终不进入消息
+		// 队列、不打断当前运行、不走插件 prompt hooks（见 backgroundCommand）。
+		m.Input.Clear()
+		m.CloseSlash()
+		a.backgroundCommand(rest)
 	default:
 		// 插件注册的斜杠命令（/xxx 开头的 token 未命中本地命令时尝试插件）。
 		return a.runPluginCommand(name, rest)
@@ -1419,6 +1430,14 @@ func (a *App) dispatchMouse(me input.MouseEvent) {
 			m.CronMove(-1)
 		} else if me.Button == input.MouseWheelDown {
 			m.CronMove(1)
+		}
+		return
+	case model.ModalTasks:
+		// 滚轮滚动任务列表。
+		if me.Button == input.MouseWheelUp {
+			m.TasksScrollBy(-1)
+		} else if me.Button == input.MouseWheelDown {
+			m.TasksScrollBy(1)
 		}
 		return
 	case model.ModalServer:

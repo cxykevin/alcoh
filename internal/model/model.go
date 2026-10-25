@@ -65,6 +65,9 @@ const (
 	// ModalCron /cron 会话定时任务面板：查看与删除 cron 工具创建的任务
 	// （alk.cxykevin.top/cron 能力）。
 	ModalCron
+	// ModalTasks /tasks AI 任务列表面板：滚动查看 alkaid0 task 工具维护的完整
+	// 任务列表（服务端经 plan_update 全量推送，见 model/tasks.go）。
+	ModalTasks
 )
 
 // Focus 表示会话视图的焦点区域。
@@ -149,6 +152,10 @@ type AppModel struct {
 	QueueSelect int
 	// CronSelect 是 /cron 面板当前选中的定时任务索引。
 	CronSelect int
+	// TasksScroll 是 /tasks 面板列表顶部的任务索引；TasksRows 是列表一次可见的
+	// 任务行数（视图绘制时写入，用于 PgUp/PgDn 翻页）。
+	TasksScroll int
+	TasksRows   int
 	// QueueFocused 表示输入框上方的排队框是否获得焦点：存在排队项时按 ↑ 进入，
 	// 此时 ↑↓ 在队列内移动、Tab/空格/i 编辑、Backspace/Delete 删除。
 	QueueFocused bool
@@ -286,6 +293,10 @@ var localSlashCommandInfo = map[string]SlashCommandInfo{
 	"/rewind":     {Name: "/rewind", Description: "撤回对话到指定消息（alkaid0 v0.6）"},
 	"/queue":      {Name: "/queue", Description: "查看与管理排队消息（alkaid0 msgqueue）"},
 	"/cron":       {Name: "/cron", Description: "查看与删除定时任务（alkaid0 cron）"},
+	"/tasks":      {Name: "/tasks", Description: "查看 AI 任务列表（alkaid0 task）"},
+	// /background 是客户端覆盖指令：命中后由客户端直接发送服务端命令，
+	// 始终不进入消息队列（见 app.backgroundCommand）。
+	"/background": {Name: "/background", Description: "设置会话后台运行模式（不进入排队）", ArgsHint: "[on|off]"},
 }
 
 // effortLevels 是客户端硬编码的推理强度（ACP v2 thought_level 目录）候选值。
@@ -379,7 +390,7 @@ func (m *AppModel) SlashCompletion() (ghost, description string) {
 // 未列入硬编码列表的 agent 命令优先级为 0。
 func slashCommandPriority(command string) int {
 	switch command {
-	case "/alcoh_help", "/connect", "/effort", "/clear", "/settings", "/server", "/plugins", "/rewind", "/queue", "/cron":
+	case "/alcoh_help", "/connect", "/effort", "/clear", "/settings", "/server", "/plugins", "/rewind", "/queue", "/cron", "/tasks", "/background":
 		return 1
 	default:
 		return 0
@@ -416,6 +427,16 @@ func (m *AppModel) SlashCommands() []string {
 	// /cron 仅在服务端声明 cron 能力且有活动会话时可用。
 	if m.CronAvailable() && !containsString(out, "/cron") {
 		out = append(out, "/cron")
+	}
+	// /tasks 仅在服务端声明 alkaid0 能力且有活动会话时可用（任务列表由 alkaid0
+	// 的 task 工具维护并经 plan_update 推送）。
+	if m.TasksAvailable() && !containsString(out, "/tasks") {
+		out = append(out, "/tasks")
+	}
+	// /background 是客户端覆盖指令：优先于服务端下发的同名命令（去重时保留
+	// 客户端条目），执行时直接发送服务端命令、始终不进入消息队列。
+	if m.BackgroundAvailable() && !containsString(out, "/background") {
+		out = append(out, "/background")
 	}
 	if m.Active != nil {
 		for _, command := range m.Active.Commands {
@@ -1472,6 +1493,12 @@ func (m *AppModel) ActivateSession(id, title string) {
 		}
 		return
 	}
+	// session/resume 的会话句柄只带 ID、不带标题，标题只存在于
+	// session/list 返回的主页会话列表。恢复会话时先用列表里的标题初始化，
+	// 避免状态栏回退显示 sess_<id>:<cwd> 这种原始会话 ID。
+	if title == "" {
+		title = m.sessionTitleFromList(id)
+	}
 	if m.PreSession != nil && m.PreSession.ID == id {
 		// 主页预创建会话被用户直接用作新会话（主页输入 prompt 回车或按 n）：
 		// 复用其状态对象，保留已应用的 config / commands，避免重建空状态丢失
@@ -1496,6 +1523,17 @@ func (m *AppModel) ActivateSession(id, title string) {
 			m.ApplyEvent(ev)
 		}
 	}
+}
+
+// sessionTitleFromList 返回主页会话列表（session/list）中指定会话的标题；
+// 列表里没有该会话或标题为空时返回空串。
+func (m *AppModel) sessionTitleFromList(id string) string {
+	for _, info := range m.Sessions {
+		if info != nil && info.SessionID == id && info.Title != "" {
+			return info.Title
+		}
+	}
+	return ""
 }
 
 // GoHome 返回首页。

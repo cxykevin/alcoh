@@ -35,6 +35,9 @@ type Theme struct {
 	ToolRunning Color
 	ToolDone    Color
 	ToolFailed  Color
+	// BgRunning 是会话处于后台运行模式（/background on）时工作指示器的基色：
+	// 与默认的主题蓝 ToolRunning 区分，提示会话在客户端断开后仍会继续运行。
+	BgRunning Color
 }
 
 // DefaultTheme 返回深色背景默认主题。
@@ -69,6 +72,7 @@ func DefaultTheme() Theme {
 		ToolRunning: RGB(0x4F, 0x9C, 0xF9),
 		ToolDone:    RGB(0x3F, 0xB9, 0x50),
 		ToolFailed:  RGB(0xFF, 0x5F, 0x56),
+		BgRunning:   RGB(0xFF, 0xA5, 0x00),
 	}
 }
 

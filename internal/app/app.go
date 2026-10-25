@@ -161,6 +161,7 @@ const (
 	commandMsgQueueClear
 	commandCronList
 	commandCronDelete
+	commandBackgroundGet
 )
 
 type commandResult struct {
@@ -176,6 +177,8 @@ type commandResult struct {
 	queue      *acp.MsgQueueSnapshot
 	crons      []acp.CronJob
 	cronID     uint32
+	// background 是 get_background 的查询结果（commandBackgroundGet）。
+	background bool
 	err        error
 }
 
@@ -418,6 +421,8 @@ type modelSnapshot struct {
 	ActiveRunning bool
 	ActiveScroll  int
 	FollowBottom  bool
+	// Background 是活动会话的服务端后台运行模式（get_background）。
+	Background    bool
 	ServerCfg     bool     // 服务端配置树已加载（ServerCfg != nil）
 	ServerSaving  bool     // 服务端配置写回/全量重载进行中（编辑被阻塞）
 	ServerCurKey  string   // 服务端配置编辑器当前页 Key（根为空串）
@@ -452,6 +457,11 @@ type modelSnapshot struct {
 	// 会话定时任务（/cron 面板）快照，供测试轮询。
 	CronJobs []acp.CronJob
 	CronSel  int
+
+	// AI 任务列表（/tasks 面板）快照，供测试轮询。
+	TaskEntries int
+	TasksScroll int
+	TasksRows   int
 }
 
 // snapshot 返回当前模型状态快照，供测试在应用运行期间安全轮询。
@@ -508,11 +518,15 @@ func (a *App) snapshot() modelSnapshot {
 		s.ActiveRunning = a.model.Active.Running()
 		s.ActiveScroll = a.model.Active.Scroll
 		s.FollowBottom = a.model.Active.FollowBottom
+		s.Background = a.model.Active.Background
 		s.QueueItems = append([]acp.MsgQueueItem(nil), a.model.Active.MsgQueue...)
 		s.QueueSel = a.model.QueueSelect
 		s.QueueFocused = a.model.QueueFocused
 		s.CronJobs = append([]acp.CronJob(nil), a.model.Active.Crons...)
 		s.CronSel = a.model.CronSelect
+		s.TaskEntries = len(a.model.TaskEntries())
+		s.TasksScroll = a.model.TasksScroll
+		s.TasksRows = a.model.TasksRows
 	}
 	return s
 }
@@ -745,6 +759,14 @@ func (a *App) handleTermEvent(ev term.Event) {
 // 会话重新绑定到新连接（见 acp.SessionReattacher）。调用方必须已持有 modelMu。
 func (a *App) applyEvent(ev acp.Event) {
 	a.model.ApplyEvent(ev)
+	if se, ok := ev.(*acp.StateChangeEvent); ok {
+		// /background on|off 是服务端命令：执行时状态先切到 running、命令返回后
+		// 回到 idle，但后台模式本身没有推送。借状态切换补一次查询，工作指示器
+		// 才能在下一次运行时用对颜色（也覆盖其它客户端修改的模式）。
+		if a.model.HasActive() && se.SessionID == a.model.Active.ID {
+			a.refreshBackgroundMode()
+		}
+	}
 	if re, ok := ev.(*acp.ReconnectEvent); ok {
 		a.applyReconnectEvent(re)
 	}
@@ -996,6 +1018,11 @@ func (a *App) applyCommandResult(result commandResult) {
 		a.model.ApplyCrons(result.crons)
 		return
 	}
+	if result.kind == commandBackgroundGet {
+		// 后台运行模式只影响状态栏指示器颜色：会话已切换或查询失败时保持现状。
+		a.applyBackgroundResult(result)
+		return
+	}
 	if result.kind == commandCronDelete {
 		if result.sessionID != "" && (a.sess == nil || a.sess.ID() != result.sessionID) {
 			return
@@ -1048,6 +1075,10 @@ func (a *App) applyCommandResult(result commandResult) {
 		a.model.ApplyEvent(&acp.BackendErrorEvent{Err: result.err})
 		return
 	}
+	if result.kind == commandSessionAction && result.sessionID != "" {
+		// 重连重绑完成：后台运行模式可能已在服务端变化（/background），补查一次。
+		a.refreshBackgroundMode()
+	}
 	if result.session != nil {
 		a.sess = result.session
 		a.model.ClearSelection()
@@ -1055,6 +1086,9 @@ func (a *App) applyCommandResult(result commandResult) {
 		// 进入会话即同步一次 shells 状态（活动终端 + 已结束终端）：面板据此
 		// 在没有活跃 shell 时也能打开，直接看到上一次运行留下的终端内容。
 		a.refreshShellOnEntry()
+		// 后台运行模式没有推送：进入会话（新建/恢复）时查询一次，
+		// 状态栏工作指示器据此决定用默认蓝色还是橙色。
+		a.refreshBackgroundMode()
 		if result.opID == a.firstSessionOpID {
 			// 新手引导后的第一个新会话：应用引导里选的 effort。
 			a.firstSessionOpID = 0

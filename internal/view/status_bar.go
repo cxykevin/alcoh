@@ -59,7 +59,7 @@ func (sb *StatusBar) Draw(c *renderer.Canvas, r renderer.Rect, m *model.AppModel
 		switch s.State {
 		case acp.StateRunning:
 			spans = append(spans, Span{Text: "  ", Style: st})
-			spans = append(spans, runningState(SpinFrame(sb.SpinFrame), sb.SpinFrame, t)...)
+			spans = append(spans, runningState(SpinFrame(sb.SpinFrame), sb.SpinFrame, t, s.Background)...)
 		case acp.StateRequiresAction:
 			spans = append(spans, Span{Text: "  ? action", Style: st})
 		case acp.StateIdle:
@@ -117,9 +117,15 @@ var runningWords = []string{
 
 // runningState 构造运行状态的状态栏 span：spinner + 随时间循环的动词。
 // 动词使用主题蓝作为基色，并叠加一个从左向右扫过的高光动画：
-// 高光前缘最亮（纯白加粗），向尾部渐隐回主题蓝，扫到词尾后从头再来。
-func runningState(spin string, frame int, t renderer.Theme) []Span {
-	base := t.Style(t.ToolRunning)
+// 高光前缘最亮（纯白加粗），向尾部渐隐回基色，扫到词尾后从头再来。
+// background 为 true 时（服务端后台运行模式开启）基色换成橙色，
+// 让"客户端断开后也会继续跑"的会话与普通会话一眼可辨。
+func runningState(spin string, frame int, t renderer.Theme, background bool) []Span {
+	baseColor := t.ToolRunning
+	if background {
+		baseColor = t.BgRunning
+	}
+	base := t.Style(baseColor)
 	// 动词约每 2 秒（20 tick × 100ms）切换一次。
 	word := runningWords[(frame/20)%len(runningWords)]
 	runes := []rune(word)

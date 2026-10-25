@@ -667,6 +667,112 @@ func cronContent(t renderer.Theme, m *model.AppModel) *CronContent {
 	}
 }
 
+// TasksContent 是 /tasks AI 任务列表的滚动内容区。任务来自 alkaid0 的 task
+// 工具（服务端把 @task 解析成 plan entries 后经 plan_update 全量推送）。每条任务
+// 占一行：完成绿色、进行中蓝色、未完成紫色（取消红色）；内容超过一屏时右侧
+// 绘制滚动条。
+type TasksContent struct {
+	Theme   renderer.Theme
+	Entries []acp.PlanEntry
+	Scroll  int
+	// Rows 非空时写回本次绘制可用的条目行数（供 PgUp/PgDn 翻页）。
+	Rows *int
+}
+
+// Draw 绘制任务列表：顶部摘要、空行、任务行，底部一行操作提示。
+func (tc *TasksContent) Draw(c *renderer.Canvas, r renderer.Rect) {
+	if r.H <= 0 {
+		return
+	}
+	t := tc.Theme
+	done, inProgress := 0, 0
+	for _, e := range tc.Entries {
+		switch e.Status {
+		case acp.PlanCompleted:
+			done++
+		case acp.PlanInProgress:
+			inProgress++
+		}
+	}
+
+	y := r.Y
+	if len(tc.Entries) == 0 {
+		c.PutText(r.X, y, renderer.Truncate(i18n.T("本会话还没有 AI 任务列表"), r.W), t.Style(t.TextMuted))
+	} else {
+		summary := i18n.T("任务 %d/%d 完成", done, len(tc.Entries))
+		if inProgress > 0 {
+			summary += i18n.T("   ·  %d 进行中", inProgress)
+		}
+		c.PutText(r.X, y, renderer.Truncate(summary, r.W), t.Style(t.TextMuted))
+	}
+	y++ // 摘要行
+	y++ // 空行
+
+	// 任务行窗口：底部留一行操作提示。
+	footerY := r.Y + r.H - 1
+	rows := max(footerY-y, 0)
+	if tc.Rows != nil {
+		*tc.Rows = rows
+	}
+	start := min(max(tc.Scroll, 0), max(len(tc.Entries)-rows, 0))
+
+	if len(tc.Entries) == 0 {
+		if y < footerY {
+			c.PutText(r.X, y, renderer.Truncate(i18n.T("AI 通过 task 工具维护任务（@task），任务生成后自动推送到这里"), r.W), t.Style(t.TextMuted))
+		}
+	} else {
+		showBar := len(tc.Entries) > rows && r.W > 1
+		textW := r.W
+		if showBar {
+			textW--
+		}
+		for i := 0; i < rows && start+i < len(tc.Entries); i++ {
+			e := tc.Entries[start+i]
+			sym, st := tasksStatusStyle(t, e.Status)
+			c.PutText(r.X, y+i, renderer.Truncate(" "+sym+" "+e.Content, textW), st)
+		}
+		if showBar {
+			bar := widget.Scrollbar{
+				Total: len(tc.Entries),
+				View:  rows,
+				Top:   start,
+				Track: t.Style(t.BorderSubtle),
+				Thumb: t.Style(t.Primary),
+			}
+			bar.Draw(c, renderer.NewRect(r.X+r.W-1, y, 1, rows))
+		}
+	}
+
+	if footerY >= r.Y {
+		c.PutText(r.X, footerY, renderer.Truncate(i18n.T("↑↓ 滚动    PgUp/PgDn 翻页    Home/End 首尾    Esc 关闭"), r.W), t.Style(t.TextMuted))
+	}
+}
+
+// tasksStatusStyle 返回任务状态的符号与颜色：完成绿、进行中蓝、未完成紫、
+// 取消红。
+func tasksStatusStyle(t renderer.Theme, status acp.PlanEntryStatus) (string, renderer.Style) {
+	switch status {
+	case acp.PlanCompleted:
+		return "✓", t.Style(t.ToolDone)
+	case acp.PlanInProgress:
+		return "●", t.Style(t.ToolRunning)
+	case acp.PlanCancelled:
+		return "✗", t.Style(t.ToolFailed)
+	default:
+		return "○", t.Style(t.Secondary)
+	}
+}
+
+// tasksContent 构造 /tasks 面板内容。
+func tasksContent(t renderer.Theme, m *model.AppModel) *TasksContent {
+	return &TasksContent{
+		Theme:   t,
+		Entries: m.TaskEntries(),
+		Scroll:  m.TasksScroll,
+		Rows:    &m.TasksRows,
+	}
+}
+
 func protocolUpdateCount(m *model.AppModel) int {
 	if m.Active == nil {
 		return 0

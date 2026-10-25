@@ -143,6 +143,7 @@ alcoh 以**本地子进程 + JSONLines JSON-RPC 2.0 + protobuf payload** 的方�
 
 - **主页预创建会话**：进入主页（启动或 `/clear` 返回）时，若服务端公布 `session.delete` 能力，客户端同步预创建一个空会话（不进入会话视图），用它承载 agent 在 `session/new` 后广播的 `config_option_update`，使 `/effort` 与 `/model` 在主页命令面板直接可用。主页直接输入 prompt 回车时复用该会话作为用户的新会话（不删除、不新建）；恢复旧会话、程序退出或预创建会话确无用途时才把它删除，不在服务端残留。
 - **会话恢复与删除**：首页选中会话按 `Enter` 恢复（`session/resume`），按 `d` 删除（`session/delete`，仅当 agent 声明对应能力时可用）。
+- **恢复后的会话标题**：`session/resume` 只返回会话 ID（不带标题），恢复时状态栏标题取自主页会话列表里 `session/list` 的标题，不会显示 `sess_<id>:<cwd>`；AI 生成新标题后随 `session_info_update` 实时刷新。
 - **打断 / 撤回**：会话内按 `Esc` 打断正在进行的 AI 响应（`session/cancel`，与输入框内容无关，清空输入走 `Ctrl+C`）；会话严格 idle 且输入框为空时，0.5 秒内连按两次 `Esc` 打开 `/rewind` 撤回选择器。输入框为空时 `Ctrl+C` 首次提示、2 秒内再次按下才退出。
 - **历史回放分页**：恢复会话时服务端只回放活跃分支末尾的一页。正文滚到顶部（`↑`、`PgUp`、`Home` 或滚轮）会继续向更早翻页（`session/resume` 带游标，仅当服务端声明 `alk.cxykevin.top/alkaid0/v0.6` 时可用）：加载期间正文顶部显示「正在加载更早的历史…」，期间重复滚动不会重复请求；取回的旧消息按 `messageId` 插到已知消息之前，视口按新增行数补偿、停在原处不跳动；翻到活跃分支最早一条后自动停止。
 
@@ -187,7 +188,7 @@ agent 经 `run` 工具启动的终端会实时推送到 shells 面板（仅当�
 
 - `/alcoh_help`：显示命令帮助（输入框为空时按 `?` 亦可）
 - `/connect`：**连接模型服务商向导**——内置服务商模板（DeepSeek / OpenAI / OpenCode Go / Moonshot / GLM / Qwen / S3AI / 自定义）自动预填 base_url，填 API key 后自动调用服务商 `/models` 接口拉取模型列表，选择模型即写入服务端配置（自动分配模型键并设为默认）。仅当服务端声明 alkaid0 扩展能力时可用
-- `/clear [on]`：返回主页会话列表；默认先取消正在运行的会话，`on` 不取消直接返回
+- `/clear [on]`：返回主页会话列表并重新拉取列表（无需再按 `r` 手动刷新）；默认先取消正在运行的会话，`on` 不取消直接返回
 - `/effort [unset|low|medium|high|xhigh|max]`：设置推理强度。带参数直接经 `session/set_config_option` 写 `thought_level`；无参数弹出水平滑条（←→ 移动、Enter 确认、Esc 取消）。仅当 agent 公布 `thought_level` config 时可用
 - `/model [value]`：切换模型。带参数直接经 `session/set_config_option`（`type=id`）写模型；无参数弹出垂直模型菜单（↑↓/滚轮 选择、Enter 确认、Esc 取消）。仅当 agent 公布 `category="model"`（或 `configId="model"`）config 时可用；候选值与当前值均取自服务端公布的 `options`/`currentValue`
 - `/settings`：本地设置（`Ctrl+,` 亦可），切换 `colorMode` 等选项并即时保存
@@ -218,6 +219,18 @@ agent 经 `run` 工具启动的终端会实时推送到 shells 面板（仅当�
 - `/cron`：查看与删除当前会话的定时任务（仅当服务端声明 `alk.cxykevin.top/cron` 时可用）。
   任务由 AI 通过 `cron` 工具创建；面板每条显示 id、5 段表达式、周期/一次、提示词与下次触发时间，
   `↑`/`↓`（或滚轮）选择、`d`/`x` 取消选中任务、`r` 重新拉取、`Esc` 关闭。删除后自动重新查询列表。
+- `/tasks`：查看 **AI 任务列表**（仅当服务端声明 `alk.cxykevin.top/alkaid0/v0.4` 时可用）。
+  任务由 AI 通过 `task` 工具编辑虚拟对象 `@task` 维护，服务端把任务 markdown 解析成
+  ACP plan entries 后经 `plan_update` 全量推送到客户端；面板可滚动查看完整列表，
+  按状态着色：**完成绿色、进行中蓝色、未开始紫色**（取消红色）。
+  `↑`/`↓`（或滚轮）逐行滚动、`PgUp`/`PgDn` 翻页、`Home`/`End` 跳到首尾、`Esc` 关闭；
+  内容超过一屏时右侧显示滚动条。任务更新（AI 编辑 `@task`）时面板实时刷新。
+- `/background [on|off]`：**客户端覆盖指令**，设置会话后台运行模式（仅当服务端声明
+  `alk.cxykevin.top/alkaid0/v0.4` 且有活动会话时可用）。无参数显示当前模式；`on`/`off`
+  由客户端直接发送服务端 `/background` 命令，**始终不进入消息队列**、不打断当前运行、
+  不走插件 prompt hooks。模式由服务端保存（所有客户端断开后会话继续运行），服务端不推送
+  模式变化；客户端在进入会话、重连与状态切换时经 `alk.cxykevin.top/session/get_background`
+  同步。开启时状态栏的工作指示器使用橙色，默认使用主题蓝。
 
 ### 常用快捷键
 

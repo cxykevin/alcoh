@@ -367,6 +367,36 @@ func TestRemoveSessionActiveGoesHome(t *testing.T) {
 	}
 }
 
+// TestActivateSessionUsesHomeListTitle 验证从主页恢复会话时用会话列表里的标题
+// 初始化活动会话：session/resume 的句柄只带 ID（标题为空），状态栏不应回退
+// 显示 sess_<id>:<cwd> 这种原始会话 ID。
+func TestActivateSessionUsesHomeListTitle(t *testing.T) {
+	m := New()
+	m.Sessions = []*acp.SessionInfo{{SessionID: "sess_12:/work", Title: "修复登录 bug"}}
+	m.ActivateSession("sess_12:/work", "")
+	if m.Active == nil {
+		t.Fatal("active session should be set")
+	}
+	if got := m.Active.Title; got != "修复登录 bug" {
+		t.Errorf("active title = %q, want list title %q", got, "修复登录 bug")
+	}
+
+	// 会话句柄/事件已带标题时优先，列表标题不覆盖它。
+	m = New()
+	m.Sessions = []*acp.SessionInfo{{SessionID: "s1", Title: "列表标题"}}
+	m.ActivateSession("s1", "有标题的会话")
+	if got := m.Active.Title; got != "有标题的会话" {
+		t.Errorf("active title = %q, want explicit title %q", got, "有标题的会话")
+	}
+
+	// 列表里没有的会话保持空标题（状态栏回退显示 ID，等待 session_info_update）。
+	m = New()
+	m.ActivateSession("s2", "")
+	if m.Active == nil || m.Active.Title != "" {
+		t.Errorf("active title = %q, want empty for unknown session", m.Active.Title)
+	}
+}
+
 func TestUnknownSessionUpdateHiddenByDefault(t *testing.T) {
 	m := New()
 	m.ActivateSession("s1", "")

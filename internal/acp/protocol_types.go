@@ -67,6 +67,11 @@ const (
 	MethodCronList   = "alk.cxykevin.top/session/cron/list"
 	MethodCronDelete = "alk.cxykevin.top/session/cron/delete"
 
+	// MethodSessionGetBackground 查询会话的后台运行模式
+	// （alk.cxykevin.top/session/get_background，见 extension.md §3.7）：
+	// 纯请求-响应，无推送；/background on|off 由服务端命令修改，客户端按需查询。
+	MethodSessionGetBackground = "alk.cxykevin.top/session/get_background"
+
 	// SessionCursorField 是 alkaid0 v0.6 历史回放分页的扩展字段名。它出现在
 	// session/resume 响应里表示还有更早的消息未回放；把它原样作为下一次
 	// session/resume 请求的顶层参数传入即可继续取更早的一页（见 extension.md §3.3）。
@@ -500,4 +505,16 @@ type ElicitationResponse struct {
 // ElicitationCompleteParams 是 elicitation/complete notification 参数。
 type ElicitationCompleteParams struct {
 	ElicitationID string `json:"elicitationId"`
+}
+
+// SessionGetBackgroundParams 是 get_background 请求参数
+// （alk.cxykevin.top/session/get_background，见 extension.md §3.7）。
+type SessionGetBackgroundParams struct {
+	SessionID string `json:"sessionId"`
+}
+
+// SessionGetBackgroundResult 是 get_background 响应：Background 表示会话在
+// 所有客户端断开后仍保持运行（/background on|off）。
+type SessionGetBackgroundResult struct {
+	Background bool `json:"background"`
 }

@@ -162,6 +162,10 @@ type SessionState struct {
 	Title      string
 	State      acp.SessionState
 	StopReason *acp.StopReason
+	// Background 表示服务端的会话后台运行模式（/background on|off）：
+	// 为 true 时工作指示器改用橙色，提示会话在客户端断开后仍继续运行。
+	// 服务端不推送状态变化，由 app 在进入会话与状态切换时经 get_background 刷新。
+	Background bool
 
 	Messages        []*Message
 	receiveMessages []*Message

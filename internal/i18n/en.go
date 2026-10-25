@@ -181,9 +181,16 @@ var en = map[string]string{
 	"当前运行未在 %dms 内停止，已取消撤回":              "Current run did not stop within %dms; rewind cancelled",
 	"当前没有活动会话":                           "No active session",
 	"当前运行尚未停止，请稍后重试":                     "Current run has not stopped yet; please retry later",
-	"未知原因":                               "unknown reason",
-	"撤回对话失败: %s":                         "Rewind failed: %s",
-	"已撤回对话，原消息已填回输入框":                    "Conversation rewound; the original message was put back into the input box",
+
+	"未知原因":       "unknown reason",
+	"撤回对话失败: %s": "Rewind failed: %s",
+	"已撤回对话，原消息已填回输入框": "Conversation rewound; the original message was put back into the input box",
+
+	// ---- 后台运行模式（/background，客户端覆盖指令）----
+	"设置会话后台运行模式（不进入排队）":                   "Set the session background mode (never queued)",
+	"服务端未声明 alkaid0 扩展能力，/background 不可用": "/background unavailable: server does not declare the alkaid0 extension capability",
+	"后台运行模式：%s":                           "Background mode: %s",
+	"用法: /background on|off":              "Usage: /background on|off",
 
 	// ---- 会话消息队列（msgqueue）----
 	"服务端未声明 msgqueue 能力，/queue 不可用":           "/queue unavailable: server does not declare the msgqueue capability",
@@ -221,6 +228,16 @@ var en = map[string]string{
 	"获取定时任务失败: %s":                        "Failed to fetch scheduled jobs: %s",
 	"删除定时任务失败: %s":                        "Failed to delete the scheduled job: %s",
 	"已删除定时任务":                             "Scheduled job deleted",
+
+	// ---- AI 任务列表（tasks）----
+	"查看 AI 任务列表（alkaid0 task）":       "View the AI task list (alkaid0 task)",
+	"服务端未声明 alkaid0 扩展能力，/tasks 不可用": "/tasks unavailable: server does not declare the alkaid0 extension capability",
+	"任务列表 (tasks)":                   "Tasks (tasks)",
+	"任务 %d/%d 完成":                    "%d/%d tasks completed",
+	"   ·  %d 进行中":                   "   ·  %d in progress",
+	"本会话还没有 AI 任务列表":                 "No AI task list in this session yet",
+	"AI 通过 task 工具维护任务（@task），任务生成后自动推送到这里":          "The AI maintains tasks with the task tool (@task); they appear here automatically",
+	"↑↓ 滚动    PgUp/PgDn 翻页    Home/End 首尾    Esc 关闭": "↑↓ scroll    PgUp/PgDn page    Home/End top/bottom    Esc close",
 
 	// ---- 权限/请求 ----
 	"权限请求":                     "Permission request",

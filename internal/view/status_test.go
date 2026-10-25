@@ -92,7 +92,7 @@ func TestRunningStateSweepsLeftToRight(t *testing.T) {
 
 	// 高光前缘（纯白加粗字符）应随帧号从左向右移动：帧 0/1/2 → 字符 0/1/2。
 	for frame, want := range []int{0, 1, 2} {
-		spans := runningState("", frame, theme)
+		spans := runningState("", frame, theme, false)
 		got := -1
 		for i := 1; i < len(spans); i++ { // spans[0] 是 "spin "
 			if spans[i].Style.Fg == white && spans[i].Style.Bold {
@@ -105,8 +105,51 @@ func TestRunningStateSweepsLeftToRight(t *testing.T) {
 	}
 
 	// 帧 0 时，非高亮字符使用主题蓝基色（验证蓝色主题渲染）。
-	spans := runningState("", 0, theme)
+	spans := runningState("", 0, theme, false)
 	if spans[2].Style.Fg != baseFg || spans[2].Style.Bold {
 		t.Fatalf("frame=0: rune 1 should be base blue non-bold, got style %+v", spans[2].Style)
+	}
+}
+
+// TestRunningStateUsesOrangeInBackgroundMode 验证后台运行模式（/background on）
+// 下工作指示器改用橙色基色；状态栏的 idle 状态不受影响。
+func TestRunningStateUsesOrangeInBackgroundMode(t *testing.T) {
+	theme := renderer.DefaultTheme()
+	orange := theme.Style(theme.BgRunning).Fg
+	if orange == theme.Style(theme.ToolRunning).Fg {
+		t.Fatal("background running color must differ from the default blue")
+	}
+
+	orig := runningWords
+	runningWords = []string{"abc"}
+	defer func() { runningWords = orig }()
+
+	// 帧 0：高光落在首字符，spinner 与非高亮字符都应使用橙色基色。
+	spans := runningState("", 0, theme, true)
+	if spans[0].Style.Fg != orange {
+		t.Errorf("spinner fg = %v, want orange %v", spans[0].Style.Fg, orange)
+	}
+	if spans[2].Style.Fg != orange || spans[2].Style.Bold {
+		t.Errorf("frame=0: rune 1 fg = %v bold=%v, want orange non-bold", spans[2].Style.Fg, spans[2].Style.Bold)
+	}
+
+	// 状态栏整体绘制：Running + Background 时工作指示器第一格应为橙色。
+	s := model.NewSession("s1", "会话1")
+	s.State = acp.StateRunning
+	s.Background = true
+	m := &model.AppModel{}
+	m.Active = s
+	b := renderer.NewBuffer(60, 1)
+	sb := &StatusBar{Theme: theme, SpinFrame: 0}
+	sb.Draw(renderer.NewCanvas(b), renderer.NewRect(0, 0, 60, 1), m)
+	seenOrange := false
+	for x := range 60 {
+		if b.Get(x, 0).Style.Fg == orange {
+			seenOrange = true
+			break
+		}
+	}
+	if !seenOrange {
+		t.Fatal("status bar running indicator should render orange in background mode")
 	}
 }

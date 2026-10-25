@@ -137,6 +137,8 @@ func (v *AppView) modalHeight(m *model.AppModel) int {
 		h = queueModalHeight(m)
 	case model.ModalCron:
 		h = cronModalHeight(m)
+	case model.ModalTasks:
+		h = tasksModalHeight(m)
 	case model.ModalExitConfirm:
 		h = 5
 	case model.ModalServer, model.ModalPlugins:
@@ -180,6 +182,24 @@ func cronModalHeight(m *model.AppModel) int {
 		n = 4
 	}
 	return cronItemRows*n + 5
+}
+
+// tasksMaxRows 是 /tasks 面板一次最多展示的任务行数；更多时列表内部滚动，
+// 可用 PgUp/PgDn 翻页。
+const tasksMaxRows = 14
+
+// tasksModalHeight 返回 /tasks 面板的高度：顶部摘要 + 空行 + 任务行
+// （最多 tasksMaxRows 条，更多时窗口滚动）+ 一行留白 + 底部操作提示，
+// 再加标题横线 1 行。没有任务时只保留一行空状态。
+func tasksModalHeight(m *model.AppModel) int {
+	n := len(m.TaskEntries())
+	if n == 0 {
+		return 6
+	}
+	if n > tasksMaxRows {
+		n = tasksMaxRows
+	}
+	return n + 5
 }
 
 // drawModalAtInput 将弹窗作为底部全宽面板绘制，替换输入框和状态栏。
@@ -238,6 +258,10 @@ func (v *AppView) drawModalAtInput(c *renderer.Canvas, r renderer.Rect, m *model
 		h = cronModalHeight(m)
 		title = i18n.T("定时任务 (cron)")
 		content = cronContent(v.Theme, m)
+	case model.ModalTasks:
+		h = tasksModalHeight(m)
+		title = i18n.T("任务列表 (tasks)")
+		content = tasksContent(v.Theme, m)
 	case model.ModalServer:
 		// 配置编辑器占满整屏（DrawSheet 全宽面板）。
 		h = r.H

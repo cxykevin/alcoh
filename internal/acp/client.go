@@ -855,6 +855,24 @@ func (s *clientSession) DeleteCron(ctx context.Context, id uint32) error {
 	return t.Request(ctx, MethodCronDelete, CronDeleteParams{SessionID: s.id, ID: id}, &result)
 }
 
+// GetBackground 查询会话的后台运行模式（alk.cxykevin.top/session/get_background，
+// 见 extension.md §3.7）。模式由服务端命令 /background on|off 修改，服务端不推送
+// 变更，客户端按需查询；未声明 alkaid0 扩展能力的服务端不调用。
+func (s *clientSession) GetBackground(ctx context.Context) (bool, error) {
+	if !s.backend.AgentCapabilities().Has(Alkaid0CapabilityV04) {
+		return false, errors.New("alkaid0 background mode is not supported")
+	}
+	t, err := s.backend.readyTransport()
+	if err != nil {
+		return false, err
+	}
+	var result SessionGetBackgroundResult
+	if err := t.Request(ctx, MethodSessionGetBackground, SessionGetBackgroundParams{SessionID: s.id}, &result); err != nil {
+		return false, err
+	}
+	return result.Background, nil
+}
+
 // WorkflowStatus 查询 workflow 的完整快照（v0.5）。runID 是 workflow 的 run id
 // （@temp/run/<n>，与 terminal ID 同值）；workflow 已结束或不在内存中时同样可查，
 // 响应含当前状态、完整图与按 sequence 排序的事件日志（见 extension.md §3.2）。
