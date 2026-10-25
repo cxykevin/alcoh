@@ -653,8 +653,8 @@ func (a *App) Run() error {
 	defer ticker.Stop()
 
 	for {
-		// hasAnimation 只读模型；模型写入仅在下方持锁区执行，等待 select 期间
-		// 无写入，因此此处读取不受并发影响。
+		// hasAnimation 自己取模型读锁：主循环之外（测试注入事件、插件回调）
+		// 也可能在持写锁的情况下修改模型，不能假设这里独占访问。
 		needsRender := false
 		anim := a.hasAnimation()
 
@@ -1303,21 +1303,28 @@ func (a *App) applyShellSelection(buf *renderer.Buffer) {
 }
 
 // hasAnimation 报告当前是否需要持续重绘（spinner 动画）。
+// 必须取模型读锁：主循环之外（测试注入事件、插件回调）也可能在持写锁的情况下
+// 修改模型状态，未加锁读取会被 -race 判定为 data race。
 func (a *App) hasAnimation() bool {
-	m := a.model
-	if !m.HasActive() {
-		return false
-	}
-	s := m.Active
-	if s.Running() {
-		return true
-	}
-	for _, tc := range s.ToolCalls {
-		if tc.Running() {
-			return true
+	anim := false
+	a.withModelRead(func() {
+		m := a.model
+		if !m.HasActive() {
+			return
 		}
-	}
-	return false
+		s := m.Active
+		if s.Running() {
+			anim = true
+			return
+		}
+		for _, tc := range s.ToolCalls {
+			if tc.Running() {
+				anim = true
+				return
+			}
+		}
+	})
+	return anim
 }
 
 // refreshSessions 从头拉取会话列表；调用方通常在事件循环中持有 modelMu。
