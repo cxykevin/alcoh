@@ -53,7 +53,7 @@ var en = map[string]string{
 	"Ctrl+/         撤销            Ctrl+Q        退出":             "Ctrl+/         undo            Ctrl+Q        quit",
 	"Ctrl+/         撤销            Ctrl+Q        退出确认":           "Ctrl+/         undo            Ctrl+Q        quit (confirm)",
 	"Ctrl+C         清空输入 / 取消任务 / 连按两次退出":                       "Ctrl+C         clear input / cancel task / press twice to quit",
-	"Esc            清空输入        空输入连按两次 打开撤回":                   "Esc            clear input     twice when empty: rewind",
+	"Esc            打断响应        空闲连按两次  打开撤回":                   "Esc            interrupt       twice when idle: rewind",
 	"Ctrl+O         展开/折叠全部思考/工具":                               "Ctrl+O         expand/collapse all thinking / tools",
 	"已展开全部思考与工具调用":                                              "Expanded all thinking and tool calls",
 	"已折叠全部思考与工具调用":                                              "Collapsed all thinking and tool calls",

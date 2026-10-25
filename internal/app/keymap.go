@@ -547,20 +547,18 @@ func (a *App) sessionKey(ke input.KeyEvent) {
 		a.cancelQueueEdit()
 		return
 	}
-	// Esc 在会话视图的语义（按优先级）：
-	//   1. 输入框有内容：清空输入（不打断正在进行的运行，避免误触丢失运行进度）；
-	//   2. 输入框为空且会话运行中：打断本次运行；
-	//   3. 输入框为空且会话空闲：连按两次（escRewindWindow 内）打开撤回选择器。
+	// Esc 在会话视图的语义：
+	//   1. 会话运行中（含等待确认）：打断本次运行，与输入框内容无关；
+	//   2. 会话严格 idle 且输入框为空：连按两次（escRewindWindow 内）打开
+	//      撤回选择器；其它状态不接受连按。
 	if ke.Type == input.KeyEsc {
-		if !m.InputEmpty() {
-			m.Input.Clear()
-			m.UpdateSlashState()
-			a.escRewindAt = time.Time{}
-			return
-		}
 		if m.HasActive() && m.Active.Running() {
 			a.escRewindAt = time.Time{}
 			a.cancelCurrent()
+			return
+		}
+		if !m.HasActive() || m.Active.State != acp.StateIdle || !m.InputEmpty() {
+			a.escRewindAt = time.Time{}
 			return
 		}
 		now := time.Now()
