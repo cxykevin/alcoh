@@ -64,6 +64,13 @@ func (b *Buffer) Set(x, y int, c Cell) {
 	if c.Width == 2 {
 		b.Cells[i] = c
 		if j := b.Index(x+1, y); j >= 0 {
+			// x+1 原本若也是宽字符首列，它的续列在 x+2：被本字符覆盖后
+			// 那半格会失去归属，清成空格，避免留下孤儿续列。
+			if old := b.Cells[j]; old.Width == 2 {
+				if k := b.Index(x+2, y); k >= 0 && b.Cells[k].Width == 0 {
+					b.Cells[k] = Cell{R: ' ', Style: c.Style, Width: 1}
+				}
+			}
 			// 续列保留前一个字符的样式，R 用占位空格
 			b.Cells[j] = Cell{R: 0, Style: c.Style, Width: 0}
 		}

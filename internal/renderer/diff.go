@@ -23,6 +23,19 @@ func Diff(back, front *Buffer, aw *AnsiWriter) {
 			}
 			// 若 run 起点是续列且旧位置非续列，回退到宽字符首列确保完整覆盖
 			if f.Width == 0 && b.Width != 0 && x > 0 {
+				if prev := front.Get(x-1, y); back.Get(x-1, y).Equal(prev) {
+					// 左侧格子两帧一致：本格没有可回退的宽字符首列。
+					// 回退会落在未变化的格子上，内层立即 break，外层又把 x
+					// 推回本格，形成 x--/x++ 死循环（整个界面卡死）。
+					if prev.Width != 2 {
+						// 新帧本格是失去归属的孤儿续列：按空白输出，
+						// 不能把这个位置留给上一帧的内容。
+						aw.MoveTo(y, x)
+						aw.WriteRune(' ', 1, f.Style)
+					}
+					x++
+					continue
+				}
 				x--
 			}
 			// conhost 覆盖宽字符时可能只擦掉半个字：含宽字符的 run 先按整段
@@ -44,11 +57,18 @@ func Diff(back, front *Buffer, aw *AnsiWriter) {
 				}
 				switch {
 				case f.Width == 0:
-					// 续列不单独输出（由左侧宽字符覆盖）。但游标模型必须同步：
-					// run 从续列开始时 MoveTo 会把终端光标停在续列上，若不推进，
-					// 本 run 后续字符会整体左移一格，行尾留下上一帧的字符。
-					if x+1 < W {
-						aw.MoveTo(y, x+1)
+					if x > 0 && front.Get(x-1, y).Width == 2 {
+						// 续列不单独输出（由左侧宽字符覆盖）。但游标模型必须同步：
+						// run 从续列开始时 MoveTo 会把终端光标停在续列上，若不推进，
+						// 本 run 后续字符会整体左移一格，行尾留下上一帧的字符。
+						if x+1 < W {
+							aw.MoveTo(y, x+1)
+						}
+					} else {
+						// 失去归属的孤儿续列：新帧这里没有字符，按空格清掉旧内容，
+						// 否则上一帧的半格会留在屏幕上。
+						aw.MoveTo(y, x)
+						aw.WriteRune(' ', 1, f.Style)
 					}
 					x++
 				case f.Width == 2:
