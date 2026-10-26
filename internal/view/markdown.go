@@ -145,6 +145,28 @@ func shiftIdents(idents []int, d int) []int {
 	return out
 }
 
+// indexRunes 返回子串 sub 在 rune 切片中的起始 rune 下标，未找到返回 -1。
+// 行内解析用 rune 下标定位，不能直接拿 strings.Index 的字节偏移来切 rs。
+func indexRunes(rs []rune, sub string) int {
+	pat := []rune(sub)
+	if len(pat) == 0 {
+		return 0
+	}
+	for i := 0; i+len(pat) <= len(rs); i++ {
+		match := true
+		for k := range pat {
+			if rs[i+k] != pat[k] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return i
+		}
+	}
+	return -1
+}
+
 // inlineStyle 解析行内标记：**bold**、*italic*、`code`、[text](url)。
 // 同时返回与渲染 rune 一一对应的源下标（见 StyledLine.Map）：标记符本身不渲染，
 // 因此不出现在下标序列里——部分框选复制时它们自然被排除。
@@ -187,9 +209,11 @@ func inlineStyle(s string, base renderer.Style, t renderer.Theme) ([]Span, []int
 			i++
 		case rs[i] == '[':
 			// 尝试 [text](url)
-			if end := strings.Index(string(rs[i:]), "]("); end >= 0 {
+			// 注意全程用 rune 下标：strings.Index 返回的是字节偏移，和 rs（[]rune）
+			// 混用会把中文等多字节链接文字切成乱码，短行还会越界 panic。
+			if end := indexRunes(rs[i:], "]("); end >= 0 {
 				rel := end + 2
-				if closeIdx := strings.Index(string(rs[i+rel:]), ")"); closeIdx >= 0 {
+				if closeIdx := indexRunes(rs[i+rel:], ")"); closeIdx >= 0 {
 					text := string(rs[i+1 : i+end])
 					flush(cur)
 					spans = append(spans, Span{Text: text, Style: t.Style(t.MDLink).WithUnderline(true)})

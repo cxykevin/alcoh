@@ -98,6 +98,54 @@ func TestMarkdownCodeLineMap(t *testing.T) {
 	}
 }
 
+// TestInlineLinkCJKTextNoPanic 验证链接文字含多字节字符时按 rune 下标切分，
+// 不会把 strings.Index 的字节偏移当成 rune 下标（曾 panic: slice bounds out of range）。
+func TestInlineLinkCJKTextNoPanic(t *testing.T) {
+	theme := renderer.DefaultTheme()
+	base := theme.Style(theme.Text)
+	cases := []struct {
+		line     string
+		wantText string
+		want     []int
+	}{
+		// 短行 + 中文链接文字：字节偏移超过 rune 长度，曾直接 panic。
+		{"[中文](x)", "中文", []int{1, 2}},
+		// 长 URL：不越界但按字节截取会把 "](url" 混进链接文字。
+		{"[中文说明](https://x.io)", "中文说明", []int{1, 2, 3, 4}},
+	}
+	for _, c := range cases {
+		spans, idents := inlineStyle(c.line, base, theme)
+		if len(spans) != 1 {
+			t.Fatalf("%q: want 1 span, got %d: %+v", c.line, len(spans), spans)
+		}
+		if spans[0].Text != c.wantText {
+			t.Fatalf("%q: link text = %q, want %q", c.line, spans[0].Text, c.wantText)
+		}
+		if !equalInts(idents, c.want) {
+			t.Fatalf("%q: idents = %v, want %v", c.line, idents, c.want)
+		}
+	}
+}
+
+// TestInlineLinkCJKTextAround 验证链接前后还有中文时文字截取与源下标偏移都正确。
+func TestInlineLinkCJKTextAround(t *testing.T) {
+	theme := renderer.DefaultTheme()
+	base := theme.Style(theme.Text)
+	spans, idents := inlineStyle("看 [中文说明](https://x.io) 吧", base, theme)
+	if len(spans) != 3 {
+		t.Fatalf("want 3 spans, got %d: %+v", len(spans), spans)
+	}
+	if spans[0].Text != "看 " || spans[1].Text != "中文说明" || spans[2].Text != " 吧" {
+		t.Fatalf("spans = %+v", spans)
+	}
+	if n := renderedRunes(spans); n != len(idents) {
+		t.Fatalf("idents len %d != 渲染 rune 数 %d", len(idents), n)
+	}
+	if want := []int{0, 1, 3, 4, 5, 6, 22, 23}; !equalInts(idents, want) {
+		t.Fatalf("idents = %v, want %v", idents, want)
+	}
+}
+
 // equalInts 比较两个下标序列（nil 与空序列等价）。
 func equalInts(a, b []int) bool {
 	if len(a) != len(b) {
