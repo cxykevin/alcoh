@@ -78,6 +78,14 @@ func waitCondition(t *testing.T, what string, cond func() bool) {
 	t.Fatalf("condition not met within 5s: %s", what)
 }
 
+// inView 报告当前模型视图是否为 want。经锁内读取，供 waitCondition 轮询使用，
+// 避免测试 goroutine 与 UI 主循环并发读写模型。
+func inView(a *App, want model.ViewMode) bool {
+	a.modelMu.RLock()
+	defer a.modelMu.RUnlock()
+	return a.model.View == want
+}
+
 // homeCommandsReady 报告主页命令面板 /effort 与 /model 是否可用（预创建会话的
 // config 已应用）。经锁内读取，避免与 UI 主循环并发访问。
 func homeCommandsReady(a *App) bool {
@@ -171,7 +179,13 @@ func TestPreSessionDeletedOnResume(t *testing.T) {
 
 	// 按 Enter 恢复 demo-0：预创建空会话应被丢弃。
 	ft.sendKey(input.SimpleKey(input.KeyEnter))
-	time.Sleep(400 * time.Millisecond)
+	// 等恢复真正进入会话视图再退出。原来固定 sleep 400ms，在 -race 的慢机器
+	//（尤其 macOS runner）上 resume 还没完成就发起了退出，视图仍是主页，测试偶发失败。
+	waitCondition(t, "session view after resume", func() bool { return inView(a, model.ViewSession) })
+	// 预创建会话的删除是后台异步的，等删除请求真正发出后再退出。
+	waitCondition(t, "pre-session deleted after resume", func() bool {
+		return contains(preID, b.deletedIDs())
+	})
 	ft.sendKey(input.RuneKey('q', input.ModCtrl))
 	time.Sleep(50 * time.Millisecond)
 	ft.sendKey(input.RuneKey('y', input.ModNone))
@@ -203,7 +217,8 @@ func TestPreSessionRecreatedAfterGoHome(t *testing.T) {
 
 	// 进入会话再 /clear 回主页：应重新预创建会话。
 	ft.sendKey(input.SimpleKey(input.KeyEnter))
-	time.Sleep(300 * time.Millisecond)
+	// 同上：等会话视图真正打开再输入 /clear，固定 sleep 在慢机器上会让命令敲进主页输入框。
+	waitCondition(t, "session view before /clear", func() bool { return inView(a, model.ViewSession) })
 	for _, r := range "/clear" {
 		ft.sendKey(input.RuneKey(r, input.ModNone))
 	}
