@@ -22,7 +22,7 @@ alcoh 实现了大部分的 ACP v2 协议内容，因此可以通过命令行访
 - **ACP v2 双 transport**：JSON-RPC 2.0 over stdio 与 WebSocket 双 transport 客户端
 - **终端体验**：CJK 宽字符、Markdown / 代码高亮、鼠标框选复制
 - **命令面板**：`/` 打开本地与 agent 命令面板；`/settings` 打开本地设置；`/effort`、`/model` 调整推理强度与切换模型
-- **服务端配置编辑器**：`/server` 经 alkaid0 扩展 RPC 浏览/编辑服务端配置，编辑即自动保存；模型集合行尾灰字显示模型名，选择模型的键（`SummaryModel`、`TitleModel`、`AgentModel`、`DefaultModelID` 等）行尾灰字提示当前指向的模型，按 Enter 弹出**模型选择框**（候选直接读配置的 `Model.Models`，忽略 `Hide`、不限类型）（只适配 alkaid0 后端）
+- **服务端配置编辑器**：`/server` 经 alkaid0 扩展 RPC 浏览/编辑服务端配置，编辑即自动保存；模型集合行尾灰字显示模型名，选择模型的键（`SummaryModel`、`TitleModel`、`AgentModel`、`DefaultModelID` 等）行尾灰字提示当前指向的模型，按 Enter 弹出**模型选择框**（候选直接读配置的 `Model.Models`，忽略 `Hide`、不限类型）；`AutoApprove` / `AutoReject` 规则按 Enter 打开带行号、expr 语法高亮与右侧文档栏的全屏 IDE（`Ctrl+S` 保存、`Esc` 取消，窄屏自动隐藏文档栏）；编辑时用与 alkaid0 相同的 expr 引擎实时编译，语法错误与未知函数/变量在出错行的行号标红、底栏按行列提示；有错误时按 `Ctrl+S` 先确认（`Enter` 仍保存、`Esc` 继续编辑）；输入时弹出 nvim 风格补全下拉框（变量/函数按前缀，`ToolCall.`、`Agent.` 后按当前 alkaid0 schema 给字段，`Agent.Color.` 给 RGB 通道，`↑↓` 选择、`Enter`/`Tab` 接受、`Esc` 关闭，候选带说明并使用独立弹层背景色，光标为反显色块）（只适配 alkaid0 后端）
 - **新手引导**：启动进入引导（与 `/connect` 向导同义：选服务商 → 填 key → 拉取模型列表 → 选模型 → 推理强度 → 操作教学）（只适配 alkaid0 后端）
 - **Shells 面板**：实时查看 agent 启动的终端，活跃 shell 在上、历史 shell 与内容在下（alkaid0 v0.5+）
 - **工具调用可读标题**：服务端声明 `alk.cxykevin.top/alkaid0/v0.4` 时，工具调用标题由工具名与关键参数拼出（如 `Edit(src/main.go)`、`Run shell*(serve the app)`、`Search online(golang)`），展开后只显示标题未包含的其余参数（alkaid0 v0.4+）

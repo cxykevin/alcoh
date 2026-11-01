@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 
+	"github.com/cxykevin/alcoh/internal/exprcheck"
 	"github.com/cxykevin/alcoh/internal/i18n"
 	"github.com/cxykevin/alcoh/internal/widget"
 )
@@ -673,6 +674,26 @@ type ConfigEditor struct {
 	CopyInput   *widget.InputBuffer
 	CopyNode    *ConfigNode
 
+	// FullscreenEdit 表示当前值编辑由全屏规则 IDE 承担（AutoApprove /
+	// AutoReject 表达式）。Editing/EditNode/EditInput 与普通值编辑相同，
+	// 只是视图与按键处理换成带行号、高亮和文档栏的编辑器。
+	FullscreenEdit bool
+	// EditDiag 是全屏规则编辑器当前的编译诊断（nil 表示语法与名称检查
+	// 通过）。由 RefreshRuleDiag 在打开编辑器与每次按键后更新。
+	EditDiag *exprcheck.Diagnostic
+	// RuleSaveConfirm 表示规则有编译错误时用户按了 Ctrl+S，IDE 底栏提示
+	// "Enter 仍要保存 / Esc 继续编辑"。Enter（或再次 Ctrl+S）确认写回，
+	// Esc 返回编辑，其它按键取消确认后照常编辑。
+	RuleSaveConfirm bool
+
+	// RuleComplete* 是规则编辑器的下拉补全状态：是否展开、候选、选中项与
+	// 接受时替换的起始位置（当前行的 rune 下标）。候选由 RefreshRuleComplete
+	// 依据光标前的标识符 / 点号上下文重新计算。
+	RuleCompleteOpen  bool
+	RuleCompleteItems []RuleCompletion
+	RuleCompleteSel   int
+	RuleCompleteStart int
+
 	// PickingModel 表示正在用选择框为"选择模型"的键挑模型（见 BeginModelPick）：
 	// 候选项直接取自配置的 Model.Models，忽略 Hide 与 Type。PickNode 是被编辑
 	// 的键节点，PickSelected 是选择框当前选中行。
@@ -1158,10 +1179,54 @@ func inputFromString(s string) *widget.InputBuffer {
 	return b
 }
 
+// IsRuleExprNode 报告节点是否是自动审批/拒绝规则表达式。规则是多行的
+// expr-lang 表达式，用全屏 IDE 编辑比单行输入框更合适；alkaid0 的全局
+// 规则（Agent.AutoApprove/AutoReject）与子代理规则（Agents.*.Auto*）同名。
+func IsRuleExprNode(n *ConfigNode) bool {
+	if n == nil || n.Kind != ConfigString {
+		return false
+	}
+	return n.Key == "AutoApprove" || n.Key == "AutoReject"
+}
+
+// BeginRuleEdit 为当前规则节点打开全屏 IDE；不是规则节点时返回 false。
+// 普通字段仍走 BeginEdit 的单行输入框。
+func (ed *ConfigEditor) BeginRuleEdit() bool {
+	n := ed.SelectedNode()
+	if !IsRuleExprNode(n) {
+		return false
+	}
+	ed.BeginEdit()
+	ed.FullscreenEdit = true
+	ed.RuleSaveConfirm = false
+	ed.CloseRuleComplete()
+	// 全屏编辑器从文件开头编辑，而不是像单行输入框那样把光标停在末尾。
+	if ed.EditInput != nil {
+		ed.EditInput.CY = 0
+		ed.EditInput.CX = 0
+	}
+	ed.RefreshRuleDiag()
+	return true
+}
+
+// RefreshRuleDiag 重新编译规则编辑缓冲并更新 EditDiag（nil 表示通过）。
+// 只在全屏规则编辑期间生效；app 在打开编辑器与每次按键后调用。
+func (ed *ConfigEditor) RefreshRuleDiag() {
+	if !ed.FullscreenEdit || ed.EditInput == nil {
+		ed.EditDiag = nil
+		return
+	}
+	ed.EditDiag = exprcheck.Compile(ed.EditInput.Text())
+}
+
 // CancelEdit 取消值编辑。
 func (ed *ConfigEditor) CancelEdit() {
 	ed.Editing = false
 	ed.EditNode = nil
+	ed.FullscreenEdit = false
+	ed.EditDiag = nil
+	ed.RuleSaveConfirm = false
+	ed.CloseRuleComplete()
 }
 
 // isStringMapEntry reports whether an editable string is a value in a map.
@@ -1228,6 +1293,10 @@ func (ed *ConfigEditor) CommitEdit() (patch json.RawMessage, ok bool, errMsg str
 	patch = ed.patchForNode(n, n.AsValue())
 	ed.Editing = false
 	ed.EditNode = nil
+	ed.FullscreenEdit = false
+	ed.EditDiag = nil
+	ed.RuleSaveConfirm = false
+	ed.CloseRuleComplete()
 	return patch, true, ""
 }
 
@@ -1612,12 +1681,13 @@ func (ed *ConfigEditor) Focus(path []string) {
 // configState 是整配置重载前捕获的导航与编辑状态，用于重建后恢复。
 // 新增写回成功后触发的重载不应打断用户正在进行的字段编辑。
 type configState struct {
-	path     []string // 当前导航栈各层 Key（Stack[i].Key）
-	selected int      // 当前页面内的选中行索引（重载后恢复，避免停在行首）
-	editPath []string // 正在编辑的节点 Path；nil 表示未在编辑
-	editText string   // 编辑输入框当前文本
-	adding   bool     // 是否在新增键输入模式
-	addText  string   // 新增键输入框文本
+	path       []string // 当前导航栈各层 Key（Stack[i].Key）
+	selected   int      // 当前页面内的选中行索引（重载后恢复，避免停在行首）
+	editPath   []string // 正在编辑的节点 Path；nil 表示未在编辑
+	editText   string   // 编辑输入框当前文本
+	fullscreen bool     // 是否在全屏规则 IDE 中编辑
+	adding     bool     // 是否在新增键输入模式
+	addText    string   // 新增键输入框文本
 }
 
 // CaptureState 捕获当前导航与编辑状态，供整配置重载（SetServerConfig 重建）
@@ -1633,6 +1703,7 @@ func (ed *ConfigEditor) CaptureState() configState {
 	if ed.Editing && ed.EditNode != nil {
 		s.editPath = append([]string(nil), ed.EditNode.Path...)
 		s.editText = ed.EditInput.Text()
+		s.fullscreen = ed.FullscreenEdit
 	}
 	if ed.AddingKey {
 		s.adding = true
@@ -1649,10 +1720,21 @@ func (ed *ConfigEditor) RestoreState(s configState) {
 	}
 	if s.editPath != nil {
 		ed.focusNode(s.editPath)
-		ed.BeginEdit()
+		if s.fullscreen {
+			ed.BeginRuleEdit()
+		} else {
+			ed.BeginEdit()
+		}
 		if s.editText != "" {
 			ed.EditInput = inputFromString(s.editText)
+			if s.fullscreen {
+				// 重建后同样从文件开头开始编辑。
+				ed.EditInput.CY = 0
+				ed.EditInput.CX = 0
+			}
 		}
+		// 恢复的是新树上的节点，重新编译一次当前缓冲。
+		ed.RefreshRuleDiag()
 		return
 	}
 	// 恢复当前页选中行（Focus 默认停在行首）。重载后行数可能变化（增删项），

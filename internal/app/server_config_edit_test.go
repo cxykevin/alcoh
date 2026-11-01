@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -295,6 +296,180 @@ func TestServerConfigEditorAddHooksItem(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	ft.sendKey(input.RuneKey('y', input.ModNone))
 	waitRun(t, done)
+}
+
+// TestRuleEditorKeyEditsAndSaves 验证规则字段的全屏 IDE 按键：Enter 打开、
+// Enter 换行、Tab 缩进、Ctrl+S 提交写回；Esc 取消不改动节点值。
+func TestRuleEditorKeyEditsAndSaves(t *testing.T) {
+	a := New(newFakeTerm(), demo.New(true))
+	ed := model.NewConfigEditor(json.RawMessage(`{"Agent":{"AutoApprove":"ToolCall.Name == \"read\""}}`))
+	ed.Focus([]string{"Agent"})
+	a.model.ServerCfg = ed
+	refresh := func() {}
+
+	// Enter 打开全屏 IDE（而不是单行输入框）。
+	if !a.configEditorKey(input.SimpleKey(input.KeyEnter), ed, refresh) {
+		t.Fatal("Enter on AutoApprove should be handled")
+	}
+	if !ed.FullscreenEdit || !ed.Editing {
+		t.Fatalf("fullscreen=%v editing=%v, want both true", ed.FullscreenEdit, ed.Editing)
+	}
+
+	// 光标移到末尾，Enter 换行，Tab 缩进后再输入注释。
+	a.configEditorKey(input.SimpleKey(input.KeyPageDown), ed, refresh)
+	a.configEditorKey(input.SimpleKey(input.KeyEnter), ed, refresh)
+	a.configEditorKey(input.SimpleKey(input.KeyTab), ed, refresh)
+	for _, r := range "// note" {
+		a.configEditorKey(input.RuneKey(r, input.ModNone), ed, refresh)
+	}
+	want := "ToolCall.Name == \"read\"\n    // note"
+	if got := ed.EditInput.Text(); got != want {
+		t.Fatalf("editor text = %q, want %q", got, want)
+	}
+
+	// Ctrl+S 提交：退出 IDE 并把新表达式写回节点。
+	a.configEditorKey(input.RuneKey('s', input.ModCtrl), ed, refresh)
+	if ed.FullscreenEdit || ed.Editing {
+		t.Fatal("Ctrl+S should commit and leave the rule IDE")
+	}
+	if n := ed.SelectedNode(); n == nil || n.Str != want {
+		t.Fatalf("node value = %v, want %q", n, want)
+	}
+
+	// 重新打开后 Esc 取消：节点值保持刚才提交的内容。
+	a.configEditorKey(input.SimpleKey(input.KeyEnter), ed, refresh)
+	a.configEditorKey(input.RuneKey('x', input.ModNone), ed, refresh)
+	a.configEditorKey(input.SimpleKey(input.KeyEsc), ed, refresh)
+	if ed.FullscreenEdit || ed.Editing {
+		t.Fatal("Esc should cancel the rule IDE")
+	}
+	if n := ed.SelectedNode(); n == nil || n.Str != want {
+		t.Fatalf("node value after Esc = %v, want unchanged %q", n, want)
+	}
+}
+
+// TestRuleEditorDiagnosticFollowsInput 验证全屏 IDE 每次按键后重新编译：
+// 合法表达式没有诊断，输入未知函数后 EditDiag 指向出错行列。
+func TestRuleEditorDiagnosticFollowsInput(t *testing.T) {
+	a := New(newFakeTerm(), demo.New(true))
+	ed := model.NewConfigEditor(json.RawMessage(`{"Agent":{"AutoApprove":"ToolCall.Name == \"read\""}}`))
+	ed.Focus([]string{"Agent"})
+	a.model.ServerCfg = ed
+	refresh := func() {}
+
+	if !a.configEditorKey(input.SimpleKey(input.KeyEnter), ed, refresh) {
+		t.Fatal("Enter on AutoApprove should open the rule IDE")
+	}
+	if ed.EditDiag != nil {
+		t.Fatalf("initial diag = %+v, want nil for a valid rule", ed.EditDiag)
+	}
+
+	// 光标移到末尾，追加未知函数调用。
+	a.configEditorKey(input.SimpleKey(input.KeyPageDown), ed, refresh)
+	for _, r := range " && nope()" {
+		a.configEditorKey(input.RuneKey(r, input.ModNone), ed, refresh)
+	}
+	d := ed.EditDiag
+	if d == nil || d.Line != 1 || !strings.Contains(d.Message, "nope") {
+		t.Fatalf("diag after typing = %+v, want unknown name nope on line 1", d)
+	}
+}
+
+// TestRuleEditorCompletionKeys 验证补全下拉框的按键交互：输入触发、↑↓ 选择、
+// Enter/Tab 接受、Esc 只关闭下拉框不退出编辑器。
+func TestRuleEditorCompletionKeys(t *testing.T) {
+	a := New(newFakeTerm(), demo.New(true))
+	ed := model.NewConfigEditor(json.RawMessage(`{"Agent":{"AutoApprove":""}}`))
+	ed.Focus([]string{"Agent"})
+	a.model.ServerCfg = ed
+	refresh := func() {}
+	a.configEditorKey(input.SimpleKey(input.KeyEnter), ed, refresh)
+
+	for _, r := range "has" {
+		a.configEditorKey(input.RuneKey(r, input.ModNone), ed, refresh)
+	}
+	if !ed.RuleCompleteOpen || len(ed.RuleCompleteItems) != 1 || ed.RuleCompleteItems[0].Insert != "hasParam" {
+		t.Fatalf("items = %+v (open=%v), want hasParam", ed.RuleCompleteItems, ed.RuleCompleteOpen)
+	}
+	a.configEditorKey(input.SimpleKey(input.KeyEnter), ed, refresh)
+	if ed.RuleCompleteOpen || ed.EditInput.Text() != "hasParam" {
+		t.Fatalf("after Enter: text=%q open=%v", ed.EditInput.Text(), ed.RuleCompleteOpen)
+	}
+
+	// 清空后输入 ToolCall.，↓ 选中 ID，Tab 接受。
+	a.configEditorKey(input.RuneKey('u', input.ModCtrl), ed, refresh)
+	for _, r := range "ToolCall." {
+		a.configEditorKey(input.RuneKey(r, input.ModNone), ed, refresh)
+	}
+	if !ed.RuleCompleteOpen || len(ed.RuleCompleteItems) != 3 {
+		t.Fatalf("member items = %+v, want 3", ed.RuleCompleteItems)
+	}
+	a.configEditorKey(input.SimpleKey(input.KeyDown), ed, refresh)
+	a.configEditorKey(input.SimpleKey(input.KeyTab), ed, refresh)
+	if got := ed.EditInput.Text(); got != "ToolCall.ID" {
+		t.Fatalf("after Tab = %q, want ToolCall.ID", got)
+	}
+
+	// 再输入 Ag 触发变量补全；Esc 只关闭下拉框。
+	for _, r := range " && Ag" {
+		a.configEditorKey(input.RuneKey(r, input.ModNone), ed, refresh)
+	}
+	if !ed.RuleCompleteOpen {
+		t.Fatal("popup should open for Ag")
+	}
+	a.configEditorKey(input.SimpleKey(input.KeyEsc), ed, refresh)
+	if ed.RuleCompleteOpen || !ed.FullscreenEdit {
+		t.Fatalf("Esc should only close the popup: open=%v fullscreen=%v", ed.RuleCompleteOpen, ed.FullscreenEdit)
+	}
+}
+
+// TestRuleEditorSaveConfirm 验证规则有编译错误时 Ctrl+S 先进入确认：
+// Esc 返回编辑、其它按键取消确认并照常输入、Enter 才带着错误写回。
+func TestRuleEditorSaveConfirm(t *testing.T) {
+	a := New(newFakeTerm(), demo.New(true))
+	ed := model.NewConfigEditor(json.RawMessage(`{"Agent":{"AutoApprove":"ToolCall.Name =="}}`))
+	ed.Focus([]string{"Agent"})
+	a.model.ServerCfg = ed
+	refresh := func() {}
+
+	a.configEditorKey(input.SimpleKey(input.KeyEnter), ed, refresh)
+	if ed.EditDiag == nil {
+		t.Fatal("invalid rule should have a diagnostic after opening the IDE")
+	}
+	a.configEditorKey(input.RuneKey('s', input.ModCtrl), ed, refresh)
+	if !ed.RuleSaveConfirm || !ed.Editing {
+		t.Fatalf("confirm=%v editing=%v, want a save prompt without leaving the editor", ed.RuleSaveConfirm, ed.Editing)
+	}
+
+	// Esc：返回编辑，缓冲与诊断保持原样。
+	a.configEditorKey(input.SimpleKey(input.KeyEsc), ed, refresh)
+	if ed.RuleSaveConfirm || !ed.Editing || ed.EditDiag == nil {
+		t.Fatalf("after Esc: confirm=%v editing=%v diag=%v, want still editing", ed.RuleSaveConfirm, ed.Editing, ed.EditDiag)
+	}
+
+	// 其它按键取消确认，并作为普通输入处理。
+	a.configEditorKey(input.RuneKey('s', input.ModCtrl), ed, refresh)
+	a.configEditorKey(input.RuneKey('x', input.ModNone), ed, refresh)
+	if ed.RuleSaveConfirm {
+		t.Fatal("typing should cancel the save confirmation")
+	}
+	if !strings.HasPrefix(ed.EditInput.Text(), "x") {
+		t.Fatalf("text after cancel = %q, want the typed x at the start", ed.EditInput.Text())
+	}
+
+	// Enter：确认保存，退出 IDE 并把当前（有错误的）文本写回节点。
+	before := ed.EditInput.Text()
+	a.configEditorKey(input.RuneKey('s', input.ModCtrl), ed, refresh)
+	if !ed.RuleSaveConfirm {
+		t.Fatal("Ctrl+S on an invalid rule should ask for confirmation")
+	}
+	a.configEditorKey(input.SimpleKey(input.KeyEnter), ed, refresh)
+	if ed.FullscreenEdit || ed.Editing {
+		t.Fatal("Enter in the confirmation should save and leave the rule IDE")
+	}
+	if n := ed.SelectedNode(); n == nil || n.Str != before {
+		t.Fatalf("saved value = %v, want %q", n, before)
+	}
 }
 
 // TestConfigEditorKeyDeletesHooksItem 验证 /server 的 Hooks 命令数组页里 d 键

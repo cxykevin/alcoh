@@ -3,10 +3,12 @@ package renderer
 // Theme 定义 TUI 的配色槽位（深色背景默认主题）。
 type Theme struct {
 	// 基础
-	Text         Color
-	TextMuted    Color
-	Background   Color
-	PanelBg      Color
+	Text       Color
+	TextMuted  Color
+	Background Color
+	PanelBg    Color
+	// PopupBg 是下拉补全等浮层的背景色（比 PanelBg 略亮，遮住下方代码）。
+	PopupBg      Color
 	Border       Color
 	BorderActive Color
 	BorderSubtle Color
@@ -47,6 +49,7 @@ func DefaultTheme() Theme {
 		TextMuted:    RGB(0x8B, 0x94, 0x9E),
 		Background:   RGB(0x0D, 0x11, 0x17),
 		PanelBg:      RGB(0x16, 0x1B, 0x22),
+		PopupBg:      RGB(0x24, 0x2C, 0x37),
 		Border:       RGB(0x6B, 0x6B, 0x6B),
 		BorderActive: RGB(0x4F, 0x9C, 0xF9),
 		BorderSubtle: RGB(0x30, 0x36, 0x3D),

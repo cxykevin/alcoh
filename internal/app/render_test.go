@@ -63,6 +63,29 @@ func TestRenderPlacesCursorAtInput(t *testing.T) {
 	assertScreenCursor(t, out.Bytes(), a.view.InputCursorX, a.view.InputCursorY)
 }
 
+// TestRenderRuleEditorCursor 回归规则 IDE 的硬件光标：全屏规则编辑器必须把
+// 光标定位到文本插入点（弹窗层不能把光标吞掉或留在左上角）。
+func TestRenderRuleEditorCursor(t *testing.T) {
+	var out bytes.Buffer
+	a := New(term.Dump(&out, 60, 20), demo.New(true))
+	a.resetBuffers(60, 20)
+	a.model.Modal = model.ModalServer
+	ed := model.NewConfigEditor(json.RawMessage(`{"Agent":{"AutoApprove":"ToolCall.Name == \"read\""}}`))
+	ed.Focus([]string{"Agent"})
+	a.model.ServerCfg = ed
+	if !ed.BeginRuleEdit() {
+		t.Fatal("BeginRuleEdit should accept AutoApprove")
+	}
+	out.Reset()
+	if !a.render() {
+		t.Fatal("规则编辑器帧 render 被跳过")
+	}
+	if !a.view.InputCursorVisible {
+		t.Fatal("规则编辑器未记录输入光标")
+	}
+	assertScreenCursor(t, out.Bytes(), a.view.InputCursorX, a.view.InputCursorY)
+}
+
 // assertScreenCursor 把帧输出重放进 VT 屏幕模型，校验终端最终光标位置。
 func assertScreenCursor(t *testing.T, out []byte, wantX, wantY int) {
 	t.Helper()

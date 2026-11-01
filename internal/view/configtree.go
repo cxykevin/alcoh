@@ -30,6 +30,11 @@ func (ct *ConfigTree) draw(c *renderer.Canvas, r renderer.Rect, ed *model.Config
 		c.PutText(r.X, r.Y, i18n.T("正在获取服务端配置…"), t.Style(t.TextMuted))
 		return
 	}
+	// 规则表达式（AutoApprove / AutoReject）用全屏 IDE 编辑，覆盖整个配置面板。
+	if ed.FullscreenEdit {
+		(&RuleEditor{Theme: t, Ed: ed}).Draw(c, r)
+		return
+	}
 	y := r.Y
 
 	// 面包屑：展示从根到当前页面的路径（翻译后的显示名）。
@@ -186,6 +191,9 @@ func (ct *ConfigTree) draw(c *renderer.Canvas, r renderer.Rect, ed *model.Config
 	hint := i18n.T("Esc 关闭   ↑↓ 选择   Enter 进入/编辑   ← 返回   r 刷新")
 	if ed.CanDeleteHook() {
 		hint = i18n.T("Esc 关闭   ↑↓ 选择   Enter 编辑   d 删除命令   ← 返回   r 刷新")
+	}
+	if model.IsRuleExprNode(ed.SelectedNode()) {
+		hint = i18n.T("Esc 关闭   ↑↓ 选择   Enter 全屏编辑规则   ← 返回   r 刷新")
 	}
 	c.PutText(r.X, bottomY, hint, t.Style(t.TextMuted))
 }

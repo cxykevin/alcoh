@@ -994,6 +994,10 @@ func (a *App) pluginsConfigKey(ke input.KeyEvent) {
 // onRefresh 是 "r" 重新加载的钩子（服务端重新 config/get，本地重新读盘）。
 // 返回 true 表示按键已处理；Esc 关闭由调用方决定。
 func (a *App) configEditorKey(ke input.KeyEvent, ed *model.ConfigEditor, onRefresh func()) bool {
+	if ed.FullscreenEdit {
+		a.ruleEditorKey(ke, ed)
+		return true
+	}
 	if ed.PickingModel {
 		// 模型选择框：↑↓ 移动、Enter 写回选中模型的键、Esc 放弃；e 退回手工
 		// 输入值（需要写入不在 Model.Models 里的引用值时使用）。
@@ -1082,6 +1086,82 @@ func (a *App) configEditorKey(ke input.KeyEvent, ed *model.ConfigEditor, onRefre
 	return true
 }
 
+// ruleEditorKey 处理规则全屏 IDE 的按键。Enter 插入换行、Tab 缩进、
+// Ctrl+S 保存、Esc 取消；其余移动/删除/撤销/粘贴按键复用输入缓冲的默认映射。
+func (a *App) ruleEditorKey(ke input.KeyEvent, ed *model.ConfigEditor) {
+	if ed.EditInput == nil {
+		ed.CancelEdit()
+		return
+	}
+	if ed.RuleSaveConfirm {
+		switch {
+		case ke.Type == input.KeyEnter,
+			ke.IsCtrl() && (ke.Rune == 's' || ke.Rune == 'S'):
+			// 已确认：带着编译错误保存。
+			ed.RuleSaveConfirm = false
+			a.commitConfigEdit(ed)
+			return
+		case ke.Type == input.KeyEsc && !ke.IsCtrl():
+			// 退回继续编辑，诊断与缓冲保持不变。
+			ed.RuleSaveConfirm = false
+			return
+		default:
+			// 继续输入即视为放弃本次保存，按键照常处理。
+			ed.RuleSaveConfirm = false
+		}
+	}
+	// 补全下拉框打开时优先消费导航/接受按键；Esc 只关闭下拉框，不退出编辑器。
+	if ed.RuleCompleteOpen {
+		switch {
+		case ke.Type == input.KeyEsc && !ke.IsCtrl():
+			ed.CloseRuleComplete()
+			return
+		case ke.Type == input.KeyUp:
+			ed.MoveRuleComplete(-1)
+			return
+		case ke.Type == input.KeyDown:
+			ed.MoveRuleComplete(1)
+			return
+		case ke.Type == input.KeyEnter, ke.Type == input.KeyTab:
+			if ed.AcceptRuleComplete() {
+				ed.RefreshRuleDiag()
+			}
+			return
+		}
+	}
+	switch {
+	case ke.Type == input.KeyEsc && !ke.IsCtrl():
+		ed.CancelEdit()
+	case ke.IsCtrl() && (ke.Rune == 's' || ke.Rune == 'S'):
+		// 规则有编译错误时先确认：Enter（或再次 Ctrl+S）仍保存，Esc 继续编辑。
+		if ed.EditDiag != nil {
+			ed.CloseRuleComplete()
+			ed.RuleSaveConfirm = true
+			return
+		}
+		a.commitConfigEdit(ed)
+	case ke.Type == input.KeyEnter:
+		ed.EditInput.InsertNewline()
+	case ke.Type == input.KeyTab:
+		ed.EditInput.InsertText(strings.Repeat(" ", 4))
+	case ke.Type == input.KeyBackspace && ke.IsCtrl():
+		// 默认映射里 Ctrl+Backspace 无操作；IDE 中按词删除更符合习惯。
+		ed.EditInput.DeleteWord()
+		ed.RefreshRuleComplete()
+	default:
+		before := ed.EditInput.Text()
+		(&widget.InputBox{Buf: ed.EditInput, Style: a.view.Theme.Style(a.view.Theme.Text)}).OnKey(ke)
+		// 内容变化（输入/删除）后刷新补全；纯移动光标则收起下拉框。
+		if ed.EditInput.Text() != before {
+			ed.RefreshRuleComplete()
+		} else {
+			ed.CloseRuleComplete()
+		}
+	}
+	// 每次按键后重新编译，编辑器底栏实时显示语法/未知名称错误。
+	ed.RefreshRuleDiag()
+}
+
 // onboardingKey 处理新手引导剩余步骤按键（模型配置由 /connect 向导完成）。
 // Esc 在任何步骤都视为"跳过"（直接结束引导）。
 func (a *App) onboardingKey(ke input.KeyEvent) {
@@ -1166,6 +1246,11 @@ func (a *App) activateConfigRow(ed *model.ConfigEditor) {
 	case model.ConfigBool:
 		a.applyEditorPatch(ed, ed.ToggleBool())
 	default:
+		// 自动审批/拒绝规则（AutoApprove / AutoReject）是多行 expr 表达式：
+		// 打开带行号、语法高亮与文档栏的全屏 IDE，而不是单行输入框。
+		if ed.BeginRuleEdit() {
+			return
+		}
 		// "选择模型"的键（SummaryModel / AgentModel / DefaultModelID …）弹出
 		// 模型选择框：候选直接取自配置的 Model.Models（忽略 Hide 与 Type）。
 		// 配置里没有模型等不可选择的情况退回手工输入值。
