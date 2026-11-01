@@ -1540,7 +1540,13 @@ func (m *AppModel) sessionTitleFromList(id string) string {
 func (m *AppModel) GoHome() {
 	m.View = ViewHome
 	m.Active = nil
+	// 暂存区属于内存草稿，不随输入框重建丢失（普通输入内容仍按原行为清空）。
+	stash := ""
+	if m.Input != nil {
+		stash = m.Input.Stash
+	}
 	m.Input = widget.NewInputBuffer()
+	m.Input.Stash = stash
 	m.PendingInitialPrompt = ""
 	m.ClearError()
 	m.HomeSelected = -1

@@ -116,6 +116,15 @@ func (a *App) dispatchKey(ke input.KeyEvent) {
 	}
 }
 
+// swapInputStash 把主输入框当前内容与暂存区交换（Ctrl+D），并同步斜杠命令面板。
+func (a *App) swapInputStash() {
+	if a.model.Input == nil {
+		return
+	}
+	a.model.Input.SwapStash()
+	a.model.UpdateSlashState()
+}
+
 func (a *App) homeKey(ke input.KeyEvent) {
 	m := a.model
 	// 列表聚焦模式：上下移动选中，Enter 恢复，d 删除，Esc/右键返回输入框。
@@ -187,6 +196,12 @@ func (a *App) homeKey(ke input.KeyEvent) {
 			m.HomeSelected = 0
 		}
 		a.maybeLoadMoreSessions()
+		return
+	}
+
+	// Ctrl+D 在主输入框上交换当前内容与暂存区；必须在空输入 d 删除会话之前处理。
+	if ke.IsCtrl() && ke.Rune == 'd' {
+		a.swapInputStash()
 		return
 	}
 
@@ -609,6 +624,11 @@ func (a *App) sessionKey(ke input.KeyEvent) {
 			return
 		}
 	}
+	// Ctrl+D 在主输入框上交换当前内容与暂存区（输入为空时也一样，可召回暂存）。
+	if ke.IsCtrl() && ke.Rune == 'd' {
+		a.swapInputStash()
+		return
+	}
 	ib := &widget.InputBox{Buf: m.Input, Style: a.view.Theme.Style(a.view.Theme.Text)}
 	if ib.OnKey(ke) {
 		m.UpdateSlashState()
@@ -651,7 +671,17 @@ func (a *App) completeSlash() {
 }
 
 // tryLocalSlashCommand 若首个 token 恰好匹配本地命令则执行，返回是否已处理。
+// 命令提交（回车）后把暂存区内容回填到输入框，与普通 prompt 提交一致。
 func (a *App) tryLocalSlashCommand() bool {
+	handled := a.runLocalSlashCommand()
+	if handled && a.model.Input != nil {
+		a.model.Input.RestoreStash()
+	}
+	return handled
+}
+
+// runLocalSlashCommand 执行本地斜杠命令本体；返回是否命中并处理。
+func (a *App) runLocalSlashCommand() bool {
 	m := a.model
 	text := m.Input.Text()
 	if len(text) == 0 || text[0] != '/' {

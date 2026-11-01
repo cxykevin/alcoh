@@ -130,6 +130,46 @@ func TestInputBufferHistory(t *testing.T) {
 	}
 }
 
+// TestInputBufferStashSwap Ctrl+D 把当前内容放进暂存区并清空输入；
+// 暂存区已有内容时与输入框交换。
+func TestInputBufferStashSwap(t *testing.T) {
+	b := NewInputBuffer()
+	b.InsertText("第一版草稿")
+	b.SwapStash()
+	if got := b.Text(); got != "" {
+		t.Fatalf("after stash Text() = %q, want empty", got)
+	}
+	if b.Stash != "第一版草稿" {
+		t.Fatalf("Stash = %q, want 第一版草稿", b.Stash)
+	}
+	b.InsertText("第二版")
+	b.SwapStash()
+	if got := b.Text(); got != "第一版草稿" {
+		t.Fatalf("after swap Text() = %q, want 第一版草稿", got)
+	}
+	if b.Stash != "第二版" {
+		t.Fatalf("after swap Stash = %q, want 第二版", b.Stash)
+	}
+}
+
+// TestInputBufferSubmitRestoresStash 回车提交后暂存区内容回填到输入框，
+// 暂存区清空。
+func TestInputBufferSubmitRestoresStash(t *testing.T) {
+	b := NewInputBuffer()
+	b.InsertText("暂存草稿")
+	b.SwapStash()
+	b.InsertText("要提交的命令")
+	if got := b.Submit(); got != "要提交的命令" {
+		t.Fatalf("Submit() = %q, want 要提交的命令", got)
+	}
+	if got := b.Text(); got != "暂存草稿" {
+		t.Fatalf("after submit Text() = %q, want 暂存草稿", got)
+	}
+	if b.Stash != "" {
+		t.Fatalf("after submit Stash = %q, want empty", b.Stash)
+	}
+}
+
 func TestInputBoxCursorUsesSuppliedStyle(t *testing.T) {
 	buf := NewInputBuffer()
 	buf.InsertRune('x')
@@ -293,6 +333,25 @@ func TestInputBufferVisualHeightUsesCJKWidth(t *testing.T) {
 	// 宽度 6，首行扣除 prompt 的 2 列，只能容纳“中文”，余下 ab 自动换行。
 	if got := b.VisualHeight(6, 2); got != 2 {
 		t.Errorf("VisualHeight = %d, want 2", got)
+	}
+}
+
+// TestInputBoxCtrlDStillDeletes 通用输入框（如配置编辑）保留 Ctrl+D 删除字符；
+// 暂存交换只在主命令输入框由 app 层按键分发处理。
+func TestInputBoxCtrlDStillDeletes(t *testing.T) {
+	ib := &InputBox{Buf: NewInputBuffer()}
+	for _, r := range "abc" {
+		ib.OnKey(input.RuneKey(r, input.ModNone))
+	}
+	ib.Buf.CX = 1
+	if !ib.OnKey(input.RuneKey('d', input.ModCtrl)) {
+		t.Fatal("Ctrl+D should be consumed by InputBox")
+	}
+	if got := ib.Buf.Text(); got != "ac" {
+		t.Fatalf("after Ctrl+D Text() = %q, want ac", got)
+	}
+	if ib.Buf.Stash != "" {
+		t.Fatalf("generic input must not stash, got %q", ib.Buf.Stash)
 	}
 }
 

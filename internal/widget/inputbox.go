@@ -29,6 +29,9 @@ type InputBuffer struct {
 	RedoStack []EditOp
 
 	killText string // kill ring（Ctrl+Y 粘贴）
+
+	// Stash 是输入暂存区（Ctrl+D 交换、回车提交后回填）。
+	Stash string
 }
 
 // NewInputBuffer 创建空输入缓冲。
@@ -354,6 +357,42 @@ func (b *InputBuffer) Clear() {
 	})
 }
 
+// setText 用 text 重置缓冲内容，光标移到末尾并退出历史浏览。
+// 不写入撤销栈，供暂存交换与提交回填使用。
+func (b *InputBuffer) setText(text string) {
+	b.Lines = SplitLines(text)
+	b.CY = len(b.Lines) - 1
+	b.CX = len(b.Lines[b.CY])
+	b.HistPos = -1
+	b.Scroll = 0
+}
+
+// SwapStash 交换输入框内容与暂存区（Ctrl+D）：当前内容进入暂存区，
+// 暂存区原有内容回到输入框。整个交换作为一次可撤销操作。
+func (b *InputBuffer) SwapStash() {
+	oldLines, oldCX, oldCY := b.snapshot()
+	oldStash := b.Stash
+	oldHistPos := b.HistPos
+	oldScroll := b.Scroll
+	text := b.Text()
+	stashed := b.Stash
+	b.pushUndo(EditOp{
+		apply: func(x *InputBuffer) {
+			x.Stash = text
+			x.setText(stashed)
+		},
+		unapply: func(x *InputBuffer) {
+			x.Lines = oldLines
+			x.CX, x.CY = oldCX, oldCY
+			x.HistPos = oldHistPos
+			x.Scroll = oldScroll
+			x.Stash = oldStash
+		},
+	})
+	b.Stash = text
+	b.setText(stashed)
+}
+
 // Undo 撤销。
 func (b *InputBuffer) Undo() {
 	if len(b.UndoStack) == 0 {
@@ -379,6 +418,7 @@ func (b *InputBuffer) Redo() {
 }
 
 // Submit 提交当前内容到历史并清空，返回文本。
+// 暂存区有内容时，提交后把它回填到输入框并清空暂存区（与 Ctrl+D 配对）。
 func (b *InputBuffer) Submit() string {
 	text := b.Text()
 	if text != "" {
@@ -389,7 +429,18 @@ func (b *InputBuffer) Submit() string {
 	b.HistPos = -1
 	b.UndoStack = nil
 	b.RedoStack = nil
+	b.RestoreStash()
 	return text
+}
+
+// RestoreStash 取出暂存区内容填回输入框并清空暂存区（回车提交后调用）。
+func (b *InputBuffer) RestoreStash() {
+	if b.Stash == "" {
+		return
+	}
+	stashed := b.Stash
+	b.Stash = ""
+	b.setText(stashed)
 }
 
 // HistoryUp 在首行处向上浏览历史。
