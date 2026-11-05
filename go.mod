@@ -4,7 +4,7 @@ go 1.26.5
 
 require (
 	github.com/alecthomas/chroma/v2 v2.27.0
-	github.com/cxykevin/tflow v0.0.1
+	github.com/cxykevin/tflow v0.0.2
 	github.com/expr-lang/expr v1.17.8
 	github.com/gorilla/websocket v1.5.3
 	github.com/jhump/protoreflect v1.17.0
