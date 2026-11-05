@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"unicode"
+
+	"github.com/cxykevin/alcoh/internal/i18n"
 )
 
 func sampleConfig() json.RawMessage {
@@ -433,6 +436,30 @@ func TestConfigKeyLabelsAllApply(t *testing.T) {
 			t.Errorf("DisplayKey(%q) = %q, want %q", key, got, label)
 		}
 	}
+}
+
+// TestConfigKeyLabelsTranslated 确保每个中文显示名都有英文翻译：否则英文界面
+// 下服务端配置编辑器会回退显示中文。纯英文标签（Top-P、Bing、URL 等）本身
+// 就是英文，不需要翻译。
+func TestConfigKeyLabelsTranslated(t *testing.T) {
+	for key, label := range configKeyLabels {
+		if !hasHanRune(label) {
+			continue
+		}
+		if got := i18n.TFor(i18n.En, label); got == label {
+			t.Errorf("configKeyLabels[%q] label %q has no English translation", key, label)
+		}
+	}
+}
+
+// hasHanRune 报告字符串是否含汉字（用于判断标签是否需要英文翻译）。
+func hasHanRune(s string) bool {
+	for _, r := range s {
+		if unicode.Is(unicode.Han, r) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestConfigEditorSensitiveMasking(t *testing.T) {

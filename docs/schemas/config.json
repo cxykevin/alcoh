@@ -277,6 +277,11 @@
                                 "type": "boolean",
                                 "description": "禁用 sandbox 执行",
                                 "default": false
+                            },
+                            "Internal": {
+                                "type": "boolean",
+                                "description": "内部 Agent：不出现在 <agents>/<agent_tags> 与 subagent/list 中，且禁止 AI 通过 agent / activate_agent 创建或激活（仅服务端内部使用，如 goal-check）",
+                                "default": false
                             }
                         }
                     }
@@ -293,6 +298,11 @@
                 "TitleModel": {
                     "type": "integer",
                     "description": "用于生成会话标题的模型ID，未设置或为 0 时回退到 Model.DefaultModelID"
+                },
+                "GoalCheckModel": {
+                    "type": "integer",
+                    "description": "goal-check 内部校验代理使用的模型ID；-1（默认）或 0 表示跟随会话当前模型，大于 0 时覆盖内置 goal-check 的模型",
+                    "default": -1
                 },
                 "MaxCallCount": {
                     "type": "integer",
@@ -499,7 +509,7 @@
                 },
                 "OnlineSearch": {
                     "type": "object",
-                    "description": "在线搜索配置项（alkaid0-search-engine）。全部 provider 默认关闭，仅 Bing 默认启用（无需密钥）。search 工具 online=true 时可通过 path 参数用 provider id（bing/github/arxiv/tavily/context7/zread/brave/grepapp/sourcegraph/stackoverflow/hackernews/devto/librariesio）限定搜索源",
+                    "description": "在线搜索配置项（alkaid0-search-engine）。全部 provider 默认关闭，仅 Bing 默认启用（无需密钥）。search 工具 type=online 时可通过 path 参数用 provider id（bing/github/arxiv/tavily/deepseek/context7/zread/brave/grepapp/sourcegraph/stackoverflow/hackernews/devto/librariesio）限定搜索源",
                     "properties": {
                         "timeout": {
                             "type": "integer",
@@ -662,6 +672,41 @@
                                     "type": "boolean",
                                     "description": "是否包含原始内容",
                                     "default": false
+                                }
+                            }
+                        },
+                        "deepseek": {
+                            "type": "object",
+                            "description": "DeepSeek Search API（需 API Key，原生支持 site:/after:/before: 操作符），默认关闭",
+                            "properties": {
+                                "enable": {
+                                    "type": "boolean",
+                                    "description": "是否启用该搜索源",
+                                    "default": false
+                                },
+                                "api_key": {
+                                    "type": "string",
+                                    "description": "DeepSeek API key"
+                                },
+                                "proxy_url": {
+                                    "type": "string",
+                                    "description": "代理地址，为空时降级到全局 proxy_url"
+                                },
+                                "max_results": {
+                                    "type": "integer",
+                                    "description": "最大结果数（1-50，0 表示使用 API 默认值 10）",
+                                    "minimum": 0,
+                                    "maximum": 50,
+                                    "default": 10
+                                },
+                                "need_content": {
+                                    "type": "boolean",
+                                    "description": "是否在 content 中返回页面正文",
+                                    "default": false
+                                },
+                                "localization": {
+                                    "type": "string",
+                                    "description": "用于本地化搜索结果的 IP 地址（可选）"
                                 }
                             }
                         },
@@ -1042,7 +1087,8 @@
                 "mask_phone": false,
                 "mask_ip": false,
                 "mask_session_cookie": false,
-                "mask_jwt": true
+                "mask_jwt": true,
+                "mask_client_messages": false
             },
             "properties": {
                 "enable": {
@@ -1082,6 +1128,11 @@
                     "type": "boolean",
                     "description": "是否脱敏 JWT",
                     "default": true
+                },
+                "mask_client_messages": {
+                    "type": "boolean",
+                    "description": "是否把发送给客户端的会话消息也替换为脱敏后的内容（演示/直播用）：开启后客户端看到的用户消息、AI 正文/思考、工具参数、历史回放与摘要均为同格式假值；模型输入与本地数据库仍保留原文。仅在 enable=true 时生效。",
+                    "default": false
                 }
             }
         },
@@ -1099,6 +1150,36 @@
                     "type": "boolean",
                     "description": "是否禁用自动 Telemetry 上报（每月一次）",
                     "default": false
+                }
+            }
+        },
+        "Hooks": {
+            "type": "object",
+            "description": "事件钩子：在会话的关键时刻同步执行外部命令（阻塞到命令退出）。命令经 Agent.UseShell 配置的 shell 执行（与 run 工具一致，未配置时平台默认 linux=bash/darwin=zsh/windows=powershell.exe），工作目录为会话工作目录；环境变量为进程环境 + Agent.TerminalEnvs（不注入 SANDBOX 等 run 专用变量），并注入 SESSION_ID（会话 ID）与 SESSION_PATH（会话工作目录，优先于 TerminalEnvs 同名键）。命令失败只记录日志，不影响会话。",
+            "properties": {
+                "OnCronjobWakeup": {
+                    "type": "array",
+                    "description": "cron 定时任务唤醒会话时按顺序执行的命令",
+                    "items": {
+                        "type": "string"
+                    },
+                    "default": []
+                },
+                "OnUserMessage": {
+                    "type": "array",
+                    "description": "用户发送普通消息（非斜杠命令）时按顺序执行的命令",
+                    "items": {
+                        "type": "string"
+                    },
+                    "default": []
+                },
+                "OnTaskFinish": {
+                    "type": "array",
+                    "description": "一轮 AI 回合结束时按顺序执行的命令（含正常结束、用户取消与出错）",
+                    "items": {
+                        "type": "string"
+                    },
+                    "default": []
                 }
             }
         }
