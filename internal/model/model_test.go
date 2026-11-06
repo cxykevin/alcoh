@@ -175,6 +175,40 @@ func TestSettingsStateChanges(t *testing.T) {
 	}
 }
 
+func TestSyncToolExpansion(t *testing.T) {
+	m := New()
+	m.ActivateSession("s1", "test")
+	// 新会话继承「默认展开工具」设置（默认关闭 → 工具折叠）。
+	if m.Active.ToolsExpanded {
+		t.Fatal("new session should default to collapsed tools")
+	}
+	m.Active.ApplyToolCall(&acp.ToolCallUpdateEvent{SessionID: "s1", ToolCallID: "c1", Title: new("read")})
+	if m.Active.ToolCalls["c1"].Expanded {
+		t.Fatal("tool call should start collapsed")
+	}
+
+	// 打开设置后切换「默认展开工具」：当前会话的参数与已有工具立即同步。
+	m.Settings.ToolsExpanded = true
+	m.SyncToolExpansion()
+	if !m.Active.ToolsExpanded {
+		t.Error("session ToolsExpanded should follow the setting")
+	}
+	if !m.Active.ToolCalls["c1"].Expanded {
+		t.Error("existing tool calls should follow the setting")
+	}
+	m.Active.ApplyToolCall(&acp.ToolCallUpdateEvent{SessionID: "s1", ToolCallID: "c2", Title: new("write")})
+	if !m.Active.ToolCalls["c2"].Expanded {
+		t.Error("new tool call should be expanded when the setting is on")
+	}
+
+	// 关闭设置 → 再次同步折叠。
+	m.Settings.ToolsExpanded = false
+	m.SyncToolExpansion()
+	if m.Active.ToolsExpanded || m.Active.ToolCalls["c2"].Expanded {
+		t.Error("tool expansion should be reset to collapsed")
+	}
+}
+
 func TestSettingsLanguageCycling(t *testing.T) {
 	m := New()
 	m.OpenSettings()

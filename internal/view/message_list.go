@@ -192,10 +192,16 @@ func (ml *MessageList) drawLine(c *renderer.Canvas, x, y, maxW int, line []Span)
 // 统一追加在所有消息之后。
 func (ml *MessageList) buildBlocks(s *model.SessionState, width int) []*block {
 	blocks := make([]*block, 0, len(s.Timeline))
-	for _, item := range s.Timeline {
+	// tailIndex 是正文中最后一个会渲染出块的 Timeline 下标。只有结尾处的思考
+	// 保留 5 行预览；它后面一旦出现任何内容，思考就完全折叠为标题行。
+	tailIndex := lastRenderedTimelineIndex(s.Timeline)
+	for i, item := range s.Timeline {
 		switch item.Kind {
 		case model.TimelineUserMessage, model.TimelineAssistantMessage:
-			if item.Message != nil {
+			// 正文为空的 agent 消息不占行：alkaid0 每一步工具调用都会带一条
+			// 正文为空的 assistant 消息（只有思考/工具参数），渲染成空行会在
+			// 折叠后的工具调用之间留下多余的空行。
+			if item.Message != nil && messageHasBody(item.Message) {
 				m := item.Message
 				blocks = append(blocks, ml.cached(item.Key, ml.messageSig(m, width), func() *block {
 					return ml.messageBlock(m, width)
@@ -204,8 +210,9 @@ func (ml *MessageList) buildBlocks(s *model.SessionState, width int) []*block {
 		case model.TimelineThought:
 			if item.Message != nil {
 				m := item.Message
-				blocks = append(blocks, ml.cached(item.Key, ml.thoughtSig(m, width), func() *block {
-					return ml.thoughtBlock(m, width)
+				tail := i == tailIndex
+				blocks = append(blocks, ml.cached(item.Key, ml.thoughtSig(m, width, tail), func() *block {
+					return ml.thoughtBlock(m, width, tail)
 				}))
 			}
 		case model.TimelineToolCall:
@@ -306,9 +313,10 @@ func (ml *MessageList) messageSig(m *model.Message, width int) uint64 {
 }
 
 // thoughtSig 覆盖 thoughtBlock 的输入；未完成的思考标题带 spinner，随帧号变化。
-func (ml *MessageList) thoughtSig(m *model.Message, width int) uint64 {
+// tail 决定是否显示 5 行预览，思考后面出现内容后必须重绘为完全折叠。
+func (ml *MessageList) thoughtSig(m *model.Message, width int, tail bool) uint64 {
 	s := newSig()
-	s.num(int(m.Kind)).str(m.Text).bool(m.Expanded).bool(m.Done).num(width).num(len(m.Lines()))
+	s.num(int(m.Kind)).str(m.Text).bool(m.Expanded).bool(m.Done).bool(tail).num(width).num(len(m.Lines()))
 	if !m.Done {
 		s.num(ml.SpinFrame)
 	}
@@ -430,18 +438,16 @@ func (ml *MessageList) messageBlock(msg *model.Message, width int) *block {
 	return blk
 }
 
-// thoughtPreviewLines 是思考折叠（以及流式中）时保留的预览渲染行数。
-// 折叠态仍显示最后几行内容，点击标题后展开到完整高度。
+// thoughtPreviewLines 是思考处于正文结尾时保留的预览渲染行数。
+// 只有最后一个思考（后面没有任何正文/工具/终端）显示这 5 行；其余思考完全折叠，
+// 只保留标题行。点击标题后展开到完整高度。
 const thoughtPreviewLines = 5
 
-func (ml *MessageList) thoughtBlock(msg *model.Message, width int) *block {
+func (ml *MessageList) thoughtBlock(msg *model.Message, width int, tail bool) *block {
 	t := ml.Theme
-	// 思考内容复制原文（折叠时只显示预览，复制仍取全部原始行）。
+	// 思考内容复制原文（折叠时只显示标题/预览，复制仍取全部原始行）。
 	blk := &block{raw: strings.Join(msg.Lines(), "\n"), toggle: &ToggleRef{Kind: ToggleThought, ID: msg.MessageID}}
 	streaming := !msg.Done
-	// 折叠态保留最后 thoughtPreviewLines 个渲染行作为预览；手动展开后显示全部。
-	// 流式中同样只显示尾部，避免长思考把视图撑得过高。
-	preview := streaming || !msg.Expanded
 	title := "▾ thinking"
 	titleStyle := t.Style(t.TextMuted).WithItalic(true)
 	switch {
@@ -452,18 +458,62 @@ func (ml *MessageList) thoughtBlock(msg *model.Message, width int) *block {
 		titleStyle = t.Style(t.TextMuted).WithDim(true)
 	}
 	blk.lines = append(blk.lines, []Span{{Text: title, Style: titleStyle}})
+	// 完全折叠：后面已经出现内容（不在结尾），且用户没有手动展开 → 只留标题行。
+	if !msg.Expanded && !tail {
+		return blk
+	}
 	// 先换行再截断：限制的是渲染行数，而非原始逻辑行数（长行 wrap 后可能占多行）。
 	var wrapped []string
 	for _, ln := range msg.Lines() {
 		wrapped = append(wrapped, renderer.Wrap(ln, width-4)...)
 	}
-	if preview && len(wrapped) > thoughtPreviewLines {
+	// 流式中与结尾处折叠的思考只显示最后 5 行预览；手动展开的思考显示完整高度。
+	if (streaming || !msg.Expanded) && len(wrapped) > thoughtPreviewLines {
 		wrapped = wrapped[len(wrapped)-thoughtPreviewLines:]
 	}
 	for _, wl := range wrapped {
 		blk.lines = append(blk.lines, []Span{{Text: "  " + wl, Style: t.Style(t.TextMuted)}})
 	}
 	return blk
+}
+
+// messageHasBody 报告消息是否有可见正文。alkaid0 每一步工具调用都会带一条
+// 正文为空的 assistant 消息（该步只有思考或工具参数），它不渲染任何行：
+// 否则折叠后的工具调用之间会多出一行空行。
+func messageHasBody(m *model.Message) bool {
+	return m != nil && strings.TrimSpace(m.Text) != ""
+}
+
+// lastRenderedTimelineIndex 返回正文中最后一个会渲染出块的时间线下标；没有时返回 -1。
+// 计划项只由 PlanPanel 绘制、不进入正文，因此不算"思考后面的内容"；正文为空的
+// 消息同样不渲染（见 messageHasBody），思考后面只有它时仍算正文结尾。
+func lastRenderedTimelineIndex(timeline []*model.TimelineItem) int {
+	for i := len(timeline) - 1; i >= 0; i-- {
+		item := timeline[i]
+		switch item.Kind {
+		case model.TimelineUserMessage, model.TimelineAssistantMessage:
+			if messageHasBody(item.Message) {
+				return i
+			}
+		case model.TimelineThought:
+			if item.Message != nil {
+				return i
+			}
+		case model.TimelineToolCall:
+			if item.ToolCall != nil {
+				return i
+			}
+		case model.TimelineTerminal:
+			if item.Terminal != nil {
+				return i
+			}
+		case model.TimelineSystemNotice:
+			if item.Notice != "" {
+				return i
+			}
+		}
+	}
+	return -1
 }
 
 func (ml *MessageList) toolBlock(tc *model.ToolCall, width int, alkaid0, details bool) *block {

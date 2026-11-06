@@ -14,6 +14,9 @@ import (
 func alkaid0TestSession(id string) *model.SessionState {
 	s := model.NewSession(id, "session")
 	s.SetAlkaid0V04(true)
+	// 这些用例验证工具正文渲染：显式要求新建工具调用默认展开，
+	// 不受本地「默认展开工具」设置（默认关闭）影响。
+	s.ToolsExpanded = true
 	return s
 }
 
@@ -226,6 +229,7 @@ func TestAlkaid0ToolCallKeepsDiff(t *testing.T) {
 // 保持服务端标题与完整参数文本块。
 func TestAlkaid0ToolCallFallbackWithoutCapability(t *testing.T) {
 	s := model.NewSession("s1", "session")
+	s.ToolsExpanded = true // 本用例验证工具正文，显式要求默认展开
 	applyAlkaid0ToolCall(t, s, "c1", "edit", map[string]any{"path": "src/main.go"})
 	got := drawText(t, s, 100, 20)
 	if !strings.Contains(got, "[Call edit]c1") {

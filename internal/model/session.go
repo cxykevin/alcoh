@@ -231,6 +231,10 @@ type SessionState struct {
 	// ShowProtocolDetails 为 true 时正文里显示协议细节（未知 session update
 	// 的系统提示、calling_info 参数块标签）。取自本地设置，默认关闭。
 	ShowProtocolDetails bool
+	// ToolsExpanded 是新建工具调用的默认展开态（本地设置「默认展开工具」）。
+	// 只作为创建时的初值；用户仍可点击标题逐项切换。切换设置时应用层会把
+	// 已有调用一并同步（见 AppModel.SyncToolExpansion）。
+	ToolsExpanded bool
 }
 
 func NewSession(id, title string) *SessionState {
@@ -852,7 +856,7 @@ func (s *SessionState) ApplyToolCall(ev *acp.ToolCallUpdateEvent) {
 		// 工具调用是新内容：它出现后，此前的思考段已结束，立即折叠。
 		// 只在新调用创建时折叠——旧调用后续的完成/输出更新不能收掉新的思考。
 		s.finishLatestThought()
-		tc = &ToolCall{ID: ev.ToolCallID, Status: acp.ToolPending, Expanded: true}
+		tc = &ToolCall{ID: ev.ToolCallID, Status: acp.ToolPending, Expanded: s.ToolsExpanded}
 		s.ToolCalls[ev.ToolCallID] = tc
 		s.ToolOrder = append(s.ToolOrder, ev.ToolCallID)
 		item := s.appendTimeline("tool:"+ev.ToolCallID, TimelineToolCall)

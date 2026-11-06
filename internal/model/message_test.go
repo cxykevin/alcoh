@@ -170,6 +170,8 @@ func TestThoughtAutoCollapse(t *testing.T) {
 
 func TestExpandAll(t *testing.T) {
 	s := NewSession("s1", "test")
+	// 本用例验证显式展开/折叠全部：先让新工具默认展开，符合展开态断言。
+	s.ToolsExpanded = true
 	// 两条思考：完整块后标记完成，再自动折叠。
 	s.AppendChunk(&acp.MessageChunkEvent{SessionID: "s1", MessageID: "t1", IsThought: true, Text: "想 1"})
 	s.AppendChunk(&acp.MessageChunkEvent{SessionID: "s1", MessageID: "t2", IsThought: true, Text: "想 2"})
@@ -413,6 +415,21 @@ func TestToolCallUpsert(t *testing.T) {
 	// 数量不变
 	if len(s.ToolOrder) != 1 {
 		t.Errorf("upsert should not add duplicate, got %d", len(s.ToolOrder))
+	}
+}
+
+func TestToolCallDefaultExpansion(t *testing.T) {
+	// 新建工具调用按会话的 ToolsExpanded 决定初始展开态（本地设置
+	// 「默认展开工具」）；默认关闭时只显示一行标题。
+	s := NewSession("s1", "test")
+	s.ApplyToolCall(&acp.ToolCallUpdateEvent{SessionID: "s1", ToolCallID: "tc1", Title: new("read")})
+	if s.ToolCalls["tc1"].Expanded {
+		t.Error("tool call should be collapsed by default")
+	}
+	s.ToolsExpanded = true
+	s.ApplyToolCall(&acp.ToolCallUpdateEvent{SessionID: "s1", ToolCallID: "tc2", Title: new("write")})
+	if !s.ToolCalls["tc2"].Expanded {
+		t.Error("tool call should expand when ToolsExpanded is enabled")
 	}
 }
 

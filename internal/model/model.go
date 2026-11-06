@@ -695,6 +695,7 @@ func (m *AppModel) ToggleSetting() bool {
 		m.Settings.ThinkingExpanded = !m.Settings.ThinkingExpanded
 	case 2:
 		m.Settings.ToolsExpanded = !m.Settings.ToolsExpanded
+		m.SyncToolExpansion()
 	case 4:
 		// 显示协议细节（设置页最后一行）：正文里的未知 session update 提示与
 		// calling_info 参数块标签，默认关闭。
@@ -715,6 +716,23 @@ func (m *AppModel) SyncProtocolDetails() {
 	if m.PreSession != nil {
 		m.PreSession.ShowProtocolDetails = m.Settings.ShowProtocolDetails
 	}
+}
+
+// SyncToolExpansion 把「默认展开工具」同步到当前会话与主页预创建会话：
+// 之后新建的工具调用按该值决定初始展开态，已有工具也立即跟随设置切换，
+// 让设置页的开关对当前正文立即可见（也可再用 Ctrl+O 整体切换）。
+func (m *AppModel) SyncToolExpansion() {
+	apply := func(s *SessionState) {
+		if s == nil {
+			return
+		}
+		s.ToolsExpanded = m.Settings.ToolsExpanded
+		for _, tc := range s.ToolCalls {
+			tc.Expanded = m.Settings.ToolsExpanded
+		}
+	}
+	apply(m.Active)
+	apply(m.PreSession)
 }
 
 // CycleColorMode 在已支持的本地色彩模式之间切换。
@@ -1425,6 +1443,7 @@ func (m *AppModel) SetPreSession(id, title string) {
 		return
 	}
 	m.PreSession = NewSession(id, title)
+	m.PreSession.ToolsExpanded = m.Settings.ToolsExpanded
 	if pending, ok := m.pendingSessionEvents[id]; ok {
 		delete(m.pendingSessionEvents, id)
 		for _, ev := range pending {
@@ -1537,8 +1556,10 @@ func (m *AppModel) ActivateSession(id, title string) {
 		m.Active = NewSession(id, title)
 		m.Active.SetAlkaid0V04(m.SupportsAlkaid0())
 	}
-	// 本地展示偏好随会话激活同步（新建的会话默认隐藏协议细节）。
+	// 本地展示偏好随会话激活同步（新建的会话默认隐藏协议细节、
+	// 工具调用按「默认展开工具」决定初始展开态）。
 	m.SyncProtocolDetails()
+	m.SyncToolExpansion()
 	m.View = ViewSession
 	m.Modal = NoModal
 	m.Permission = nil
