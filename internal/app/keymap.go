@@ -1724,6 +1724,8 @@ func (a *App) clickBodyToggle(x, y int, rect renderer.Rect) bool {
 		s.ToggleMessage(ref.ID)
 	case view.ToggleTool:
 		s.ToggleToolCall(ref.ID)
+	case view.ToggleSubagent:
+		s.ToggleSubagentGroup(ref.ID)
 	default:
 		return false
 	}

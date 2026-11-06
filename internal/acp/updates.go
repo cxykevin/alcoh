@@ -44,6 +44,8 @@ func DecodeSessionUpdatePayload(sessionID string, raw json.RawMessage) (Event, e
 			MessageID string          `json:"messageId"`
 			Content   json.RawMessage `json:"content"`
 			Text      string          `json:"text"`
+			// alkaid0：消息所属子代理（空串表示主代理）。
+			AgentStatus *string `json:"alk.cxykevin.top/agent_status"`
 		}
 		if err := json.Unmarshal(raw, &update); err != nil {
 			return nil, err
@@ -62,11 +64,14 @@ func DecodeSessionUpdatePayload(sessionID string, raw json.RawMessage) (Event, e
 			IsUser:    kind == "user_message_chunk" || kind == "user_thought_chunk",
 			IsThought: kind == "agent_thought_chunk" || kind == "user_thought_chunk",
 			Text:      text,
+			AgentID:   update.AgentStatus,
 		}, nil
 	case "user_message", "agent_message", "agent_thought", "user_thought":
 		var update struct {
 			MessageID string          `json:"messageId"`
 			Content   json.RawMessage `json:"content"`
+			// alkaid0：完整消息同样携带所属子代理（历史回放按消息逐条带上）。
+			AgentStatus *string `json:"alk.cxykevin.top/agent_status"`
 		}
 		if err := json.Unmarshal(raw, &update); err != nil {
 			return nil, err
@@ -80,6 +85,7 @@ func DecodeSessionUpdatePayload(sessionID string, raw json.RawMessage) (Event, e
 			Message:   message,
 			IsUser:    kind == "user_message" || kind == "user_thought",
 			IsThought: kind == "agent_thought" || kind == "user_thought",
+			AgentID:   update.AgentStatus,
 		}, nil
 	case "state_update":
 		var update StateUpdate

@@ -56,6 +56,9 @@ type Message struct {
 	Text      string
 	Expanded  bool
 	Done      bool
+	// AgentID 是 alkaid0 的 alk.cxykevin.top/agent_status：这条消息属于哪个
+	// 子代理（空串表示主代理）。正文据此把同一子代理的连续内容合并成一组。
+	AgentID string
 }
 
 func (m *Message) Lines() []string {
@@ -78,6 +81,11 @@ type ToolCall struct {
 	RawInput  string
 	RawOutput string
 	Expanded  bool
+	// AgentID 是创建这条工具调用时所在子代理的代码（空串表示主代理）。
+	// 直播流的 tool_call_update 不带 agent_status，只能在创建时按当时的
+	// "最近一次消息声明的子代理"快照；回放/归属消息已知时以消息的 AgentID 为准
+	// （见 SessionState.ItemAgentID）。
+	AgentID string
 }
 
 func (tc *ToolCall) StatusSymbol() string {
@@ -251,6 +259,13 @@ type SessionState struct {
 	// Detail 是正文详情档位（Ctrl+T 循环，见 BodyDetail）：隐藏全部思考与工具
 	// 调用、正常折叠、全部展开。只影响展示，不改动会话内容。
 	Detail BodyDetail
+	// currentAgentID 是最近一条消息声明的子代理
+	// （alk.cxykevin.top/agent_status）。直播的 tool_call_update 不带该字段，
+	// 新建工具调用时只能按当时的子代理快照归属。
+	currentAgentID string
+	// SubagentExpanded 记录 subagent 内容组的展开态：键由渲染层按"同一子代理
+	// 的连续内容片段"生成，缺省（false）为折叠。只影响展示。
+	SubagentExpanded map[string]bool
 }
 
 func NewSession(id, title string) *SessionState {
@@ -289,6 +304,7 @@ func messageTimelineKind(kind MessageKind) TimelineKind {
 
 func (s *SessionState) AppendChunk(ev *acp.MessageChunkEvent) {
 	msg := s.message(ev.MessageID, ev.IsThought, ev.IsUser)
+	s.applyAgentStatus(msg, ev.AgentID)
 	msg.Text += ev.Text
 	if msg.Kind == MsgThought && msg.Done {
 		// 这段思考已经结束（后续内容已到达而折叠）：工具调用参数流式期间、
@@ -304,8 +320,19 @@ func (s *SessionState) AppendChunk(ev *acp.MessageChunkEvent) {
 	}
 }
 
+// applyAgentStatus 记录一条消息声明的子代理归属（alk.cxykevin.top/agent_status）。
+// agent 为 nil 表示服务端没有提供该字段（普通 ACP 服务端），保持原值不动。
+func (s *SessionState) applyAgentStatus(msg *Message, agent *string) {
+	if agent == nil {
+		return
+	}
+	msg.AgentID = *agent
+	s.currentAgentID = *agent
+}
+
 func (s *SessionState) ApplyMessage(ev *acp.MessageUpdateEvent) {
 	msg := s.message(ev.Message.MessageID, ev.IsThought, ev.IsUser)
+	s.applyAgentStatus(msg, ev.AgentID)
 	var sb strings.Builder
 	for i, blk := range ev.Message.Content {
 		if i > 0 && sb.Len() > 0 {
@@ -892,7 +919,8 @@ func (s *SessionState) ApplyToolCall(ev *acp.ToolCallUpdateEvent) {
 		// 只在新调用创建时折叠——旧调用后续的完成/输出更新不能收掉新的思考。
 		s.finishLatestThought()
 		tc = &ToolCall{ID: ev.ToolCallID, Status: acp.ToolPending,
-			Expanded: s.ToolsExpanded || s.Detail == DetailExpanded}
+			Expanded: s.ToolsExpanded || s.Detail == DetailExpanded,
+			AgentID:  s.currentAgentID}
 		s.ToolCalls[ev.ToolCallID] = tc
 		s.ToolOrder = append(s.ToolOrder, ev.ToolCallID)
 		item := s.appendTimeline("tool:"+ev.ToolCallID, TimelineToolCall)
@@ -922,12 +950,100 @@ func (s *SessionState) ApplyToolCall(ev *acp.ToolCallUpdateEvent) {
 	if len(ev.RawOutput) > 0 {
 		tc.RawOutput = string(ev.RawOutput)
 	}
+	s.trackAgentLifecycle(tc)
+}
+
+// trackAgentLifecycle 从子代理生命周期工具的调用里推断当前子代理。
+// 直播流的 tool_call_update 不带 agent_status：子代理激活后若先发工具调用
+// （还没有任何消息 chunk），新建的调用会被错归到主代理。activate_agent /
+// deactivate_agent 只会在对应的激活状态下由服务端放出（见 alkaid0
+// tools/tools/agent），据此切换归属正好补上这段空档；参数未到时保持原值。
+func (s *SessionState) trackAgentLifecycle(tc *ToolCall) {
+	if tc == nil {
+		return
+	}
+	for _, ct := range tc.Content {
+		if ct.Type != acp.ToolCallingInfoType {
+			continue
+		}
+		switch ct.Name {
+		case "activate_agent":
+			var args struct {
+				Name string `json:"name"`
+			}
+			if err := json.Unmarshal(ct.Args, &args); err == nil && args.Name != "" {
+				s.currentAgentID = args.Name
+			}
+		case "deactivate_agent":
+			s.currentAgentID = ""
+		}
+		return
+	}
 }
 
 func (s *SessionState) ToggleToolCall(id string) {
 	if tc, ok := s.ToolCalls[id]; ok {
 		tc.Expanded = !tc.Expanded
 	}
+}
+
+// ToggleSubagentGroup 展开/折叠一组 subagent 内容（键由渲染层生成）。
+func (s *SessionState) ToggleSubagentGroup(key string) {
+	if key == "" {
+		return
+	}
+	if s.SubagentExpanded == nil {
+		s.SubagentExpanded = map[string]bool{}
+	}
+	s.SubagentExpanded[key] = !s.SubagentExpanded[key]
+}
+
+// ItemAgentID 返回时间线项归属的子代理代码（alkaid0 的
+// alk.cxykevin.top/agent_status），空串表示主代理或无法判定。
+// 消息取自身字段；工具调用优先取归属消息（回放/分页后归属消息可能晚到，
+// 此时退回创建时按当时的子代理做的快照）；终端取服务端给的 agentId。
+func (s *SessionState) ItemAgentID(item *TimelineItem) string {
+	if item == nil {
+		return ""
+	}
+	switch item.Kind {
+	case TimelineUserMessage, TimelineAssistantMessage, TimelineThought:
+		if item.Message != nil {
+			return item.Message.AgentID
+		}
+	case TimelineToolCall:
+		if agent, ok := s.ownerAgentID(item.OwnerMessageID); ok {
+			return agent
+		}
+		if item.ToolCall != nil {
+			return item.ToolCall.AgentID
+		}
+	case TimelineTerminal:
+		if item.Terminal != nil && item.Terminal.AgentID != "" {
+			return item.Terminal.AgentID
+		}
+		if agent, ok := s.ownerAgentID(item.OwnerMessageID); ok {
+			return agent
+		}
+	}
+	return ""
+}
+
+// ownerAgentID 返回归属消息声明的子代理。归属消息不在本地（更早的一页尚未
+// 加载）时返回 ok=false，调用方退回自己的快照。
+func (s *SessionState) ownerAgentID(messageID string) (string, bool) {
+	if messageID == "" {
+		return "", false
+	}
+	for _, key := range []string{
+		messageKey(messageID, false, false),
+		messageKey(messageID, true, false),
+	} {
+		if m := s.msgIndex[key]; m != nil {
+			return m.AgentID, true
+		}
+	}
+	return "", false
 }
 
 func (s *SessionState) ApplyPlan(ev *acp.PlanUpdateEvent) {

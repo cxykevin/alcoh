@@ -13,6 +13,9 @@ type MessageChunkEvent struct {
 	IsUser    bool
 	IsThought bool
 	Text      string
+	// AgentID 是 alkaid0 的 alk.cxykevin.top/agent_status：消息所属子代理的
+	// 代码（如 coder-agent），空字符串表示主代理；nil 表示服务端未提供该字段。
+	AgentID *string
 }
 
 // MessageUpdateEvent 对应完整消息（整体替换/清空语义）。
@@ -21,6 +24,8 @@ type MessageUpdateEvent struct {
 	Message   Message
 	IsUser    bool
 	IsThought bool
+	// AgentID 同 MessageChunkEvent.AgentID：完整消息所属的子代理。
+	AgentID *string
 }
 
 // ToolCallUpdateEvent 对应 tool_call_update（upsert）。

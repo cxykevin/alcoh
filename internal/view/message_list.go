@@ -25,6 +25,8 @@ const (
 	ToggleThought
 	// ToggleTool 表示工具调用：点击标题行展开/折叠。
 	ToggleTool
+	// ToggleSubagent 表示 subagent 内容组：点击组标题展开/折叠整组。
+	ToggleSubagent
 )
 
 // ToggleRef 描述正文某行被鼠标点击时应切换展开/折叠的目标。
@@ -38,6 +40,9 @@ type block struct {
 	raw      string     // 块级原始内容（工具/终端/思考等，复制用，无渲染前缀）
 	srcLines []SrcLine  // 行级插针：每渲染行对应的原始逻辑行文本（消息块）
 	toggle   *ToggleRef // 非 nil 时顶行可点击切换展开/折叠（思考/工具）
+	// nestedToggles 是块内（相对本块首行）可点击的行：subagent 内容组展开后
+	// 组内各思考/工具标题行的偏移量。组整体折叠时不需要它。
+	nestedToggles map[int]ToggleRef
 }
 
 // SrcLine 是行级插针的一行：Text 为该渲染行对应的原始 markdown 逻辑行，
@@ -190,6 +195,9 @@ func (ml *MessageList) drawLine(c *renderer.Canvas, x, y, maxW int, line []Span)
 
 // buildBlocks 仅按 Timeline 的首次出现顺序构建正文。工具、计划和终端不再被
 // 统一追加在所有消息之后。
+//
+// 同一子代理的连续内容（alkaid0 的 alk.cxykevin.top/agent_status 相同）会
+// 自动合并成一个 subagent 内容组：默认只显示一行组标题，点击标题展开整组。
 func (ml *MessageList) buildBlocks(s *model.SessionState, width int) []*block {
 	blocks := make([]*block, 0, len(s.Timeline))
 	// tailIndex 是正文中最后一个会渲染出块的 Timeline 下标。只有结尾处的思考
@@ -197,6 +205,41 @@ func (ml *MessageList) buildBlocks(s *model.SessionState, width int) []*block {
 	// 「隐藏」档位（Ctrl+T）下思考与工具调用整块不渲染，也不参与结尾判断。
 	hidden := s.Detail == model.DetailHidden
 	tailIndex := lastRenderedTimelineIndex(s)
+	agents, groups := subagentGroups(s)
+	// 当前正在累积的 subagent 内容组：同一分组键的块先攒着，整组结束时
+	// 再合并成一个可折叠的组块。
+	var pending []*block
+	var pendingKey, pendingAgent string
+	var pendingRunning bool
+	flush := func() {
+		if len(pending) == 0 {
+			pendingKey, pendingAgent, pendingRunning = "", "", false
+			return
+		}
+		blocks = append(blocks, ml.subagentBlock(s, pendingKey, pendingAgent, pending, pendingRunning))
+		pending, pendingKey, pendingAgent, pendingRunning = nil, "", "", false
+	}
+	// add 把一项的渲染块放进正文：属于 subagent 的按分组键累积，其余内容
+	// 出现时先把已完成的分组收尾，保持时间线顺序不变。
+	add := func(i int, blk *block) {
+		if blk == nil {
+			return
+		}
+		key := groups[i]
+		if key == "" {
+			flush()
+			blocks = append(blocks, blk)
+			return
+		}
+		if pendingKey != key {
+			flush()
+			pendingKey, pendingAgent = key, agents[i]
+		}
+		if itemRunning(s.Timeline[i]) {
+			pendingRunning = true
+		}
+		pending = append(pending, blk)
+	}
 	for i, item := range s.Timeline {
 		switch item.Kind {
 		case model.TimelineUserMessage, model.TimelineAssistantMessage:
@@ -205,7 +248,7 @@ func (ml *MessageList) buildBlocks(s *model.SessionState, width int) []*block {
 			// 折叠后的工具调用之间留下多余的空行。
 			if item.Message != nil && messageHasBody(item.Message) {
 				m := item.Message
-				blocks = append(blocks, ml.cached(item.Key, ml.messageSig(m, width), func() *block {
+				add(i, ml.cached(item.Key, ml.messageSig(m, width), func() *block {
 					return ml.messageBlock(m, width)
 				}))
 			}
@@ -213,7 +256,7 @@ func (ml *MessageList) buildBlocks(s *model.SessionState, width int) []*block {
 			if !hidden && item.Message != nil {
 				m := item.Message
 				tail := i == tailIndex
-				blocks = append(blocks, ml.cached(item.Key, ml.thoughtSig(m, width, tail), func() *block {
+				add(i, ml.cached(item.Key, ml.thoughtSig(m, width, tail), func() *block {
 					return ml.thoughtBlock(m, width, tail)
 				}))
 			}
@@ -222,7 +265,7 @@ func (ml *MessageList) buildBlocks(s *model.SessionState, width int) []*block {
 				tc := item.ToolCall
 				private := s.Alkaid0ToolCalls
 				details := s.ShowProtocolDetails
-				blocks = append(blocks, ml.cached(item.Key, ml.toolSig(tc, width, private, details), func() *block {
+				add(i, ml.cached(item.Key, ml.toolSig(tc, width, private, details), func() *block {
 					return ml.toolBlock(tc, width, private, details)
 				}))
 			}
@@ -232,19 +275,20 @@ func (ml *MessageList) buildBlocks(s *model.SessionState, width int) []*block {
 		case model.TimelineTerminal:
 			if item.Terminal != nil {
 				ts := item.Terminal
-				blocks = append(blocks, ml.cached(item.Key, ml.terminalSig(ts, width), func() *block {
+				add(i, ml.cached(item.Key, ml.terminalSig(ts, width), func() *block {
 					return ml.terminalBlock(ts, width)
 				}))
 			}
 		case model.TimelineSystemNotice:
 			if item.Notice != "" {
 				notice := item.Notice
-				blocks = append(blocks, ml.cached(item.Key, ml.noticeSig(notice, width), func() *block {
+				add(i, ml.cached(item.Key, ml.noticeSig(notice, width), func() *block {
 					return &block{lines: [][]Span{{{Text: notice, Style: ml.Theme.Style(ml.Theme.TextMuted)}}}, raw: notice}
 				}))
 			}
 		}
 	}
+	flush()
 	// 正在加载更早的一页（alkaid0 v0.6 历史回放分页）时，在正文顶部顶一行提示：
 	// 它在加载结束的下一帧消失，因此不参与视口锚定的行数计算（见 Draw）。
 	if s.HistoryLoading {
@@ -252,6 +296,116 @@ func (ml *MessageList) buildBlocks(s *model.SessionState, width int) []*block {
 		blocks = append([]*block{{lines: [][]Span{{{Text: notice, Style: ml.Theme.Style(ml.Theme.TextMuted).WithDim(true)}}}}}, blocks...)
 	}
 	return blocks
+}
+
+// subagentGroups 逐项计算时间线项归属的子代理与分组键（与 s.Timeline 等长，
+// 主代理或不参与分组的位置为空串）。分组是"同一子代理的连续片段"，键里的
+// 序号从正文末尾往前数：加载更早的历史只会在前面追加内容，已有分组从末尾
+// 数的序号不变，用户展开/折叠过的组不会错位。
+func subagentGroups(s *model.SessionState) ([]string, []string) {
+	agents := make([]string, len(s.Timeline))
+	keys := make([]string, len(s.Timeline))
+	counts := make(map[string]int, 4)
+	for i := len(s.Timeline) - 1; i >= 0; i-- {
+		agent := s.ItemAgentID(s.Timeline[i])
+		agents[i] = agent
+		if agent == "" {
+			continue
+		}
+		if i == len(s.Timeline)-1 || agents[i+1] != agent {
+			counts[agent]++
+		}
+		keys[i] = agent + "#" + itoa(counts[agent])
+	}
+	return agents, keys
+}
+
+// itemRunning 报告时间线项是否仍在进行（组标题据此显示 spinner）。
+func itemRunning(item *model.TimelineItem) bool {
+	if item == nil {
+		return false
+	}
+	switch item.Kind {
+	case model.TimelineToolCall:
+		return item.ToolCall != nil && item.ToolCall.Running()
+	case model.TimelineAssistantMessage, model.TimelineThought:
+		return item.Message != nil && !item.Message.Done
+	}
+	return false
+}
+
+// subagentDisplayName 把子代理的实例 ID 换成展示名。内置的目标校验代理
+// （goal-check）实例 ID 是 "__goal_check__"，直接显示不友好，单独映射成
+// "Goal Checker"；其余子代理沿用用户起的实例名。
+func subagentDisplayName(agent string) string {
+	if agent == "__goal_check__" {
+		return "Goal Checker"
+	}
+	return agent
+}
+
+// subagentBlock 把一个子代理的连续内容合并成单个可折叠组块：折叠时只有一行
+// 标题（带项数），展开时按原顺序拼出组内各块，并保留组内思考/工具的点击行。
+func (ml *MessageList) subagentBlock(s *model.SessionState, key, agent string, inner []*block, running bool) *block {
+	t := ml.Theme
+	name := subagentDisplayName(agent)
+	expanded := s.SubagentExpanded[key]
+	title := "▸ subagent " + name
+	style := t.Style(t.Secondary).WithDim(true)
+	if running {
+		title = SpinFrame(ml.SpinFrame) + " subagent " + name
+		style = t.Style(t.Secondary)
+	} else if expanded {
+		title = "▾ subagent " + name
+		style = t.Style(t.Secondary).WithBold(true)
+	}
+	title += "  " + itoa(len(inner)) + " items"
+	blk := &block{
+		lines:  [][]Span{{{Text: title, Style: style}}},
+		raw:    subagentRaw(name, inner),
+		toggle: &ToggleRef{Kind: ToggleSubagent, ID: key},
+	}
+	if !expanded {
+		return blk
+	}
+	for _, b := range inner {
+		if len(b.lines) == 0 {
+			continue
+		}
+		if b.toggle != nil {
+			if blk.nestedToggles == nil {
+				blk.nestedToggles = map[int]ToggleRef{}
+			}
+			blk.nestedToggles[len(blk.lines)] = *b.toggle
+		}
+		for rel, ref := range b.nestedToggles {
+			if blk.nestedToggles == nil {
+				blk.nestedToggles = map[int]ToggleRef{}
+			}
+			blk.nestedToggles[len(blk.lines)+rel] = ref
+		}
+		blk.lines = append(blk.lines, b.lines...)
+	}
+	return blk
+}
+
+// subagentRaw 拼接组内各块的原始文本（复制用）：工具/思考/终端取块级 raw，
+// 消息块取行级插针里的逻辑行（长行 wrap 的续行不重复）。
+func subagentRaw(name string, inner []*block) string {
+	var sb strings.Builder
+	sb.WriteString("subagent " + name)
+	for _, b := range inner {
+		if b.raw != "" {
+			sb.WriteString("\n" + b.raw)
+			continue
+		}
+		for _, sl := range b.srcLines {
+			if sl.First {
+				sb.WriteString("\n" + sl.Text)
+			}
+		}
+	}
+	return sb.String()
 }
 
 // 渲染签名：把影响某个条目渲染结果的字段喂给 FNV-1a，任何变化都会换一个值。
@@ -385,6 +539,9 @@ func (ml *MessageList) bodyBlocks(blocks []*block) []BodyBlock {
 		}
 		if blk.toggle != nil {
 			ml.Toggles[row] = *blk.toggle
+		}
+		for rel, ref := range blk.nestedToggles {
+			ml.Toggles[row+rel] = ref
 		}
 		row += n
 	}
