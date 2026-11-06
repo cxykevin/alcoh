@@ -264,6 +264,76 @@ func TestThoughtCollapsesWhenBodyStarts(t *testing.T) {
 	}
 }
 
+func TestThoughtCollapsesOnAnyFollowingContent(t *testing.T) {
+	// 思考后面出现任何新内容（工具调用、终端卡片、下一段思考）都应立即折叠，
+	// 不必等正文 chunk 或整个 turn 的 idle。
+	s := NewSession("s1", "test")
+	s.AppendChunk(&acp.MessageChunkEvent{SessionID: "s1", MessageID: "m1", IsThought: true, Text: "先想一下"})
+	if s.Messages[0].Collapsed() {
+		t.Fatal("streaming thought should stay expanded")
+	}
+	// 工具调用出现 → 思考段结束，立即折叠。
+	s.ApplyToolCall(&acp.ToolCallUpdateEvent{SessionID: "s1", ToolCallID: "tc1", Title: new("read_file")})
+	if !s.Messages[0].Done || !s.Messages[0].Collapsed() {
+		t.Fatalf("thought should collapse when a tool call starts, done=%v collapsed=%v",
+			s.Messages[0].Done, s.Messages[0].Collapsed())
+	}
+	// 旧工具调用的后续更新（完成/输出）不是新内容，不能收掉新的思考。
+	s.AppendChunk(&acp.MessageChunkEvent{SessionID: "s1", MessageID: "m2", IsThought: true, Text: "再想一下"})
+	if !s.Messages[1].Expanded || s.Messages[1].Collapsed() {
+		t.Fatal("new thought should be streaming after tool call")
+	}
+	s.ApplyToolCall(&acp.ToolCallUpdateEvent{SessionID: "s1", ToolCallID: "tc1", RawOutput: []byte("done")})
+	if s.Messages[1].Collapsed() {
+		t.Error("update to an existing tool call must not collapse the current thought")
+	}
+	// 下一段思考本身也是"后面的内容"：新的思考开始时，上一段立即折叠。
+	s.AppendChunk(&acp.MessageChunkEvent{SessionID: "s1", MessageID: "m3", IsThought: true, Text: "第三段"})
+	if !s.Messages[1].Collapsed() {
+		t.Error("previous thought should collapse when the next thought starts")
+	}
+	// 终端卡片同样折叠当前思考。
+	s.ApplyTerminalInfo(acp.TerminalInfo{TerminalID: "term1", Title: "shell"})
+	if !s.Messages[2].Collapsed() {
+		t.Error("thought should collapse when a terminal card is created")
+	}
+}
+
+func TestCollapsedThoughtStaysCollapsedOnLateChunks(t *testing.T) {
+	// 工具调用参数可能还在流式，思考 chunk 会在工具调用事件之后继续到达：
+	// 这些迟到的 chunk 只应补内容，不能把思考重新标成"进行中"，
+	// 否则工具调用看起来就像没有触发自动折叠。
+	s := NewSession("s1", "test")
+	s.AppendChunk(&acp.MessageChunkEvent{SessionID: "s1", MessageID: "m1", IsThought: true, Text: "前半"})
+	s.ApplyToolCall(&acp.ToolCallUpdateEvent{SessionID: "s1", ToolCallID: "tc1", Title: new("read_file")})
+	if !s.Messages[0].Collapsed() {
+		t.Fatal("thought should collapse when the tool call starts")
+	}
+	s.AppendChunk(&acp.MessageChunkEvent{SessionID: "s1", MessageID: "m1", IsThought: true, Text: "，后半"})
+	m := s.Messages[0]
+	if !m.Collapsed() {
+		t.Errorf("late thought chunk must not re-expand the thought, done=%v expanded=%v", m.Done, m.Expanded)
+	}
+	if m.Text != "前半，后半" {
+		t.Errorf("late thought chunk should still append text, got %q", m.Text)
+	}
+
+	// 完整思考块（ContentSet）之后迟到的 chunk 同理。
+	s2 := NewSession("s2", "test")
+	s2.ApplyMessage(&acp.MessageUpdateEvent{
+		SessionID: "s2", IsThought: true,
+		Message: acp.Message{MessageID: "t1", ContentSet: true,
+			Content: []acp.ContentBlock{{Type: "text", Text: new("完整思考")}}},
+	})
+	s2.AppendChunk(&acp.MessageChunkEvent{SessionID: "s2", MessageID: "t1", IsThought: true, Text: "尾巴"})
+	if !s2.Messages[0].Collapsed() {
+		t.Error("thought should stay collapsed after a complete thought block")
+	}
+	if s2.Messages[0].Text != "完整思考尾巴" {
+		t.Errorf("late chunk text = %q", s2.Messages[0].Text)
+	}
+}
+
 func TestSharedMessageIDThoughtAndBodyStaySeparate(t *testing.T) {
 	// alkaid0 流式期间 agent_thought_chunk 与 agent_message_chunk 共享同一 messageId
 	// （都来自 resp.MsgID）。正文 chunk 绝不能追加进思维链，反之亦然。

@@ -23,7 +23,7 @@ func TestMessageListCacheReflectsUpdates(t *testing.T) {
 	s.ApplyMessage(&acp.MessageUpdateEvent{
 		SessionID: "s1", IsThought: true,
 		Message: acp.Message{MessageID: "t1", ContentSet: true,
-			Content: []acp.ContentBlock{{Type: "text", Text: new("思考正文内容")}}},
+			Content: []acp.ContentBlock{{Type: "text", Text: new("L1\nL2\nL3\nL4\nL5\nL6\nL7")}}},
 	})
 
 	ml := &MessageList{Theme: theme}
@@ -41,13 +41,13 @@ func TestMessageListCacheReflectsUpdates(t *testing.T) {
 	if got := draw(60, 12); !strings.Contains(got, "（追加片段）") {
 		t.Fatalf("cached frame missed appended chunk:\n%s", got)
 	}
-	// 思考完成后默认折叠：正文不显示。
-	if got := draw(60, 12); strings.Contains(got, "思考正文内容") {
-		t.Fatalf("collapsed thought should not render body:\n%s", got)
+	// 思考完成后默认折叠：只显示最后 5 行预览，前两行不出现。
+	if got := draw(60, 12); !strings.Contains(got, "L5") || strings.Contains(got, "L1") || strings.Contains(got, "L2") {
+		t.Fatalf("collapsed thought should only render the 5-line preview:\n%s", got)
 	}
-	// 展开思考：正文必须出现（缓存需按展开态失效）。
+	// 展开思考：完整正文必须出现（缓存需按展开态失效）。
 	s.ToggleMessage("t1")
-	if got := draw(60, 12); !strings.Contains(got, "思考正文内容") {
+	if got := draw(60, 12); !strings.Contains(got, "L1") || !strings.Contains(got, "L7") {
 		t.Fatalf("expanded thought body missing (stale cache):\n%s", got)
 	}
 }

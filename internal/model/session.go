@@ -2,7 +2,6 @@ package model
 
 import (
 	"encoding/json"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -267,6 +266,13 @@ func messageTimelineKind(kind MessageKind) TimelineKind {
 func (s *SessionState) AppendChunk(ev *acp.MessageChunkEvent) {
 	msg := s.message(ev.MessageID, ev.IsThought, ev.IsUser)
 	msg.Text += ev.Text
+	if msg.Kind == MsgThought && msg.Done {
+		// 这段思考已经结束（后续内容已到达而折叠）：工具调用参数流式期间、
+		// 或重连快照补发完整思考后，迟到的 thought chunk 仍可能继续到达。
+		// 只追加内容，不能把 Done 改回 false —— 否则思考会重新显示成"进行中"，
+		// 看起来就像工具调用没有自动折叠。
+		return
+	}
 	msg.Done = false
 	if !ev.IsThought && !ev.IsUser {
 		// 正文 chunk 开始流式 → 此前的思考流已经结束，立即折叠，不等整个 turn 的 idle。
@@ -300,16 +306,15 @@ func (s *SessionState) ApplyMessage(ev *acp.MessageUpdateEvent) {
 	}
 }
 
-// finishLatestThought 把最近一个未完成的思考标记为完成并折叠。
+// finishLatestThought 把仍在流式中的思考标记为完成并折叠。
 // 真实 wire 中 thought 与正文共享 messageId，chunk 流没有显式"思考结束"信号；
-// 正文内容开始到达即视为思考流结束，立即折叠而不是等整个 turn 的 idle。
+// 思考后面出现任何新内容（正文 chunk/完整块、工具调用、终端卡片、下一段思考）
+// 即视为这一段思考结束，立即折叠而不是等整个 turn 的 idle。
 func (s *SessionState) finishLatestThought() {
-	for _, m := range slices.Backward(s.Messages) {
-
+	for _, m := range s.Messages {
 		if m.Kind == MsgThought && !m.Done {
 			m.Done = true
 			m.Expanded = false
-			return
 		}
 	}
 }
@@ -383,6 +388,9 @@ func (s *SessionState) message(id string, thought, user bool) *Message {
 	} else if user {
 		kind = MsgUser
 	}
+	// 新消息（正文、用户消息、下一段思考）到达 → 此前仍在流式的思考立即结束
+	// 并折叠。必须在把新消息放进列表之前做，否则新思考会被自己折叠。
+	s.finishLatestThought()
 	m := &Message{MessageID: id, Kind: kind, Expanded: thought}
 	s.receiveMessages = append(s.receiveMessages, m)
 	s.Messages = append(s.Messages, m)
@@ -837,6 +845,9 @@ func (s *SessionState) ApplyMsgQueue(revision uint64, items []acp.MsgQueueItem) 
 func (s *SessionState) ApplyToolCall(ev *acp.ToolCallUpdateEvent) {
 	tc, ok := s.ToolCalls[ev.ToolCallID]
 	if !ok {
+		// 工具调用是新内容：它出现后，此前的思考段已结束，立即折叠。
+		// 只在新调用创建时折叠——旧调用后续的完成/输出更新不能收掉新的思考。
+		s.finishLatestThought()
 		tc = &ToolCall{ID: ev.ToolCallID, Status: acp.ToolPending, Expanded: true}
 		s.ToolCalls[ev.ToolCallID] = tc
 		s.ToolOrder = append(s.ToolOrder, ev.ToolCallID)
@@ -1053,6 +1064,8 @@ func (s *SessionState) putTerminalActive(terminal *TerminalState) {
 	}
 	s.removeTerminalHistoryEntry(terminal.ID)
 	if _, ok := s.terminals[terminal.ID]; !ok {
+		// 终端卡片是正文里的新内容：此前仍在流式的思考段到此结束，立即折叠。
+		s.finishLatestThought()
 		// 新终端排在最前：面板里"新的 shell 在上"。
 		s.terminalOrder = append([]string{terminal.ID}, s.terminalOrder...)
 	}

@@ -430,27 +430,35 @@ func (ml *MessageList) messageBlock(msg *model.Message, width int) *block {
 	return blk
 }
 
+// thoughtPreviewLines 是思考折叠（以及流式中）时保留的预览渲染行数。
+// 折叠态仍显示最后几行内容，点击标题后展开到完整高度。
+const thoughtPreviewLines = 5
+
 func (ml *MessageList) thoughtBlock(msg *model.Message, width int) *block {
 	t := ml.Theme
-	// 思考内容复制原文（折叠时仅显示标题，复制仍取全部原始行）。
+	// 思考内容复制原文（折叠时只显示预览，复制仍取全部原始行）。
 	blk := &block{raw: strings.Join(msg.Lines(), "\n"), toggle: &ToggleRef{Kind: ToggleThought, ID: msg.MessageID}}
-	if msg.Collapsed() {
-		n := len(msg.Lines())
-		blk.lines = [][]Span{{{Text: "▸ thinking  ✓ " + itoa(n) + " lines", Style: t.Style(t.TextMuted).WithDim(true)}}}
-		return blk
-	}
+	streaming := !msg.Done
+	// 折叠态保留最后 thoughtPreviewLines 个渲染行作为预览；手动展开后显示全部。
+	// 流式中同样只显示尾部，避免长思考把视图撑得过高。
+	preview := streaming || !msg.Expanded
 	title := "▾ thinking"
-	if !msg.Done {
+	titleStyle := t.Style(t.TextMuted).WithItalic(true)
+	switch {
+	case streaming:
 		title = SpinFrame(ml.SpinFrame) + " thinking…"
+	case !msg.Expanded:
+		title = "▸ thinking  ✓ " + itoa(len(msg.Lines())) + " lines"
+		titleStyle = t.Style(t.TextMuted).WithDim(true)
 	}
-	blk.lines = append(blk.lines, []Span{{Text: title, Style: t.Style(t.TextMuted).WithItalic(true)}})
+	blk.lines = append(blk.lines, []Span{{Text: title, Style: titleStyle}})
 	// 先换行再截断：限制的是渲染行数，而非原始逻辑行数（长行 wrap 后可能占多行）。
 	var wrapped []string
 	for _, ln := range msg.Lines() {
 		wrapped = append(wrapped, renderer.Wrap(ln, width-4)...)
 	}
-	if len(wrapped) > 5 {
-		wrapped = wrapped[len(wrapped)-5:]
+	if preview && len(wrapped) > thoughtPreviewLines {
+		wrapped = wrapped[len(wrapped)-thoughtPreviewLines:]
 	}
 	for _, wl := range wrapped {
 		blk.lines = append(blk.lines, []Span{{Text: "  " + wl, Style: t.Style(t.TextMuted)}})

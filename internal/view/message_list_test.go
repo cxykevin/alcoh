@@ -9,7 +9,7 @@ import (
 )
 
 // TestMessageListToggles 验证可点击切换展开/折叠的正文行映射（Toggles）：
-// 思考与工具块仅标题行可点击；展开后内容行不可点击。
+// 思考与工具块仅标题行可点击；折叠的思考保留 5 行预览，点击标题展开到完整高度。
 func TestMessageListToggles(t *testing.T) {
 	theme := renderer.DefaultTheme()
 	s := model.NewSession("s1", "test")
@@ -28,18 +28,20 @@ func TestMessageListToggles(t *testing.T) {
 	const w, h = 60, 20
 	ml.Draw(renderer.NewCanvas(renderer.NewBuffer(w, h)), renderer.NewRect(0, 0, w, h), s)
 
-	// 折叠的思考 1 行（标题），工具 2 行（标题 + out）。
+	// 折叠的思考 2 行（标题 + 1 行预览），工具 2 行（标题 + out）。
 	want := map[int]ToggleRef{
 		0: {Kind: ToggleThought, ID: "t1"},
-		1: {Kind: ToggleTool, ID: "c1"},
+		2: {Kind: ToggleTool, ID: "c1"},
 	}
 	for row, ref := range want {
 		if got, ok := ml.Toggles[row]; !ok || got != ref {
 			t.Errorf("Toggles[%d] = %+v, ok=%v; want %+v", row, got, ok, ref)
 		}
 	}
-	if _, ok := ml.Toggles[2]; ok {
-		t.Error("tool content row should not be clickable")
+	for _, row := range []int{1, 3} {
+		if _, ok := ml.Toggles[row]; ok {
+			t.Errorf("content row %d should not be clickable", row)
+		}
 	}
 
 	// 模拟点击思考标题 → 展开：标题行仍可点击，思考内容行不可点击。
@@ -54,6 +56,47 @@ func TestMessageListToggles(t *testing.T) {
 	// 思考展开后工具标题行下移，仍可点击。
 	if got, ok := ml.Toggles[2]; !ok || got != (ToggleRef{Kind: ToggleTool, ID: "c1"}) {
 		t.Errorf("tool header should move down and stay clickable, got %+v ok=%v", got, ok)
+	}
+}
+
+// TestThoughtBlockPreview 验证思考折叠时只显示最后 5 个渲染行作为预览，
+// 点击展开后显示完整高度（全部内容行）；流式中同样只保留尾部预览。
+func TestThoughtBlockPreview(t *testing.T) {
+	ml := &MessageList{Theme: renderer.DefaultTheme()}
+	text := "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8"
+	msg := &model.Message{MessageID: "t1", Kind: model.MsgThought, Text: text, Done: true}
+
+	collapsed := ml.thoughtBlock(msg, 60)
+	if len(collapsed.lines) != 1+thoughtPreviewLines {
+		t.Fatalf("collapsed thought rows = %d, want %d", len(collapsed.lines), 1+thoughtPreviewLines)
+	}
+	if got := collapsed.lines[0][0].Text; got != "▸ thinking  ✓ 8 lines" {
+		t.Errorf("collapsed header = %q", got)
+	}
+	preview := []string{"  l4", "  l5", "  l6", "  l7", "  l8"}
+	for i, want := range preview {
+		if got := collapsed.lines[i+1][0].Text; got != want {
+			t.Errorf("preview row %d = %q, want %q", i, got, want)
+		}
+	}
+
+	// 点击展开：标题变成 ▾，内容显示完整高度（8 行）。
+	msg.Expanded = true
+	expanded := ml.thoughtBlock(msg, 60)
+	if len(expanded.lines) != 1+8 {
+		t.Fatalf("expanded thought rows = %d, want %d", len(expanded.lines), 1+8)
+	}
+	if got := expanded.lines[0][0].Text; got != "▾ thinking" {
+		t.Errorf("expanded header = %q", got)
+	}
+	if got := expanded.lines[1][0].Text; got != "  l1" {
+		t.Errorf("expanded first content row = %q, want %q", got, "  l1")
+	}
+
+	// 流式中（默认 Expanded=true）仍只显示尾部预览，避免长思考撑高视图。
+	streaming := &model.Message{MessageID: "t2", Kind: model.MsgThought, Text: text, Expanded: true}
+	if rows := len(ml.thoughtBlock(streaming, 60).lines); rows != 1+thoughtPreviewLines {
+		t.Errorf("streaming thought rows = %d, want %d", rows, 1+thoughtPreviewLines)
 	}
 }
 
