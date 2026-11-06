@@ -765,7 +765,7 @@ func (s *SessionState) CollapseThoughts() {
 	}
 }
 
-// ExpandAll 展开会话中全部思维链（思考消息）与工具调用（Ctrl+O）。
+// ExpandAll 展开会话中全部思维链（思考消息）与工具调用（「全部展开」档位）。
 func (s *SessionState) ExpandAll() {
 	for _, m := range s.Messages {
 		if m.Kind == MsgThought {
@@ -777,7 +777,7 @@ func (s *SessionState) ExpandAll() {
 	}
 }
 
-// CollapseAll 折叠会话中全部思维链与工具调用（再次按 Ctrl+O 收回）。
+// CollapseAll 折叠会话中全部思维链与工具调用（回到「正常」档位时收回）。
 func (s *SessionState) CollapseAll() {
 	for _, m := range s.Messages {
 		if m.Kind == MsgThought {

@@ -201,51 +201,10 @@ func TestRunFullFlow(t *testing.T) {
 	}
 }
 
-// TestCtrlOExpandAll 验证 Ctrl+O 展开会话中全部思维链（思考在 idle 后折叠）。
-// 工具调用展开逻辑由 model.TestExpandAll 覆盖，此处只验证按键分发。
-func TestCtrlOExpandAll(t *testing.T) {
-	ft := newFakeTerm()
-	b := demo.New(true)
-	a := New(ft, b)
-	done := runApp(t, a)
-
-	time.Sleep(100 * time.Millisecond)
-	for _, r := range "你好" {
-		ft.sendKey(input.RuneKey(r, input.ModNone))
-	}
-	ft.sendKey(input.SimpleKey(input.KeyEnter))
-	// 等待权限请求出现并批准。
-	time.Sleep(1600 * time.Millisecond)
-	ft.sendKey(input.RuneKey('a', input.ModNone))
-	// 等待会话结束（idle → 思考自动折叠）。
-	time.Sleep(500 * time.Millisecond)
-	ft.sendKey(input.RuneKey('o', input.ModCtrl))
-	time.Sleep(100 * time.Millisecond)
-	ft.sendKey(input.RuneKey('q', input.ModCtrl))
-	time.Sleep(50 * time.Millisecond)
-	ft.sendKey(input.RuneKey('y', input.ModNone))
-	waitRun(t, done)
-
-	if a.model.Active == nil {
-		t.Fatal("active session should exist")
-	}
-	expanded := 0
-	for _, m := range a.model.Active.Messages {
-		if m.Kind == model.MsgThought {
-			if !m.Expanded {
-				t.Errorf("thought %s should be expanded after Ctrl+O", m.MessageID)
-			}
-			expanded++
-		}
-	}
-	if expanded == 0 {
-		t.Error("no thought messages found in demo session")
-	}
-}
-
-// TestCtrlOCollapseAll 验证 Ctrl+O 再按一次收回：全部展开后再次按
-// Ctrl+O 时全部折叠（思考与工具调用均收起）。
-func TestCtrlOCollapseAll(t *testing.T) {
+// TestCtrlOCycle 验证 Ctrl+O 与 Ctrl+T 绑定同一套三档循环：第一次切到
+// 「全部展开」（思考与工具调用都展开），第二次切到「隐藏」。隐藏只影响
+// 展示，不折叠各项——档位循环本身由 model.TestCycleBodyDetail 覆盖。
+func TestCtrlOCycle(t *testing.T) {
 	ft := newFakeTerm()
 	b := demo.New(true)
 	a := New(ft, b)
@@ -274,24 +233,25 @@ func TestCtrlOCollapseAll(t *testing.T) {
 		t.Fatal("active session should exist")
 	}
 	s := a.model.Active
-	if !s.HasCollapsible() {
-		t.Fatal("expected collapsible thoughts/tools in demo session")
+	if s.Detail != model.DetailHidden {
+		t.Fatalf("detail after two Ctrl+O = %v, want hidden", s.Detail)
 	}
-	expanded := 0
+	// 第二次 Ctrl+O 不再是一键折叠：各项展开态保留（隐藏档位只影响展示）。
+	thoughts := 0
 	for _, m := range s.Messages {
 		if m.Kind == model.MsgThought {
-			if m.Expanded {
-				t.Errorf("thought %s should be collapsed after second Ctrl+O", m.MessageID)
+			thoughts++
+			if !m.Expanded {
+				t.Errorf("thought %s should stay expanded in hidden detail", m.MessageID)
 			}
-			expanded++
 		}
 	}
-	if expanded == 0 {
+	if thoughts == 0 {
 		t.Error("no thought messages found in demo session")
 	}
 	for id, tc := range s.ToolCalls {
-		if tc.Expanded {
-			t.Errorf("tool call %s should be collapsed after second Ctrl+O", id)
+		if !tc.Expanded {
+			t.Errorf("tool call %s should stay expanded in hidden detail", id)
 		}
 	}
 }

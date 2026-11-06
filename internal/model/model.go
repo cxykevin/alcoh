@@ -720,7 +720,7 @@ func (m *AppModel) SyncProtocolDetails() {
 
 // SyncToolExpansion 把「默认展开工具」同步到当前会话与主页预创建会话：
 // 之后新建的工具调用按该值决定初始展开态，已有工具也立即跟随设置切换，
-// 让设置页的开关对当前正文立即可见（也可再用 Ctrl+O 整体切换）。
+// 让设置页的开关对当前正文立即可见（也可再用 Ctrl+T / Ctrl+O 循环切换）。
 func (m *AppModel) SyncToolExpansion() {
 	apply := func(s *SessionState) {
 		if s == nil {
