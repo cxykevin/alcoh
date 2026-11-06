@@ -106,6 +106,15 @@ const (
 
 // ---- 消息内容块 ----
 
+// ImagePlaceholder 是图片内容块在纯文本输入框/消息正文中的占位符。
+// 输入框内部用它标识一张待发送图片；发送时占位符会转换成 ACP image 块。
+const ImagePlaceholder = "[Image]"
+
+// TextBlock 构造一个 text 内容块。
+func TextBlock(text string) ContentBlock {
+	return ContentBlock{Type: "text", Text: &text}
+}
+
 // ContentBlock 是消息内容块（MCP 风格，type 判别）。
 // text 块的文本字段名为 text（不是 content）。
 type ContentBlock struct {

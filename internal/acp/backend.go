@@ -49,8 +49,9 @@ type Session interface {
 	ID() string
 	// Title 返回会话标题（可空）。
 	Title() string
-	// SendPrompt 向 agent 提交一条用户消息。
-	SendPrompt(ctx context.Context, text string) error
+	// SendPrompt 向 agent 提交一条用户消息。prompt 是 ACP 内容块列表，
+	// 文本与图片（type=image，base64 data + mimeType）按顺序发送。
+	SendPrompt(ctx context.Context, prompt []ContentBlock) error
 	// Cancel 取消进行中的前台工作。
 	Cancel(ctx context.Context) error
 	// Close 关闭会话。

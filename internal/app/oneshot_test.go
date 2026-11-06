@@ -82,9 +82,9 @@ type promptRecordingSession struct {
 	b *promptRecordingBackend
 }
 
-func (s *promptRecordingSession) SendPrompt(ctx context.Context, text string) error {
-	s.b.record(s.ID(), text)
-	return s.Session.SendPrompt(ctx, text)
+func (s *promptRecordingSession) SendPrompt(ctx context.Context, prompt []acp.ContentBlock) error {
+	s.b.record(s.ID(), promptText(prompt))
+	return s.Session.SendPrompt(ctx, prompt)
 }
 
 // TestInitialPromptAutoSendsOnStartup 验证 One Shot 模式：设置启动消息后，

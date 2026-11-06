@@ -2,10 +2,28 @@ package app
 
 import (
 	"os"
+	"strings"
 	"testing"
 
+	"github.com/cxykevin/alcoh/internal/acp"
 	"github.com/cxykevin/alcoh/internal/i18n"
 )
+
+// promptText 把 ACP prompt 内容块折叠成测试断言用的文本；图片块按
+// [Image] 占位符还原。
+func promptText(blocks []acp.ContentBlock) string {
+	var sb strings.Builder
+	for _, blk := range blocks {
+		if blk.Text != nil {
+			sb.WriteString(*blk.Text)
+			continue
+		}
+		if blk.Type == "image" {
+			sb.WriteString(acp.ImagePlaceholder)
+		}
+	}
+	return sb.String()
+}
 
 // TestMain 把测试进程的界面语言固定为中文。
 //

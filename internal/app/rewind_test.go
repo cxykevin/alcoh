@@ -29,9 +29,9 @@ type rewindSession struct {
 func (s *rewindSession) ID() string    { return s.id }
 func (s *rewindSession) Title() string { return "" }
 
-func (s *rewindSession) SendPrompt(_ context.Context, text string) error {
+func (s *rewindSession) SendPrompt(_ context.Context, prompt []acp.ContentBlock) error {
 	s.mu.Lock()
-	s.prompts = append(s.prompts, text)
+	s.prompts = append(s.prompts, promptText(prompt))
 	s.mu.Unlock()
 	return nil
 }

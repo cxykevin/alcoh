@@ -67,7 +67,8 @@ func (s *backgroundSession) GetBackground(ctx context.Context) (bool, error) {
 
 // SendPrompt 记录客户端发出的文本，并按服务端 /background 命令的语义更新模式；
 // 不启动 demo 脚本，保持测试里的会话状态可控。
-func (s *backgroundSession) SendPrompt(ctx context.Context, text string) error {
+func (s *backgroundSession) SendPrompt(ctx context.Context, prompt []acp.ContentBlock) error {
+	text := promptText(prompt)
 	s.b.mu.Lock()
 	s.b.prompts = append(s.b.prompts, text)
 	if arg, ok := strings.CutPrefix(text, "/background "); ok {

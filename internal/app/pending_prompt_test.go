@@ -50,11 +50,11 @@ type promptSession struct {
 	b *promptBackend
 }
 
-func (s *promptSession) SendPrompt(ctx context.Context, text string) error {
+func (s *promptSession) SendPrompt(ctx context.Context, prompt []acp.ContentBlock) error {
 	s.b.mu.Lock()
-	s.b.prompts = append(s.b.prompts, text)
+	s.b.prompts = append(s.b.prompts, promptText(prompt))
 	s.b.mu.Unlock()
-	return s.Session.SendPrompt(ctx, text)
+	return s.Session.SendPrompt(ctx, prompt)
 }
 
 func (s *promptSession) Cancel(ctx context.Context) error {

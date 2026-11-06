@@ -171,8 +171,12 @@ type session struct {
 func (s *session) ID() string    { return s.id }
 func (s *session) Title() string { return s.title }
 
-// SendPrompt 启动脚本。
-func (s *session) SendPrompt(ctx context.Context, text string) error {
+// SendPrompt 启动脚本。demo 只关心文本，图片块按占位符拼进脚本文本。
+func (s *session) SendPrompt(ctx context.Context, prompt []acp.ContentBlock) error {
+	text := promptText(prompt)
+	if text == "" {
+		return nil
+	}
 	s.mu.Lock()
 	if s.running {
 		s.mu.Unlock()
@@ -184,6 +188,21 @@ func (s *session) SendPrompt(ctx context.Context, text string) error {
 	s.mu.Unlock()
 	go s.runScript(text, done)
 	return nil
+}
+
+// promptText 把 ACP prompt 内容块折叠成 demo 脚本可用的文本。
+func promptText(prompt []acp.ContentBlock) string {
+	var sb strings.Builder
+	for _, blk := range prompt {
+		if blk.Text != nil {
+			sb.WriteString(*blk.Text)
+			continue
+		}
+		if blk.Type == "image" {
+			sb.WriteString(acp.ImagePlaceholder)
+		}
+	}
+	return sb.String()
 }
 
 // Cancel 取消当前脚本。

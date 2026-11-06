@@ -107,9 +107,12 @@ type App struct {
 	// 停稳（回到 idle）后由事件循环发送。等待期间输入框保持原样，用户改过
 	// 输入则不发送。
 	pendingPrompt string
-	// pendingPromptOut 是 pendingPrompt 经插件 hooks 裁决后的待发送文本；
-	// 挂起期间不再二次触发 hooks（与发送前裁决一次的原语义一致）。
-	pendingPromptOut string
+	// pendingPromptImages 是 pendingPrompt 提交时的图片附件快照：等待停止
+	// 期间用户改了图片（删除/新增占位符）就放弃发送。
+	pendingPromptImages []widget.Image
+	// pendingPromptBlocks 是 pendingPrompt 经插件 hooks 裁决后构造的 ACP
+	// 内容块；挂起期间不再二次触发 hooks（与发送前裁决一次的原语义一致）。
+	pendingPromptBlocks []acp.ContentBlock
 	// pendingPromptCh 是等待会话停稳的超时通道（cancelHandoffWait）；没有
 	// 挂起文本时为 nil，主循环 select 中该分支被禁用。
 	pendingPromptCh <-chan time.Time
@@ -1416,7 +1419,7 @@ func (a *App) RunDump(prompt string, frames int) error {
 	promptDone = make(chan struct{})
 	go func() {
 		defer close(promptDone)
-		_ = s.SendPrompt(ctx, prompt)
+		_ = s.SendPrompt(ctx, []acp.ContentBlock{acp.TextBlock(prompt)})
 	}()
 
 	w, h := a.term.Size()

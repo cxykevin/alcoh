@@ -373,3 +373,83 @@ func TestInputBoxOnKey(t *testing.T) {
 		t.Errorf("Enter should not be consumed by InputBox")
 	}
 }
+
+// TestInputBufferImagePlaceholderIsAtomic 验证图片占位符是一个不可分割的
+// rune：光标左右移动一次跨过整个 [Image]，不会停在占位符中间。
+func TestInputBufferImagePlaceholderIsAtomic(t *testing.T) {
+	b := NewInputBuffer()
+	if !b.InsertImage("image/png", []byte("png-data")) {
+		t.Fatal("InsertImage should succeed")
+	}
+	if got := b.Text(); got != ImagePlaceholder {
+		t.Fatalf("Text() = %q, want %q", got, ImagePlaceholder)
+	}
+	if b.CX != 1 {
+		t.Fatalf("cursor after image = %d, want 1", b.CX)
+	}
+	// 占位符内部只有一个 rune：左移一次就到占位符前面。
+	b.MoveLeft()
+	if b.CX != 0 {
+		t.Fatalf("MoveLeft: CX = %d, want 0", b.CX)
+	}
+	b.MoveRight()
+	if b.CX != 1 {
+		t.Fatalf("MoveRight: CX = %d, want 1", b.CX)
+	}
+}
+
+// TestInputBufferDeleteImageCancelsAttachment 验证删除占位符即取消发送：
+// Images 不再返回该附件；撤销恢复占位符后图片恢复。
+func TestInputBufferDeleteImageCancelsAttachment(t *testing.T) {
+	b := NewInputBuffer()
+	b.InsertRune('a')
+	b.InsertImage("image/png", []byte("png-data"))
+	b.InsertRune('b')
+	if len(b.Images()) != 1 {
+		t.Fatalf("images = %d, want 1", len(b.Images()))
+	}
+	// 光标移到 b 前面，退格删除图片占位符（以及图片附件）。
+	b.MoveLeft()
+	b.Backspace()
+	if got := b.Text(); got != "ab" {
+		t.Fatalf("after backspace: Text() = %q, want ab", got)
+	}
+	if len(b.Images()) != 0 {
+		t.Fatalf("images after deleting placeholder = %d, want 0", len(b.Images()))
+	}
+	b.Undo()
+	if got := b.Text(); got != "a"+ImagePlaceholder+"b" {
+		t.Fatalf("after undo: Text() = %q", got)
+	}
+	if len(b.Images()) != 1 {
+		t.Fatalf("images after undo = %d, want 1", len(b.Images()))
+	}
+}
+
+// TestInputBufferImagesInOrder 验证多张图片按占位符出现顺序返回。
+func TestInputBufferImagesInOrder(t *testing.T) {
+	b := NewInputBuffer()
+	b.InsertImage("image/png", []byte("first"))
+	b.InsertRune('x')
+	b.InsertImage("image/jpeg", []byte("second"))
+	imgs := b.Images()
+	if len(imgs) != 2 || imgs[0].MIME != "image/png" || imgs[1].MIME != "image/jpeg" {
+		t.Fatalf("images = %#v, want png then jpeg", imgs)
+	}
+}
+
+// TestInputBufferImageWidth 验证占位符按 [Image] 的显示宽度参与软换行。
+func TestInputBufferImageWidth(t *testing.T) {
+	b := NewInputBuffer()
+	b.InsertImage("image/png", []byte("x"))
+	want := renderer.StringWidth(ImagePlaceholder)
+	for _, r := range b.Lines[0] {
+		if got := b.displayWidth(r); got != want {
+			t.Fatalf("displayWidth = %d, want %d", got, want)
+		}
+	}
+	// 可用宽度刚好容纳占位符时只有一行。
+	if got := b.VisualHeight(want, 0); got != 1 {
+		t.Fatalf("VisualHeight = %d, want 1", got)
+	}
+}

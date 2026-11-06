@@ -75,11 +75,11 @@ type msgQueueSession struct {
 	b *msgQueueBackend
 }
 
-func (s *msgQueueSession) SendPrompt(ctx context.Context, text string) error {
+func (s *msgQueueSession) SendPrompt(ctx context.Context, prompt []acp.ContentBlock) error {
 	s.b.mu.Lock()
-	s.b.prompts = append(s.b.prompts, text)
+	s.b.prompts = append(s.b.prompts, promptText(prompt))
 	s.b.mu.Unlock()
-	return s.Session.SendPrompt(ctx, text)
+	return s.Session.SendPrompt(ctx, prompt)
 }
 
 func (s *msgQueueSession) Cancel(ctx context.Context) error {

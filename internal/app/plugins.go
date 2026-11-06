@@ -182,12 +182,17 @@ func (a *App) sendPrompt(session acp.Session, text string) {
 // sendPromptRaw 直接把已裁决的文本发送给会话（不再次触发 hooks；会话视图
 // 提交路径在 submitPrompt 中先调用 promptHook 消费输入框，因此走这里）。
 func (a *App) sendPromptRaw(session acp.Session, text string) {
-	if session == nil || text == "" {
+	a.sendPromptRawBlocks(session, []acp.ContentBlock{acp.TextBlock(text)})
+}
+
+// sendPromptRawBlocks 直接把 ACP prompt 内容块发送给会话（可含图片）。
+func (a *App) sendPromptRawBlocks(session acp.Session, prompt []acp.ContentBlock) {
+	if session == nil || len(prompt) == 0 {
 		return
 	}
 	s := session
 	a.startCommand(commandResult{kind: commandSessionAction, sessionID: s.ID()}, func(ctx context.Context) (acp.Session, error) {
-		return nil, s.SendPrompt(ctx, text)
+		return nil, s.SendPrompt(ctx, prompt)
 	})
 }
 

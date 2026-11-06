@@ -862,6 +862,9 @@ func (ml *MessageList) toolRaw(tc *model.ToolCall, call *alkaid0Call) string {
 }
 
 func nonTextContentPlaceholder(blk *acp.ContentBlock) string {
+	if blk.Type == "image" {
+		return acp.ImagePlaceholder
+	}
 	kind := blk.Type
 	if kind == "" {
 		kind = "content"

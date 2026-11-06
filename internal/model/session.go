@@ -406,6 +406,9 @@ func (s *SessionState) AdjustScrollForHistoryAnchor(total int) {
 
 // nonTextBlockPlaceholder 为非文本 ContentBlock 生成一行安全描述，避免整段内容被静默丢失。
 func nonTextBlockPlaceholder(blk acp.ContentBlock) string {
+	if blk.Type == "image" {
+		return acp.ImagePlaceholder
+	}
 	kind := blk.Type
 	if kind == "" {
 		kind = "unknown"

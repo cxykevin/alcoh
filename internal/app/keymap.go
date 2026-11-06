@@ -105,6 +105,14 @@ func (a *App) dispatchKey(ke input.KeyEvent) {
 		a.cycleBodyDetail()
 		return
 	}
+	// Ctrl+V 读取系统剪贴板：图片插入 [Image] 占位符，文本按普通粘贴插入。
+	// 终端自身把 Ctrl+V 映射成括号粘贴时走 KeyPaste 分支，不会到这里。
+	if ke.IsCtrl() && ke.Rune == 'v' {
+		if m.View == model.ViewSession && !m.ShellPanel && !m.QueueFocused && a.queueEdit == nil {
+			a.pasteClipboard()
+			return
+		}
+	}
 	// ? 帮助：仅当输入框为空时触发；输入框有内容时 "?" 按普通字符输入。
 	if ke.Type == input.KeyRune && ke.Rune == '?' && m.InputEmpty() {
 		m.SetModal(model.ModalHelp)
@@ -2306,14 +2314,20 @@ func (a *App) submitPrompt() {
 	if text == "" {
 		return
 	}
+	// 图片附件在清空输入框前抓取：发送时按 [Image] 占位符出现顺序配对。
+	images := a.model.Input.Images()
 	// 先经插件 hooks 裁决（可改写/拦截），通过后才消费输入框；拦截时输入
 	// 框保留原文，便于用户修改后重试。
 	out, blocked := a.promptHook(a.sess.ID(), text)
 	if blocked {
 		return
 	}
+	blocks := buildPromptBlocks(out, images)
+	if len(blocks) == 0 {
+		return
+	}
 	// agent loop 正在执行：不允许再往里发新输入（后端会静默丢弃，或与服务端
-	// 当前 turn 冲突）。先请求停止当前运行，停稳后再把裁决后的文本发出去；
+	// 当前 turn 冲突）。先请求停止当前运行，停稳后再把裁决后的内容发出去；
 	// 窗口内没停下来就放弃发送，输入框内容保持原样。
 	if a.sessionExecuting() {
 		// 服务端支持会话消息队列时：运行中提交直接交给服务端排队（服务端广播
@@ -2322,18 +2336,18 @@ func (a *App) submitPrompt() {
 			if a.model.SubmitInput() == "" {
 				return
 			}
-			a.sendPromptRaw(a.sess, out)
+			a.sendPromptRawBlocks(a.sess, blocks)
 			a.model.ShowInfo(i18n.T("已加入排队消息（/queue 管理）"))
 			return
 		}
-		a.holdPromptUntilStopped(text, out)
+		a.holdPromptUntilStopped(text, images, blocks)
 		return
 	}
 	if a.model.SubmitInput() == "" {
 		return
 	}
-	// 已裁决的文本直接发送，不再二次触发 hooks（见 sendPromptRaw）。
-	a.sendPromptRaw(a.sess, out)
+	// 已裁决的内容直接发送，不再二次触发 hooks（见 sendPromptRawBlocks）。
+	a.sendPromptRawBlocks(a.sess, blocks)
 }
 
 // sessionExecuting 报告当前会话是否有一个 agent loop 正在执行：状态为
@@ -2342,33 +2356,39 @@ func (a *App) sessionExecuting() bool {
 	return a.model.HasActive() && a.model.Active.Running()
 }
 
-// holdPromptUntilStopped 处理"运行中提交"：请求取消当前运行，并把待发送文本
+// holdPromptUntilStopped 处理"运行中提交"：请求取消当前运行，并把待发送内容
 // 挂起，等事件循环观察到会话停稳（回到 idle）后发送（见 flushPendingPrompt）。
 // 输入框在等待期间保持原样：用户改动过输入则以用户当前输入为准；cancelHandoffWait
 // 内没停下来同样放弃发送。
-func (a *App) holdPromptUntilStopped(text, out string) {
+func (a *App) holdPromptUntilStopped(text string, images []widget.Image, blocks []acp.ContentBlock) {
 	a.pendingPrompt = text
-	a.pendingPromptOut = out
+	a.pendingPromptImages = images
+	a.pendingPromptBlocks = blocks
 	a.pendingPromptCh = time.After(cancelHandoffWait)
 	a.cancelCurrent()
 }
 
 // flushPendingPrompt 在会话停稳后发送挂起的 prompt（先停止再发送）。输入框已
-// 被用户改动、或已经离开该会话视图时放弃本次发送（sticky 输入以用户为准）。
+// 被用户改动（文本或图片附件）、或已经离开该会话视图时放弃本次发送。
 func (a *App) flushPendingPrompt() {
 	if a.pendingPrompt == "" || a.sessionExecuting() {
 		return
 	}
-	text, out := a.pendingPrompt, a.pendingPromptOut
+	text := a.pendingPrompt
+	images := a.pendingPromptImages
+	blocks := a.pendingPromptBlocks
 	a.clearPendingPrompt()
 	if !a.model.HasActive() || a.sess == nil || a.model.Input == nil || a.model.Input.Text() != text {
+		return
+	}
+	if !samePromptImages(a.model.Input.Images(), images) {
 		return
 	}
 	if a.model.SubmitInput() == "" {
 		return
 	}
-	// 裁决在挂起前已完成，这里直接发送，不再二次触发 hooks（见 sendPromptRaw）。
-	a.sendPromptRaw(a.sess, out)
+	// 裁决在挂起前已完成，这里直接发送，不再二次触发 hooks（见 sendPromptRawBlocks）。
+	a.sendPromptRawBlocks(a.sess, blocks)
 }
 
 // dropPendingPrompt 在等待停止超时后放弃挂起的 prompt（输入框保持原样）。
@@ -2383,7 +2403,8 @@ func (a *App) dropPendingPrompt() {
 // clearPendingPrompt 清空挂起状态与等待通道（nil 通道在主循环 select 中禁用）。
 func (a *App) clearPendingPrompt() {
 	a.pendingPrompt = ""
-	a.pendingPromptOut = ""
+	a.pendingPromptImages = nil
+	a.pendingPromptBlocks = nil
 	a.pendingPromptCh = nil
 }
 

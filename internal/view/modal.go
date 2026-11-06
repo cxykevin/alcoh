@@ -122,6 +122,7 @@ func (v *AppView) drawHelp(c *renderer.Canvas, r renderer.Rect) {
 		i18n.T("↑↓             移动 / 历史     ←→            移动光标"),
 		i18n.T("Ctrl+A/E       行首 / 行尾     Ctrl+K/U      删至行尾/行首"),
 		i18n.T("Ctrl+W         删前一词        Ctrl+Y        粘贴"),
+		i18n.T("Ctrl+V         粘贴剪贴板(图片/文字)"),
 		i18n.T("Ctrl+/         撤销            Ctrl+Q        退出确认"),
 		i18n.T("Ctrl+C         清空输入 / 取消任务 / 连按两次退出"),
 		i18n.T("Esc            打断响应        空闲连按两次  打开撤回"),

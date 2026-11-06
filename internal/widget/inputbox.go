@@ -3,6 +3,7 @@ package widget
 import (
 	"strings"
 
+	"github.com/cxykevin/alcoh/internal/acp"
 	"github.com/cxykevin/alcoh/internal/input"
 	"github.com/cxykevin/alcoh/internal/renderer"
 )
@@ -32,6 +33,11 @@ type InputBuffer struct {
 
 	// Stash 是输入暂存区（Ctrl+D 交换、回车提交后回填）。
 	Stash string
+
+	// images 保存图片占位符 token 对应的附件。token 只出现在 Lines 里，
+	// 删除 token 后附件不再被 Images 返回（即取消发送），撤销恢复 token 后
+	// 附件也随之恢复。
+	images map[rune]Image
 }
 
 // NewInputBuffer 创建空输入缓冲。
@@ -42,9 +48,39 @@ func NewInputBuffer() *InputBuffer {
 	}
 }
 
-// Text 返回整个缓冲的文本（按行拼接）。
+// ImagePlaceholder 是图片附件在输入框与消息文本中的占位符。
+const ImagePlaceholder = acp.ImagePlaceholder
+
+// Image 是粘贴进输入框的图片附件。
+type Image struct {
+	MIME string
+	Data []byte
+}
+
+// imageTokenBase/imageTokenMax 是图片占位符在缓冲内部使用的私用区 rune 范围。
+// 占位符在缓冲里只占一个 rune：左右移动无法停在它中间，退格/删除一次就
+// 移除整张图片（撤销可以恢复）。
+const (
+	imageTokenBase rune = 0xE000
+	imageTokenMax  rune = 0xF8FF
+)
+
+// Text 返回整个缓冲的文本（按行拼接），图片占位符展开为 [Image]。
 func (b *InputBuffer) Text() string {
-	return JoinLines(b.Lines)
+	var sb strings.Builder
+	for i, line := range b.Lines {
+		if i > 0 {
+			sb.WriteByte('\n')
+		}
+		for _, r := range line {
+			if _, ok := b.images[r]; ok {
+				sb.WriteString(ImagePlaceholder)
+				continue
+			}
+			sb.WriteRune(r)
+		}
+	}
+	return sb.String()
 }
 
 // JoinLines 把行 rune 切片拼接为字符串。
@@ -170,6 +206,102 @@ func (b *InputBuffer) InsertText(text string) {
 		// 光标停在粘贴内容之后、原有后缀之前（单行粘贴时原有前缀要计入）。
 		x.CX = lastPrefix + len([]rune(parts[len(parts)-1]))
 	})
+}
+
+// InsertImage 在光标处插入一个图片占位符，并把图片附件绑定到该占位符。
+// 返回 false 表示缓冲里的占位符 token 已用完（理论上最多 6400 张）。
+func (b *InputBuffer) InsertImage(mime string, data []byte) bool {
+	if len(data) == 0 {
+		return false
+	}
+	token, ok := b.allocImageToken()
+	if !ok {
+		return false
+	}
+	if b.images == nil {
+		b.images = make(map[rune]Image)
+	}
+	b.images[token] = Image{MIME: mime, Data: data}
+	b.edit(func(x *InputBuffer) {
+		line := x.curLine()
+		cx := x.CX
+		line = append(line[:cx], append([]rune{token}, line[cx:]...)...)
+		x.setCurLine(line)
+		x.CX++
+	})
+	return true
+}
+
+// allocImageToken 分配一个尚未被占用、也不存在于当前文本里的私用区 rune。
+func (b *InputBuffer) allocImageToken() (rune, bool) {
+	for r := imageTokenBase; r <= imageTokenMax; r++ {
+		if _, used := b.images[r]; used {
+			continue
+		}
+		if b.containsRune(r) {
+			continue
+		}
+		return r, true
+	}
+	return 0, false
+}
+
+func (b *InputBuffer) containsRune(target rune) bool {
+	for _, line := range b.Lines {
+		for _, r := range line {
+			if r == target {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// Images 按占位符在缓冲中的出现顺序返回图片附件。占位符被删除后对应
+// 图片不再出现在结果里，发送时自然被取消。
+func (b *InputBuffer) Images() []Image {
+	if len(b.images) == 0 {
+		return nil
+	}
+	seen := make(map[rune]bool, len(b.images))
+	var out []Image
+	for _, line := range b.Lines {
+		for _, r := range line {
+			if seen[r] {
+				continue
+			}
+			img, ok := b.images[r]
+			if !ok {
+				continue
+			}
+			seen[r] = true
+			out = append(out, img)
+		}
+	}
+	return out
+}
+
+// isImageToken 报告 r 是否为图片占位符 token。
+func (b *InputBuffer) isImageToken(r rune) bool {
+	_, ok := b.images[r]
+	return ok
+}
+
+// displayWidth 返回缓冲 rune 在输入框里的显示列数：图片占位符按
+// [Image] 的宽度计算，其余按普通 rune 宽度。
+func (b *InputBuffer) displayWidth(r rune) int {
+	if b.isImageToken(r) {
+		return renderer.StringWidth(ImagePlaceholder)
+	}
+	return renderer.RuneWidth(r)
+}
+
+// displayText 返回缓冲 rune 的显示文本。
+func (b *InputBuffer) displayText(r rune) string {
+	if b.isImageToken(r) {
+		return ImagePlaceholder
+	}
+	return string(r)
 }
 
 // InsertNewline 在光标处换行。
@@ -535,7 +667,7 @@ func (b *InputBuffer) VisualHeight(width, promptW int) int {
 		rows := 1
 		used := 0
 		for _, r := range line {
-			rw := renderer.RuneWidth(r)
+			rw := b.displayWidth(r)
 			if rw == 0 {
 				continue
 			}
@@ -723,7 +855,8 @@ func (ib *InputBox) Draw(c *renderer.Canvas, r renderer.Rect) {
 		}
 		used := 0
 		for runeIndex, rr := range line {
-			rw := renderer.RuneWidth(rr)
+			text := b.displayText(rr)
+			rw := renderer.StringWidth(text)
 			if rw == 0 {
 				continue
 			}
@@ -733,7 +866,7 @@ func (ib *InputBox) Draw(c *renderer.Canvas, r renderer.Rect) {
 				used = 0
 				available = max(r.W, 1)
 			}
-			row.runes = append(row.runes, rr)
+			row.runes = append(row.runes, []rune(text)...)
 			used += rw
 		}
 		visualRows = append(visualRows, row)
@@ -781,7 +914,12 @@ func (ib *InputBox) Draw(c *renderer.Canvas, r renderer.Rect) {
 			line := b.Lines[b.CY]
 			st := ib.Cursor
 			if cursorRune < len(line) {
-				c.Put(r.X+cx, r.Y+cy, renderer.CellRune(line[cursorRune], st))
+				ch := line[cursorRune]
+				if b.isImageToken(ch) {
+					// 光标停在占位符前面：只高亮首字符，不画出私用区 rune。
+					ch = '['
+				}
+				c.Put(r.X+cx, r.Y+cy, renderer.CellRune(ch, st))
 			} else {
 				c.Put(r.X+cx, r.Y+cy, renderer.CellRune(' ', st))
 			}
@@ -808,7 +946,7 @@ func visualCursorPosition(b *InputBuffer, promptW, width int) (x, y, runeIndex i
 		}
 		used := 0
 		for i, rr := range line {
-			rw := renderer.RuneWidth(rr)
+			rw := b.displayWidth(rr)
 			if rw == 0 {
 				if lineIndex == b.CY && i == b.CX {
 					return cursorX(used, y, promptW, width), y, i

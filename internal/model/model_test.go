@@ -80,11 +80,8 @@ func TestNonTextContentBlockPlaceholder(t *testing.T) {
 	uri := "file:///tmp/a.png"
 	name := "diagram"
 	blk := acp.ContentBlock{Type: "image", MimeType: &mime, URI: &uri, Name: &name}
-	got := nonTextBlockPlaceholder(blk)
-	for _, want := range []string{"image", "diagram", "image/png", uri} {
-		if !containsAll(got, want) {
-			t.Fatalf("placeholder %q missing %q", got, want)
-		}
+	if got := nonTextBlockPlaceholder(blk); got != acp.ImagePlaceholder {
+		t.Fatalf("image placeholder = %q, want %q", got, acp.ImagePlaceholder)
 	}
 }
 

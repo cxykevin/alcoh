@@ -584,8 +584,8 @@ type clientSession struct {
 	historyCursor string
 }
 
-func (s *clientSession) SendPrompt(ctx context.Context, text string) error {
-	if text == "" {
+func (s *clientSession) SendPrompt(ctx context.Context, prompt []ContentBlock) error {
+	if len(prompt) == 0 {
 		return nil
 	}
 	t, err := s.backend.readyTransport()
@@ -595,7 +595,7 @@ func (s *clientSession) SendPrompt(ctx context.Context, text string) error {
 	var result SessionPromptResult
 	if err := t.Request(ctx, MethodSessionPrompt, SessionPromptParams{
 		SessionID: s.id,
-		Prompt:    []ContentBlock{{Type: "text", Text: &text}},
+		Prompt:    prompt,
 	}, &result); err != nil {
 		return err
 	}
