@@ -855,6 +855,49 @@ func (s *clientSession) DeleteCron(ctx context.Context, id uint32) error {
 	return t.Request(ctx, MethodCronDelete, CronDeleteParams{SessionID: s.id, ID: id}, &result)
 }
 
+// SupportsGoal 报告服务端是否支持会话 goal（alkaid0 v0.6 协议）。
+// goal 属于 v0.6，不单独依赖 alk.cxykevin.top/goal 能力标记。
+func (b *ClientBackend) SupportsGoal() bool {
+	return b.AgentCapabilities().Has(Alkaid0CapabilityV06)
+}
+
+func (s *clientSession) goalReady() error {
+	if !s.backend.SupportsGoal() {
+		return errors.New("alkaid0 v0.6 goal support is not available")
+	}
+	return nil
+}
+
+// GetGoal 返回当前会话的 goal；空字符串表示未设置。
+func (s *clientSession) GetGoal(ctx context.Context) (string, error) {
+	if err := s.goalReady(); err != nil {
+		return "", err
+	}
+	t, err := s.backend.readyTransport()
+	if err != nil {
+		return "", err
+	}
+	var result GoalResult
+	if err := t.Request(ctx, MethodGoalGet, GoalGetParams{SessionID: s.id}, &result); err != nil {
+		return "", err
+	}
+	return result.Goal, nil
+}
+
+// SetGoal 设置/覆盖当前会话的 goal；goal 为空字符串表示清除。
+// 写入后服务端会广播 alk.cxykevin.top/session/goal 快照，客户端以推送值为准。
+func (s *clientSession) SetGoal(ctx context.Context, goal string) error {
+	if err := s.goalReady(); err != nil {
+		return err
+	}
+	t, err := s.backend.readyTransport()
+	if err != nil {
+		return err
+	}
+	var result GoalResult
+	return t.Request(ctx, MethodGoalSet, GoalSetParams{SessionID: s.id, Goal: goal}, &result)
+}
+
 // GetBackground 查询会话的后台运行模式（alk.cxykevin.top/session/get_background，
 // 见 extension.md §3.7）。模式由服务端命令 /background on|off 修改，服务端不推送
 // 变更，客户端按需查询；未声明 alkaid0 扩展能力的服务端不调用。

@@ -320,6 +320,17 @@ type CronControl interface {
 	DeleteCron(ctx context.Context, id uint32) error
 }
 
+// GoalControl 暴露 alkaid0 会话 goal 的读写方法
+// （alkaid0 v0.6 协议，见 ../alkaid0/docs/acp/extension.md §3.12）。
+// 与 TerminalControl / CronControl 一样是可选能力，调用方用类型断言按需取用。
+// 写入只改会话元数据，不产生消息、不触发模型回合；服务端随后广播快照。
+type GoalControl interface {
+	// GetGoal 返回当前会话的 goal；空字符串表示未设置。
+	GetGoal(ctx context.Context) (string, error)
+	// SetGoal 设置/覆盖当前会话的 goal；goal 为空字符串表示清除。
+	SetGoal(ctx context.Context, goal string) error
+}
+
 // BackgroundControl 暴露 alkaid0 会话后台运行模式的查询方法
 // （alk.cxykevin.top/session/get_background，见 ../alkaid0/docs/acp/extension.md
 // §3.7）。模式由服务端命令 /background on|off 修改，客户端只做查询与展示。

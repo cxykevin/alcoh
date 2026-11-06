@@ -65,6 +65,9 @@ const (
 	// ModalCron /cron 会话定时任务面板：查看与删除 cron 工具创建的任务
 	// （alk.cxykevin.top/cron 能力）。
 	ModalCron
+	// ModalGoal /goal 会话目标看板：查看服务端推送的 goal，并编辑/清除。
+	// 属于 alkaid0 v0.6 协议，服务端声明 v0.6 即可用。
+	ModalGoal
 	// ModalTasks /tasks AI 任务列表面板：滚动查看 alkaid0 task 工具维护的完整
 	// 任务列表（服务端经 plan_update 全量推送，见 model/tasks.go）。
 	ModalTasks
@@ -152,6 +155,10 @@ type AppModel struct {
 	QueueSelect int
 	// CronSelect 是 /cron 面板当前选中的定时任务索引。
 	CronSelect int
+	// GoalEditing 表示 /goal 面板处于编辑态（输入框接收多行文本）。
+	GoalEditing bool
+	// GoalInput 是 /goal 编辑态的输入缓冲；打开编辑时创建，退出时丢弃。
+	GoalInput *widget.InputBuffer
 	// TasksScroll 是 /tasks 面板列表顶部的任务索引；TasksRows 是列表一次可见的
 	// 任务行数（视图绘制时写入，用于 PgUp/PgDn 翻页）。
 	TasksScroll int
@@ -293,6 +300,7 @@ var localSlashCommandInfo = map[string]SlashCommandInfo{
 	"/rewind":     {Name: "/rewind", Description: "撤回对话到指定消息（alkaid0 v0.6）"},
 	"/queue":      {Name: "/queue", Description: "查看与管理排队消息（alkaid0 msgqueue）"},
 	"/cron":       {Name: "/cron", Description: "查看与删除定时任务（alkaid0 cron）"},
+	"/goal":       {Name: "/goal", Description: "查看与编辑会话目标（alkaid0 goal）", ArgsHint: "[文本|clear]"},
 	"/tasks":      {Name: "/tasks", Description: "查看 AI 任务列表（alkaid0 task）"},
 	// /background 是客户端覆盖指令：命中后由客户端直接发送服务端命令，
 	// 始终不进入消息队列（见 app.backgroundCommand）。
@@ -390,7 +398,7 @@ func (m *AppModel) SlashCompletion() (ghost, description string) {
 // 未列入硬编码列表的 agent 命令优先级为 0。
 func slashCommandPriority(command string) int {
 	switch command {
-	case "/alcoh_help", "/connect", "/effort", "/clear", "/settings", "/server", "/plugins", "/rewind", "/queue", "/cron", "/tasks", "/background":
+	case "/alcoh_help", "/connect", "/effort", "/clear", "/settings", "/server", "/plugins", "/rewind", "/queue", "/cron", "/goal", "/tasks", "/background":
 		return 1
 	default:
 		return 0
@@ -427,6 +435,11 @@ func (m *AppModel) SlashCommands() []string {
 	// /cron 仅在服务端声明 cron 能力且有活动会话时可用。
 	if m.CronAvailable() && !containsString(out, "/cron") {
 		out = append(out, "/cron")
+	}
+	// /goal 属于 alkaid0 v0.6：服务端声明 v0.6 且有活动会话时可用。
+	// 无参数打开看板；带参数时经 goal/set 写入（保留 /goal <文本> 用法）。
+	if m.GoalAvailable() && !containsString(out, "/goal") {
+		out = append(out, "/goal")
 	}
 	// /tasks 仅在服务端声明 alkaid0 能力且有活动会话时可用（任务列表由 alkaid0
 	// 的 task 工具维护并经 plan_update 推送）。
@@ -652,6 +665,12 @@ func (m *AppModel) SupportsAlkaid0V06() bool {
 // SupportsCron 报告服务端是否支持会话定时任务查询/删除（alk.cxykevin.top/cron）。
 func (m *AppModel) SupportsCron() bool {
 	return m.AgentCaps.Has(acp.Alkaid0CapabilityCron)
+}
+
+// SupportsGoal 报告服务端是否支持会话 goal（alkaid0 v0.6 协议）。
+// goal 属于 v0.6，不单独依赖 alk.cxykevin.top/goal 能力标记。
+func (m *AppModel) SupportsGoal() bool {
+	return m.AgentCaps.Has(acp.Alkaid0CapabilityV06)
 }
 
 // SupportsSessionDelete 报告服务端是否声明 session/delete 能力；仅当为 true
@@ -1243,6 +1262,12 @@ func (m *AppModel) ApplyEvent(ev acp.Event) {
 				m.clampQueueSelect()
 			}
 		}
+	case *acp.GoalUpdateEvent:
+		// 会话 goal 快照（alk.cxykevin.top/session/goal）：服务端是唯一权威，
+		// 直接用推送值替换本地缓存（空字符串表示目标已清除），不进正文。
+		if m.SupportsGoal() && m.HasActive() && e.SessionID == m.Active.ID {
+			m.Active.Goal = e.Goal
+		}
 	case *acp.ShellStopEvent:
 		if m.SupportsAlkaid0V05() && m.HasActive() && e.SessionID == m.Active.ID {
 			if e.TerminalID != "" {
@@ -1457,6 +1482,8 @@ func eventSessionID(ev acp.Event) string {
 	case *acp.RewindEvent:
 		return e.SessionID
 	case *acp.MsgQueueUpdateEvent:
+		return e.SessionID
+	case *acp.GoalUpdateEvent:
 		return e.SessionID
 	case *acp.WorkflowEvent:
 		return e.SessionID

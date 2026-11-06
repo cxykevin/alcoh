@@ -67,6 +67,11 @@ const (
 	MethodCronList   = "alk.cxykevin.top/session/cron/list"
 	MethodCronDelete = "alk.cxykevin.top/session/cron/delete"
 
+	// 会话 goal 方法（alk.cxykevin.top/goal，见 extension.md §3.12）：
+	// 读写会话元数据，写入后服务端广播 alk.cxykevin.top/session/goal 快照。
+	MethodGoalGet = "alk.cxykevin.top/session/goal/get"
+	MethodGoalSet = "alk.cxykevin.top/session/goal/set"
+
 	// MethodSessionGetBackground 查询会话的后台运行模式
 	// （alk.cxykevin.top/session/get_background，见 extension.md §3.7）：
 	// 纯请求-响应，无推送；/background on|off 由服务端命令修改，客户端按需查询。
@@ -174,6 +179,23 @@ type CronDeleteParams struct {
 // CronDeleteResult 是 cron/delete 响应。
 type CronDeleteResult struct {
 	ID uint32 `json:"id"`
+}
+
+// GoalGetParams 是 goal/get 请求参数。
+type GoalGetParams struct {
+	SessionID string `json:"sessionId"`
+}
+
+// GoalSetParams 是 goal/set 请求参数；Goal 为空字符串表示清除目标。
+type GoalSetParams struct {
+	SessionID string `json:"sessionId"`
+	Goal      string `json:"goal"`
+}
+
+// GoalResult 是 goal/get 与 goal/set 的响应。
+type GoalResult struct {
+	Goal      string `json:"goal"`
+	UpdatedAt string `json:"updatedAt,omitempty"`
 }
 
 // ClientInfo 标识 ACP 客户端。

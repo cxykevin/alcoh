@@ -3,6 +3,7 @@ package view
 import (
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/cxykevin/alcoh/internal/acp"
 	"github.com/cxykevin/alcoh/internal/config"
@@ -843,6 +844,89 @@ func wrapText(text string, width int) []string {
 		lines = append(lines, paragraph)
 	}
 	return lines
+}
+
+// GoalContent 是 /goal 会话目标看板的内容区：只读态展示服务端推送的
+// goal（多行自动换行），编辑态把输入框嵌入面板。goal 是会话元数据，
+// 不进入正文时间线。
+type GoalContent struct {
+	Theme   renderer.Theme
+	Goal    string
+	Editing bool
+	Input   *widget.InputBox
+}
+
+// Draw 绘制 goal 看板：顶部提示、空行、目标正文（编辑态为输入框），
+// 底部一行操作提示。
+func (gc *GoalContent) Draw(c *renderer.Canvas, r renderer.Rect) {
+	if r.H <= 0 {
+		return
+	}
+	t := gc.Theme
+	footerY := r.Y + r.H - 1
+	y := r.Y
+	if gc.Editing {
+		if y < footerY {
+			hint := i18n.T("编辑会话目标：Enter 保存，Shift+Enter 换行，Esc 取消")
+			c.PutText(r.X, y, renderer.Truncate(hint, r.W), t.Style(t.TextMuted))
+			y++
+		}
+		y++ // 空行
+		inputH := max(footerY-y, 0)
+		if inputH > 0 && gc.Input != nil {
+			gc.Input.Focused = true
+			gc.Input.Draw(c, renderer.NewRect(r.X, y, r.W, inputH))
+		}
+		c.PutText(r.X, footerY, renderer.Truncate(i18n.T("Enter 保存    Esc 取消    Shift+Enter 换行"), r.W), t.Style(t.TextMuted))
+		return
+	}
+
+	if y < footerY {
+		hint := i18n.T("当前会话目标（%d/%d 字符，服务端推送）", utf8.RuneCountInString(gc.Goal), model.MaxGoalRunes)
+		c.PutText(r.X, y, renderer.Truncate(hint, r.W), t.Style(t.TextMuted))
+		y++
+	}
+	y++ // 空行
+
+	rows := max(footerY-y, 0)
+	if strings.TrimSpace(gc.Goal) == "" {
+		if rows > 0 {
+			c.PutText(r.X, y, renderer.Truncate(i18n.T("（未设置目标，按 e 编辑）"), r.W), t.Style(t.TextMuted))
+		}
+	} else {
+		lines := wrapText(gc.Goal, max(r.W, 1))
+		if len(lines) > rows && rows > 0 {
+			// 目标较长时保留最后一行为截断提示，编辑态可看全文。
+			note := i18n.T("…（目标较长，按 e 编辑查看全文）")
+			if rows == 1 {
+				lines = []string{note}
+			} else {
+				lines = append(lines[:rows-1], note)
+			}
+		}
+		for i, line := range lines {
+			if i >= rows {
+				break
+			}
+			c.PutText(r.X, y+i, renderer.Truncate(line, r.W), t.Style(t.Text))
+		}
+	}
+	c.PutText(r.X, footerY, renderer.Truncate(i18n.T("e 编辑    d 清除    Esc 关闭"), r.W), t.Style(t.TextMuted))
+}
+
+// goalContent 构造 /goal 面板内容。
+func goalContent(t renderer.Theme, m *model.AppModel) *GoalContent {
+	gc := &GoalContent{Theme: t, Goal: m.GoalText(), Editing: m.GoalEditing}
+	if m.GoalEditing && m.GoalInput != nil {
+		gc.Input = &widget.InputBox{
+			Buf:     m.GoalInput,
+			Prompt:  "> ",
+			Style:   t.Style(t.Text),
+			Cursor:  t.Style(t.Primary).WithBold(true),
+			Focused: true,
+		}
+	}
+	return gc
 }
 
 // TextLines 是简单的多行文本内容（供模态使用）。

@@ -200,6 +200,10 @@ type SessionState struct {
 	// Crons 是服务端会话定时任务的全量快照（alk.cxykevin.top/cron）。
 	// 任务不主动推送，由 /cron 面板打开或删除后重新查询刷新。
 	Crons []acp.CronJob
+	// Goal 是服务端会话 goal 的最近一次快照（alk.cxykevin.top/goal）。
+	// 服务端在会话建连/恢复及 /goal 写入后推送；空字符串表示未设置。
+	// 它是会话元数据，不进正文时间线。
+	Goal string
 
 	ProtocolUpdates []json.RawMessage
 	Scroll          int

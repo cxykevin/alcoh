@@ -229,6 +229,22 @@ var en = map[string]string{
 	"删除定时任务失败: %s":                        "Failed to delete the scheduled job: %s",
 	"已删除定时任务":                             "Scheduled job deleted",
 
+	// ---- 会话目标（goal）----
+	"查看与编辑会话目标（alkaid0 goal）":               "View and edit the session goal (alkaid0 goal)",
+	"服务端未声明 goal 能力，/goal 不可用":              "/goal unavailable: server does not declare the goal capability",
+	"会话目标 (goal)":                           "Session goal (goal)",
+	"当前会话目标（%d/%d 字符，服务端推送）":                "Current session goal (%d/%d characters, pushed by the server)",
+	"（未设置目标，按 e 编辑）":                        "(no goal set; press e to edit)",
+	"…（目标较长，按 e 编辑查看全文）":                    "… (goal is long; press e to edit and view it in full)",
+	"e 编辑    d 清除    Esc 关闭":                "e edit    d clear    Esc close",
+	"编辑会话目标：Enter 保存，Shift+Enter 换行，Esc 取消": "Editing the session goal: Enter save, Shift+Enter newline, Esc cancel",
+	"Enter 保存    Esc 取消    Shift+Enter 换行":  "Enter save    Esc cancel    Shift+Enter newline",
+	"目标不能为空；清空请使用 /goal clear":              "Goal cannot be empty; use /goal clear to clear it",
+	"会话目标过长：%d 个字符（最多 %d 个）":                "Session goal is too long: %d characters (max %d)",
+	"设置会话目标失败: %s":                          "Failed to set the session goal: %s",
+	"已更新会话目标":                               "Session goal updated",
+	"当前会话不支持写入 goal":                        "The current session does not support writing a goal",
+
 	// ---- AI 任务列表（tasks）----
 	"查看 AI 任务列表（alkaid0 task）":       "View the AI task list (alkaid0 task)",
 	"服务端未声明 alkaid0 扩展能力，/tasks 不可用": "/tasks unavailable: server does not declare the alkaid0 extension capability",

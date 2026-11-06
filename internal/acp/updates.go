@@ -162,6 +162,20 @@ func DecodeSessionUpdatePayload(sessionID string, raw json.RawMessage) (Event, e
 			Item:      update.Item,
 			Raw:       append(json.RawMessage(nil), raw...),
 		}, nil
+	case "alk.cxykevin.top/session/goal":
+		// 会话 goal 快照（goal 能力，见 extension.md §2.9）：空字符串表示清除，
+		// 服务端在 session/new、session/resume 后也会补推一次当前快照。
+		var update struct {
+			Goal string `json:"goal"`
+		}
+		if err := json.Unmarshal(raw, &update); err != nil {
+			return nil, err
+		}
+		return &GoalUpdateEvent{
+			SessionID: sessionID,
+			Goal:      update.Goal,
+			Raw:       append(json.RawMessage(nil), raw...),
+		}, nil
 	case "alk.cxykevin.top/shell_stop":
 		var update struct {
 			RunID      string `json:"runId"`

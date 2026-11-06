@@ -161,6 +161,7 @@ const (
 	commandMsgQueueClear
 	commandCronList
 	commandCronDelete
+	commandGoalSet
 	commandBackgroundGet
 )
 
@@ -458,6 +459,10 @@ type modelSnapshot struct {
 	CronJobs []acp.CronJob
 	CronSel  int
 
+	// 会话目标（/goal 看板）快照，供测试轮询。
+	Goal        string
+	GoalEditing bool
+
 	// AI 任务列表（/tasks 面板）快照，供测试轮询。
 	TaskEntries int
 	TasksScroll int
@@ -524,6 +529,8 @@ func (a *App) snapshot() modelSnapshot {
 		s.QueueFocused = a.model.QueueFocused
 		s.CronJobs = append([]acp.CronJob(nil), a.model.Active.Crons...)
 		s.CronSel = a.model.CronSelect
+		s.Goal = a.model.Active.Goal
+		s.GoalEditing = a.model.GoalEditing
 		s.TaskEntries = len(a.model.TaskEntries())
 		s.TasksScroll = a.model.TasksScroll
 		s.TasksRows = a.model.TasksRows
@@ -1039,6 +1046,18 @@ func (a *App) applyCommandResult(result commandResult) {
 		a.model.ShowInfo(i18n.T("已删除定时任务"))
 		// 删除后重新查询，以服务端（含调度器重载）的结果为准。
 		a.refreshCron()
+		return
+	}
+	if result.kind == commandGoalSet {
+		// goal 写入只改会话元数据；服务端随后会推送快照。会话已切换时丢弃结果。
+		if result.sessionID != "" && (a.sess == nil || a.sess.ID() != result.sessionID) {
+			return
+		}
+		if result.err != nil {
+			a.model.ShowError(i18n.T("设置会话目标失败: %s", result.err.Error()))
+			return
+		}
+		a.model.ShowInfo(i18n.T("已更新会话目标"))
 		return
 	}
 	if result.kind == commandSessionDelete {

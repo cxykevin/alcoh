@@ -65,6 +65,9 @@ func (a *App) dispatchKey(ke input.KeyEvent) {
 	case model.ModalCron:
 		a.cronKey(ke)
 		return
+	case model.ModalGoal:
+		a.goalKey(ke)
+		return
 	case model.ModalTasks:
 		a.tasksKey(ke)
 		return
@@ -780,6 +783,10 @@ func (a *App) runLocalSlashCommand() bool {
 		m.Input.Clear()
 		m.CloseSlash()
 		a.openCron()
+	case "/goal":
+		m.Input.Clear()
+		m.CloseSlash()
+		a.goalCommand(rest)
 	case "/tasks":
 		m.Input.Clear()
 		m.CloseSlash()
@@ -1546,6 +1553,9 @@ func (a *App) dispatchMouse(me input.MouseEvent) {
 		} else if me.Button == input.MouseWheelDown {
 			m.CronMove(1)
 		}
+		return
+	case model.ModalGoal:
+		// goal 看板没有可滚动列表：滚轮不穿透到正文。
 		return
 	case model.ModalTasks:
 		// 滚轮滚动任务列表。

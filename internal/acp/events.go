@@ -197,6 +197,16 @@ type MsgQueueUpdateEvent struct {
 	Raw  json.RawMessage
 }
 
+// GoalUpdateEvent 对应 alk.cxykevin.top/session/goal：会话 goal 快照
+// （alkaid0 v0.6 协议，见 extension.md §2.9）。
+// Goal 为空表示未设置；服务端在会话建连/恢复后也会补推一次快照。
+// 该事件只更新会话元数据，不进入消息时间线。
+type GoalUpdateEvent struct {
+	SessionID string
+	Goal      string
+	Raw       json.RawMessage
+}
+
 // WorkflowStatusEvent 携带 workflow/status 的查询结果（由客户端主动查询后广播，与
 // TerminalHistoryEvent 同构）。它含完整图、当前 agent 状态与有序事件日志：模型据此
 // 重建 workflow 状态（日志按 sequence 重放），因此已结束的 workflow 也能显示
@@ -272,6 +282,7 @@ func (*TerminalListEvent) isEvent()         {}
 func (*ShellStopEvent) isEvent()            {}
 func (*RewindEvent) isEvent()               {}
 func (*MsgQueueUpdateEvent) isEvent()       {}
+func (*GoalUpdateEvent) isEvent()           {}
 func (*WorkflowEvent) isEvent()             {}
 func (*WorkflowStatusEvent) isEvent()       {}
 func (*CommandsUpdateEvent) isEvent()       {}

@@ -137,6 +137,8 @@ func (v *AppView) modalHeight(m *model.AppModel) int {
 		h = queueModalHeight(m)
 	case model.ModalCron:
 		h = cronModalHeight(m)
+	case model.ModalGoal:
+		h = goalModalHeight()
 	case model.ModalTasks:
 		h = tasksModalHeight(m)
 	case model.ModalExitConfirm:
@@ -182,6 +184,13 @@ func cronModalHeight(m *model.AppModel) int {
 		n = 4
 	}
 	return cronItemRows*n + 5
+}
+
+// goalModalHeight 返回 /goal 看板的高度：顶部提示 + 空行 + 目标正文
+// （最多 8 行，超出时截断并提示编辑查看）+ 底部操作提示，再加标题横线 1 行。
+// 编辑态复用同一高度，输入框占正文区域。
+func goalModalHeight() int {
+	return 12
 }
 
 // tasksMaxRows 是 /tasks 面板一次最多展示的任务行数；更多时列表内部滚动，
@@ -258,6 +267,10 @@ func (v *AppView) drawModalAtInput(c *renderer.Canvas, r renderer.Rect, m *model
 		h = cronModalHeight(m)
 		title = i18n.T("定时任务 (cron)")
 		content = cronContent(v.Theme, m)
+	case model.ModalGoal:
+		h = goalModalHeight()
+		title = i18n.T("会话目标 (goal)")
+		content = goalContent(v.Theme, m)
 	case model.ModalTasks:
 		h = tasksModalHeight(m)
 		title = i18n.T("任务列表 (tasks)")
