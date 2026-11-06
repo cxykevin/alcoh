@@ -1258,7 +1258,7 @@ func TestServerConfigEditorAddModel(t *testing.T) {
 	}
 	modelObj, ok := patch["Model"].(map[string]any)
 	if !ok {
-		t.Fatalf("patch Model = %v, want object", patch["Model"])
+		t.Fatalf("patch Model = %v, want object (patch=%s, lang=%s)", patch["Model"], patches[0], i18n.Current())
 	}
 	modelsObj, ok := modelObj["Models"].(map[string]any)
 	if !ok {
@@ -1360,7 +1360,7 @@ func TestServerConfigEditorDeleteModel(t *testing.T) {
 	}
 	modelObj, ok := patch["Model"].(map[string]any)
 	if !ok {
-		t.Fatalf("patch Model = %v, want object", patch["Model"])
+		t.Fatalf("patch Model = %v, want object (patch=%s, lang=%s)", patch["Model"], patches[0], i18n.Current())
 	}
 	modelsObj, ok := modelObj["Models"].(map[string]any)
 	if !ok {
