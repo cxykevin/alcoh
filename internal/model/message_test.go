@@ -168,6 +168,62 @@ func TestThoughtAutoCollapse(t *testing.T) {
 	}
 }
 
+// TestCycleBodyDetail 验证 Ctrl+T 的三档循环：正常 → 全部展开 → 隐藏。
+// 进入展开档位时已有单项一并展开、新建工具调用也默认展开；隐藏档位只影响
+// 展示，不动各项的展开态，退出隐藏（回到正常）时全部收回。
+func TestCycleBodyDetail(t *testing.T) {
+	s := NewSession("s1", "test")
+	if s.Detail != DetailNormal {
+		t.Fatalf("default detail = %v, want normal", s.Detail)
+	}
+	s.AppendChunk(&acp.MessageChunkEvent{SessionID: "s1", MessageID: "t1", IsThought: true, Text: "想"})
+	s.ApplyMessage(&acp.MessageUpdateEvent{
+		SessionID: "s1", IsThought: true,
+		Message: acp.Message{MessageID: "t1", ContentSet: true,
+			Content: []acp.ContentBlock{{Type: "text", Text: new("想")}}},
+	})
+	status := acp.ToolCompleted
+	s.ApplyToolCall(&acp.ToolCallUpdateEvent{SessionID: "s1", ToolCallID: "tc1", Status: &status, Title: new("tool 1")})
+
+	if got := s.CycleBodyDetail(); got != DetailExpanded {
+		t.Fatalf("first cycle = %v, want expanded", got)
+	}
+	if !s.ToolCalls["tc1"].Expanded {
+		t.Error("existing tool call should be expanded in expanded detail")
+	}
+	for _, m := range s.Messages {
+		if m.Kind == MsgThought && !m.Expanded {
+			t.Error("existing thought should be expanded in expanded detail")
+		}
+	}
+	// 展开档位下新到的工具调用默认展开。
+	s.ApplyToolCall(&acp.ToolCallUpdateEvent{SessionID: "s1", ToolCallID: "tc2", Status: &status, Title: new("tool 2")})
+	if !s.ToolCalls["tc2"].Expanded {
+		t.Error("new tool call should be expanded in expanded detail")
+	}
+
+	if got := s.CycleBodyDetail(); got != DetailHidden {
+		t.Fatalf("second cycle = %v, want hidden", got)
+	}
+	if !s.ToolCalls["tc2"].Expanded {
+		t.Error("hidden detail should keep per-item expansion state")
+	}
+
+	if got := s.CycleBodyDetail(); got != DetailNormal {
+		t.Fatalf("third cycle = %v, want normal", got)
+	}
+	for id, tc := range s.ToolCalls {
+		if tc.Expanded {
+			t.Errorf("tool call %s should be collapsed back in normal detail", id)
+		}
+	}
+	for _, m := range s.Messages {
+		if m.Kind == MsgThought && m.Expanded {
+			t.Error("thought should be collapsed back in normal detail")
+		}
+	}
+}
+
 func TestExpandAll(t *testing.T) {
 	s := NewSession("s1", "test")
 	// 本用例验证显式展开/折叠全部：先让新工具默认展开，符合展开态断言。

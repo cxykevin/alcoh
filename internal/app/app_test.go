@@ -296,6 +296,56 @@ func TestCtrlOCollapseAll(t *testing.T) {
 	}
 }
 
+// TestCtrlTDispatch 验证 Ctrl+T 的按键分发：一次按键把会话切到「全部展开」
+// 档位（思考与工具调用都展开）。三档循环本身由 model.TestCycleBodyDetail 覆盖。
+func TestCtrlTDispatch(t *testing.T) {
+	ft := newFakeTerm()
+	b := demo.New(true)
+	a := New(ft, b)
+	done := runApp(t, a)
+
+	time.Sleep(100 * time.Millisecond)
+	for _, r := range "你好" {
+		ft.sendKey(input.RuneKey(r, input.ModNone))
+	}
+	ft.sendKey(input.SimpleKey(input.KeyEnter))
+	// 等待权限请求出现并批准，再等会话 idle（思考自动折叠）。
+	time.Sleep(1600 * time.Millisecond)
+	ft.sendKey(input.RuneKey('a', input.ModNone))
+	time.Sleep(500 * time.Millisecond)
+	ft.sendKey(input.RuneKey('t', input.ModCtrl))
+	time.Sleep(100 * time.Millisecond)
+	ft.sendKey(input.RuneKey('q', input.ModCtrl))
+	time.Sleep(50 * time.Millisecond)
+	ft.sendKey(input.RuneKey('y', input.ModNone))
+	waitRun(t, done)
+
+	if a.model.Active == nil {
+		t.Fatal("active session should exist")
+	}
+	s := a.model.Active
+	if s.Detail != model.DetailExpanded {
+		t.Fatalf("detail after Ctrl+T = %v, want expanded", s.Detail)
+	}
+	thoughts := 0
+	for _, m := range s.Messages {
+		if m.Kind == model.MsgThought {
+			thoughts++
+			if !m.Expanded {
+				t.Errorf("thought %s should be expanded after Ctrl+T", m.MessageID)
+			}
+		}
+	}
+	if thoughts == 0 {
+		t.Error("no thought messages found in demo session")
+	}
+	for id, tc := range s.ToolCalls {
+		if !tc.Expanded {
+			t.Errorf("tool call %s should be expanded after Ctrl+T", id)
+		}
+	}
+}
+
 // TestHomeFlow 验证首页会话恢复。断言同样在 app 退出后执行。
 func TestHomeFlow(t *testing.T) {
 	ft := newFakeTerm()

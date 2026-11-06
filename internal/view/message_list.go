@@ -194,7 +194,9 @@ func (ml *MessageList) buildBlocks(s *model.SessionState, width int) []*block {
 	blocks := make([]*block, 0, len(s.Timeline))
 	// tailIndex 是正文中最后一个会渲染出块的 Timeline 下标。只有结尾处的思考
 	// 保留 5 行预览；它后面一旦出现任何内容，思考就完全折叠为标题行。
-	tailIndex := lastRenderedTimelineIndex(s.Timeline)
+	// 「隐藏」档位（Ctrl+T）下思考与工具调用整块不渲染，也不参与结尾判断。
+	hidden := s.Detail == model.DetailHidden
+	tailIndex := lastRenderedTimelineIndex(s)
 	for i, item := range s.Timeline {
 		switch item.Kind {
 		case model.TimelineUserMessage, model.TimelineAssistantMessage:
@@ -208,7 +210,7 @@ func (ml *MessageList) buildBlocks(s *model.SessionState, width int) []*block {
 				}))
 			}
 		case model.TimelineThought:
-			if item.Message != nil {
+			if !hidden && item.Message != nil {
 				m := item.Message
 				tail := i == tailIndex
 				blocks = append(blocks, ml.cached(item.Key, ml.thoughtSig(m, width, tail), func() *block {
@@ -216,7 +218,7 @@ func (ml *MessageList) buildBlocks(s *model.SessionState, width int) []*block {
 				}))
 			}
 		case model.TimelineToolCall:
-			if item.ToolCall != nil {
+			if !hidden && item.ToolCall != nil {
 				tc := item.ToolCall
 				private := s.Alkaid0ToolCalls
 				details := s.ShowProtocolDetails
@@ -487,7 +489,9 @@ func messageHasBody(m *model.Message) bool {
 // lastRenderedTimelineIndex 返回正文中最后一个会渲染出块的时间线下标；没有时返回 -1。
 // 计划项只由 PlanPanel 绘制、不进入正文，因此不算"思考后面的内容"；正文为空的
 // 消息同样不渲染（见 messageHasBody），思考后面只有它时仍算正文结尾。
-func lastRenderedTimelineIndex(timeline []*model.TimelineItem) int {
+func lastRenderedTimelineIndex(s *model.SessionState) int {
+	timeline := s.Timeline
+	hidden := s.Detail == model.DetailHidden
 	for i := len(timeline) - 1; i >= 0; i-- {
 		item := timeline[i]
 		switch item.Kind {
@@ -496,11 +500,11 @@ func lastRenderedTimelineIndex(timeline []*model.TimelineItem) int {
 				return i
 			}
 		case model.TimelineThought:
-			if item.Message != nil {
+			if !hidden && item.Message != nil {
 				return i
 			}
 		case model.TimelineToolCall:
-			if item.ToolCall != nil {
+			if !hidden && item.ToolCall != nil {
 				return i
 			}
 		case model.TimelineTerminal:

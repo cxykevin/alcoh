@@ -55,6 +55,8 @@ var en = map[string]string{
 	"Ctrl+C         清空输入 / 取消任务 / 连按两次退出":                       "Ctrl+C         clear input / cancel task / press twice to quit",
 	"Esc            打断响应        空闲连按两次  打开撤回":                   "Esc            interrupt       twice when idle: rewind",
 	"Ctrl+O         展开/折叠全部思考/工具":                               "Ctrl+O         expand/collapse all thinking / tools",
+	"Ctrl+T         思考/工具：正常/展开/隐藏":                             "Ctrl+T         thinking/tools: normal / expanded / hidden",
+	"已隐藏思考与工具调用":                                                "thinking and tool calls hidden",
 	"已展开全部思考与工具调用":                                              "Expanded all thinking and tool calls",
 	"已折叠全部思考与工具调用":                                              "Collapsed all thinking and tool calls",
 	"PageUp/Down    滚动消息        Home/End      顶部/底部":            "PageUp/Down    scroll messages Home/End      top/bottom",

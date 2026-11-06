@@ -105,6 +105,10 @@ func (a *App) dispatchKey(ke input.KeyEvent) {
 		a.expandAll()
 		return
 	}
+	if ke.IsCtrl() && ke.Rune == 't' {
+		a.cycleBodyDetail()
+		return
+	}
 	// ? 帮助：仅当输入框为空时触发；输入框有内容时 "?" 按普通字符输入。
 	if ke.Type == input.KeyRune && ke.Rune == '?' && m.InputEmpty() {
 		m.SetModal(model.ModalHelp)
@@ -2192,10 +2196,33 @@ func (a *App) expandAll() {
 	s := m.Active
 	if s.AllExpanded() && s.HasCollapsible() {
 		s.CollapseAll()
+		// 档位跟着回到"正常"：在"隐藏"档位下按 Ctrl+O 也应先退出隐藏。
+		s.Detail = model.DetailNormal
 		m.ShowInfo(i18n.T("已折叠全部思考与工具调用"))
 	} else {
 		s.ExpandAll()
+		s.Detail = model.DetailExpanded
 		m.ShowInfo(i18n.T("已展开全部思考与工具调用"))
+	}
+	a.render()
+}
+
+// cycleBodyDetail 循环正文详情档位（Ctrl+T）：正常 → 全部展开 → 隐藏。
+//   - 隐藏：思考（含 thinking 标题与预览）与工具调用整块不显示，正文只剩消息；
+//   - 正常：思考折叠、工具调用按各自状态折叠（默认）；
+//   - 展开：思考与工具调用全部展开，同 Ctrl+O 的展开态。
+func (a *App) cycleBodyDetail() {
+	m := a.model
+	if !m.HasActive() {
+		return
+	}
+	switch s := m.Active; s.CycleBodyDetail() {
+	case model.DetailExpanded:
+		m.ShowInfo(i18n.T("已展开全部思考与工具调用"))
+	case model.DetailHidden:
+		m.ShowInfo(i18n.T("已隐藏思考与工具调用"))
+	default:
+		m.ShowInfo(i18n.T("已折叠全部思考与工具调用"))
 	}
 	a.render()
 }

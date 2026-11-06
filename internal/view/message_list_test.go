@@ -177,6 +177,51 @@ func TestEmptyAssistantMessageTakesNoRow(t *testing.T) {
 	}
 }
 
+// TestBodyDetailHidesThoughtsAndTools 验证 Ctrl+T 的三档渲染：
+// 「隐藏」档位思考（含 thinking 标题）与工具调用整块不渲染，只剩消息；
+// 「展开」档位两者都显示正文。
+func TestBodyDetailHidesThoughtsAndTools(t *testing.T) {
+	theme := renderer.DefaultTheme()
+	s := model.NewSession("s1", "test")
+	s.AppendChunk(&acp.MessageChunkEvent{SessionID: "s1", MessageID: "t1", IsThought: true, Text: "l1\nl2"})
+	s.ApplyMessage(&acp.MessageUpdateEvent{SessionID: "s1", IsThought: true,
+		Message: acp.Message{MessageID: "t1", ContentSet: true,
+			Content: []acp.ContentBlock{{Type: "text", Text: new("l1\nl2")}}}})
+	status := acp.ToolCompleted
+	s.ApplyToolCall(&acp.ToolCallUpdateEvent{SessionID: "s1", ToolCallID: "c1",
+		Status: &status, Title: new("read_file"), RawOutput: []byte("out1")})
+	s.AppendChunk(&acp.MessageChunkEvent{SessionID: "s1", MessageID: "m1", Text: "正文"})
+
+	ml := &MessageList{Theme: theme}
+	draw := func() {
+		ml.Draw(renderer.NewCanvas(renderer.NewBuffer(60, 20)), renderer.NewRect(0, 0, 60, 20), s)
+	}
+
+	// 正常：思考（后面有内容 → 完全折叠）1 行 + 工具标题 1 行 + 正文 1 行。
+	draw()
+	if ml.Rows != 3 {
+		t.Fatalf("normal rows = %d, want 3", ml.Rows)
+	}
+
+	// 展开：思考完整高度（1+2）、工具标题 + out、正文。
+	s.Detail = model.DetailExpanded
+	s.ExpandAll()
+	draw()
+	if ml.Rows <= 3 {
+		t.Fatalf("expanded rows = %d, want more than normal", ml.Rows)
+	}
+
+	// 隐藏：思考与工具都不渲染，只剩正文一行，且没有可点击的标题行。
+	s.Detail = model.DetailHidden
+	draw()
+	if ml.Rows != 1 {
+		t.Fatalf("hidden rows = %d, want 1 (assistant text only)", ml.Rows)
+	}
+	if len(ml.Toggles) != 0 {
+		t.Fatalf("hidden detail should have no toggle rows, got %v", ml.Toggles)
+	}
+}
+
 // TestMessageBlockSrcMaps 验证正文行的"每格源下标"：渲染前缀（"  " / "  ❯ "）
 // 在原文里没有对应字符（-1），其余列指向该行原文的 rune；中文占两格、两格同指
 // 一个 rune；长行 wrap 的续行继续用同一逻辑行的原文下标。

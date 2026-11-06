@@ -126,6 +126,7 @@ func (v *AppView) drawHelp(c *renderer.Canvas, r renderer.Rect) {
 		i18n.T("Ctrl+C         清空输入 / 取消任务 / 连按两次退出"),
 		i18n.T("Esc            打断响应        空闲连按两次  打开撤回"),
 		i18n.T("Ctrl+O         展开/折叠全部思考/工具"),
+		i18n.T("Ctrl+T         思考/工具：正常/展开/隐藏"),
 		i18n.T("PageUp/Down    滚动消息        Home/End      顶部/底部"),
 		i18n.T("鼠标滚轮       滚动消息        Shift+滚轮    半页滚动"),
 		i18n.T("鼠标拖拽       框选文本        选中后 Ctrl+C 复制"),

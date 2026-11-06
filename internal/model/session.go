@@ -155,6 +155,19 @@ func (t *TerminalState) Append(text string) {
 	}
 }
 
+// BodyDetail 是正文的详情档位（Ctrl+T 循环）：正常 → 全部展开 → 隐藏。
+// 它只影响思考与工具调用的展示，不改变会话内容。
+type BodyDetail int
+
+const (
+	// DetailNormal 正常：思考折叠（位于正文结尾时保留预览），工具调用按用户点击保持折叠。
+	DetailNormal BodyDetail = iota
+	// DetailExpanded 展开全部思考与工具调用。
+	DetailExpanded
+	// DetailHidden 隐藏全部思考与工具调用，正文只留消息与终端卡片。
+	DetailHidden
+)
+
 // SessionState 是单个会话的 UI 状态。
 type SessionState struct {
 	ID         string
@@ -235,6 +248,9 @@ type SessionState struct {
 	// 只作为创建时的初值；用户仍可点击标题逐项切换。切换设置时应用层会把
 	// 已有调用一并同步（见 AppModel.SyncToolExpansion）。
 	ToolsExpanded bool
+	// Detail 是正文详情档位（Ctrl+T 循环，见 BodyDetail）：隐藏全部思考与工具
+	// 调用、正常折叠、全部展开。只影响展示，不改动会话内容。
+	Detail BodyDetail
 }
 
 func NewSession(id, title string) *SessionState {
@@ -306,7 +322,8 @@ func (s *SessionState) ApplyMessage(ev *acp.MessageUpdateEvent) {
 		msg.Done = true
 	}
 	if msg.Kind == MsgThought && ev.Message.ContentSet {
-		msg.Expanded = false
+		// 完整块到达即折叠这段思考；「全部展开」档位下保持展开（Ctrl+T）。
+		msg.Expanded = s.Detail == DetailExpanded
 	}
 	if !ev.IsThought && !ev.IsUser && ev.Message.ContentSet {
 		// 正文完整块到达 → 此前的思考流已经结束（可能只有 chunk 无完整块），立即折叠。
@@ -322,7 +339,8 @@ func (s *SessionState) finishLatestThought() {
 	for _, m := range s.Messages {
 		if m.Kind == MsgThought && !m.Done {
 			m.Done = true
-			m.Expanded = false
+			// 「全部展开」档位（Ctrl+T）下思考结束后保持展开，其余情况折叠。
+			m.Expanded = s.Detail == DetailExpanded
 		}
 	}
 }
@@ -771,6 +789,23 @@ func (s *SessionState) CollapseAll() {
 	}
 }
 
+// CycleBodyDetail 按 Ctrl+T 的顺序循环正文详情档位：正常 → 全部展开 → 隐藏。
+// 进入"全部展开"时把已有的思考与工具调用一并展开，回到"正常"时收回；
+// "隐藏"只影响展示，不改动各项的展开态，退出隐藏后恢复原样。
+func (s *SessionState) CycleBodyDetail() BodyDetail {
+	switch s.Detail {
+	case DetailNormal:
+		s.Detail = DetailExpanded
+		s.ExpandAll()
+	case DetailExpanded:
+		s.Detail = DetailHidden
+	default:
+		s.Detail = DetailNormal
+		s.CollapseAll()
+	}
+	return s.Detail
+}
+
 // AllExpanded 报告会话中全部思维链与工具调用是否均已展开。
 func (s *SessionState) AllExpanded() bool {
 	for _, m := range s.Messages {
@@ -856,7 +891,8 @@ func (s *SessionState) ApplyToolCall(ev *acp.ToolCallUpdateEvent) {
 		// 工具调用是新内容：它出现后，此前的思考段已结束，立即折叠。
 		// 只在新调用创建时折叠——旧调用后续的完成/输出更新不能收掉新的思考。
 		s.finishLatestThought()
-		tc = &ToolCall{ID: ev.ToolCallID, Status: acp.ToolPending, Expanded: s.ToolsExpanded}
+		tc = &ToolCall{ID: ev.ToolCallID, Status: acp.ToolPending,
+			Expanded: s.ToolsExpanded || s.Detail == DetailExpanded}
 		s.ToolCalls[ev.ToolCallID] = tc
 		s.ToolOrder = append(s.ToolOrder, ev.ToolCallID)
 		item := s.appendTimeline("tool:"+ev.ToolCallID, TimelineToolCall)
