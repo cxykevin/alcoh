@@ -1064,11 +1064,12 @@ type alkaid0Backend struct {
 	cfg map[string]any
 }
 
-// demoConfigJSON 是 config/get 返回的固定配置。子页面导航布局
-// （每层按字典序排序）须与 TestServerConfigEditor 的按键导航保持一致：
+// demoConfigJSON 是 config/get 返回的固定配置。子页面导航布局（有子页的
+// 对象在前、标量在后，组内按翻译后的显示名排序）须与 TestServerConfigEditor
+// 的按键导航保持一致：
 //
-//	根页面: [Model, Server, Version]  →  Model 是行 0
-//	Model 子页: [DefaultModelID, Models, ProviderKey]  →  DefaultModelID 是行 0
+//	根页面: [Server, Model, Version]  →  Model 是行 1
+//	Model 子页: [Models, ProviderKey, DefaultModelID]  →  Models 是行 0
 var demoConfigJSON = json.RawMessage(`{
   "Version": 1,
   "Model": {
@@ -1176,7 +1177,7 @@ func TestServerConfigEditor(t *testing.T) {
 	// 配置树加载完成（ServerCfg != nil）后才可导航。
 	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.ServerCfg })
 
-	// 子页面导航（布局见 demoConfigJSON）：根页 [Model, Server, Version]，
+	// 子页面导航（布局见 demoConfigJSON）：根页 [Server, Model, Version]，
 	// ↓↓ 选中数字叶子 Version（行 2）后 Enter 进入数字编辑（输入框预填原值 1），
 	// Ctrl+U 清空后输入 7，Enter 提交 → patch {"Version":7}。
 	// （Model.DefaultModelID 这类"选择模型"的键现在由模型选择框接管，
@@ -1234,9 +1235,10 @@ func TestServerConfigEditorAddModel(t *testing.T) {
 	waitAtomic(t, &b.gets, 1, "config/get calls")
 	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.ServerCfg })
 
-	// 子页面导航：Model(行0) → Models(行1) → 集合页 [1, 2, (新增)]。
+	// 子页面导航：根页 [Server, Model, Version] → Model 行 1；Model 子页
+	// [Models, ProviderKey, DefaultModelID] → Models 行 0。
+	ft.sendKey(input.SimpleKey(input.KeyDown))  // 选中 Model
 	ft.sendKey(input.SimpleKey(input.KeyEnter)) // 进入 Model 子页
-	ft.sendKey(input.SimpleKey(input.KeyDown))  // 选中 Models
 	ft.sendKey(input.SimpleKey(input.KeyEnter)) // 进入 Models 集合页（选中键 1）
 	ft.sendKey(input.SimpleKey(input.KeyDown))  // 键 2
 	ft.sendKey(input.SimpleKey(input.KeyDown))  // (新增) 行
@@ -1330,14 +1332,15 @@ func TestServerConfigEditorDeleteModel(t *testing.T) {
 	waitAtomic(t, &b.gets, 1, "config/get calls")
 	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.ServerCfg })
 
-	// 子页面导航：Model(行0) → Models(行1) → 键 1 子页 [ModelID, ModelName,
-	// TokenLimit, (删除该项)] → 删除行 Enter 删除模型 1。
+	// 子页面导航：根页 [Server, Model, Version] → Model 行 1 → Model 子页
+	// [Models, ProviderKey, DefaultModelID] → 键 1 子页（标量按显示名排序：
+	// ModelID, TokenLimit, ModelName），最后是复制/重命名/删除操作行。
+	ft.sendKey(input.SimpleKey(input.KeyDown))  // 选中 Model
 	ft.sendKey(input.SimpleKey(input.KeyEnter)) // 进入 Model 子页
-	ft.sendKey(input.SimpleKey(input.KeyDown))  // 选中 Models
 	ft.sendKey(input.SimpleKey(input.KeyEnter)) // 进入 Models 集合页（选中键 1）
 	ft.sendKey(input.SimpleKey(input.KeyEnter)) // 进入键 1 的模型子页
-	ft.sendKey(input.SimpleKey(input.KeyDown))  // ModelName（index1）
-	ft.sendKey(input.SimpleKey(input.KeyDown))  // TokenLimit（index2）
+	ft.sendKey(input.SimpleKey(input.KeyDown))  // TokenLimit（index1）
+	ft.sendKey(input.SimpleKey(input.KeyDown))  // ModelName（index2）
 	ft.sendKey(input.SimpleKey(input.KeyDown))  // (复制)
 	ft.sendKey(input.SimpleKey(input.KeyDown))  // (重命名键)
 	ft.sendKey(input.SimpleKey(input.KeyDown))  // (删除该项)

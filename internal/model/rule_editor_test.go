@@ -14,7 +14,7 @@ func TestBeginRuleEditMultiline(t *testing.T) {
 		"AutoReject":"",
 		"Name":"x"
 	}}`))
-	ed.Focus([]string{"Agent"})
+	ed.focusNode([]string{"Agent", "AutoApprove"})
 	if n := ed.SelectedNode(); n == nil || n.Key != "AutoApprove" {
 		t.Fatalf("selected = %v, want AutoApprove", n)
 	}
@@ -55,8 +55,7 @@ func TestBeginRuleEditMultiline(t *testing.T) {
 // 全屏 IDE，其它字符串字段仍使用普通单行编辑。
 func TestBeginRuleEditRejectsOtherFields(t *testing.T) {
 	ed := NewConfigEditor(json.RawMessage(`{"Agent":{"AutoApprove":"","AutoReject":"","Name":"x"}}`))
-	ed.Focus([]string{"Agent"})
-	ed.Selected = 2 // Name（AutoApprove/AutoReject 之后）
+	ed.focusNode([]string{"Agent", "Name"})
 	if n := ed.SelectedNode(); n == nil || n.Key != "Name" {
 		t.Fatalf("selected = %v, want Name", n)
 	}

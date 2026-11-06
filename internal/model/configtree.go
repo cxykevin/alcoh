@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/cxykevin/alcoh/internal/exprcheck"
 	"github.com/cxykevin/alcoh/internal/i18n"
@@ -571,12 +572,7 @@ func buildConfigNode(key string, path []string, parent *ConfigNode, v any) *Conf
 	switch val := v.(type) {
 	case map[string]any:
 		n.Kind = ConfigObject
-		keys := make([]string, 0, len(val))
 		for k := range val {
-			keys = append(keys, k)
-		}
-		sortConfigKeys(keys)
-		for _, k := range keys {
 			if k == "$schema" {
 				continue // $schema 是 schema 元数据，不参与配置编辑（隐藏）。
 			}
@@ -613,20 +609,64 @@ func buildConfigNode(key string, path []string, parent *ConfigNode, v any) *Conf
 	return n
 }
 
-// sortConfigKeys 按自然顺序排序对象键：数字字符串按数值比较，其余按字典序。
-// 使 Models/Agents 等数字键的模型集合按 ID 顺序展示。
-func sortConfigKeys(keys []string) {
-	sort.Slice(keys, func(i, j int) bool { return configKeyLess(keys[i], keys[j]) })
-}
-
-// configKeyLess 是配置对象键的排序比较：数字字符串按数值比较，其余按字典序。
-func configKeyLess(a, b string) bool {
-	ai, erra := strconv.Atoi(a)
-	bi, errb := strconv.Atoi(b)
-	if erra == nil && errb == nil {
+// configNodeLess 定义配置页面的展示顺序：
+//  1. 有层叠菜单的容器（对象/数组，可进入子页）排在标量之前；
+//  2. 组内按翻译后的显示名（DisplayKey）不区分大小写字典序；
+//  3. 数字键（Models / Agents 的数字 ID）按数值升序并排在其它键之前，
+//     避免 2 排到 10 后面。
+func configNodeLess(a, b *ConfigNode) bool {
+	aMenu := a.Kind == ConfigObject || a.Kind == ConfigArray
+	bMenu := b.Kind == ConfigObject || b.Kind == ConfigArray
+	if aMenu != bMenu {
+		return aMenu
+	}
+	ai, aErr := strconv.Atoi(a.Key)
+	bi, bErr := strconv.Atoi(b.Key)
+	aNum, bNum := aErr == nil, bErr == nil
+	if aNum && bNum {
 		return ai < bi
 	}
-	return a < b
+	if aNum != bNum {
+		return aNum
+	}
+	an, bn := strings.ToLower(a.DisplayKey()), strings.ToLower(b.DisplayKey())
+	if an != bn {
+		return an < bn
+	}
+	return a.Key < b.Key
+}
+
+// sortNodeChildren 递归按展示顺序排序所有对象页的子项。数组保持元素原有
+// 顺序（Phrases、Args、Hooks 命令与 plugins 都是有序列表），只递归处理元素
+// 内部的字段。排序依赖翻译后的显示名，因此界面语言变化时需要重跑。
+func sortNodeChildren(n *ConfigNode) {
+	if n == nil {
+		return
+	}
+	if n.Kind == ConfigObject {
+		sort.SliceStable(n.Children, func(i, j int) bool {
+			return configNodeLess(n.Children[i], n.Children[j])
+		})
+	}
+	for _, c := range n.Children {
+		sortNodeChildren(c)
+	}
+}
+
+// applyOrder 立即按当前界面语言重排整棵配置树（只影响展示顺序，不影响写回）。
+func (ed *ConfigEditor) applyOrder() {
+	sortNodeChildren(ed.Root)
+}
+
+// ensureOrder 在界面语言变化后重新排序：字段顺序取决于翻译后的显示名，
+// 切换语言后需要按新文案重排。
+func (ed *ConfigEditor) ensureOrder() {
+	l := i18n.Current()
+	if ed.sortLang == l {
+		return
+	}
+	ed.sortLang = l
+	ed.applyOrder()
 }
 
 // IsLocalConfig 报告该编辑器编辑的是本地 config.json（/plugins）而非服务端
@@ -751,6 +791,10 @@ type ConfigEditor struct {
 	// 用于根页新增 plugins 段、plugins 数组整体替换写回与 pending 延迟写回等
 	// 本地配置特有的语义。
 	isLocalConfig bool
+
+	// sortLang 是当前字段顺序所用的界面语言：展示顺序按翻译后的显示名排序，
+	// 语言切换后由 ensureOrder 重新排序。
+	sortLang i18n.Lang
 }
 
 // NewConfigEditor 从 config/get 的完整配置 JSON 构建配置编辑器。
@@ -761,6 +805,8 @@ func NewConfigEditor(raw json.RawMessage) *ConfigEditor {
 	}
 	ed := &ConfigEditor{Root: buildConfigNode("", nil, nil, root)}
 	ed.Stack = []*ConfigNode{ed.Root}
+	ed.applyOrder()
+	ed.sortLang = i18n.Current()
 	return ed
 }
 
@@ -769,8 +815,10 @@ func (ed *ConfigEditor) Current() *ConfigNode {
 	return ed.Stack[len(ed.Stack)-1]
 }
 
-// CurrentChildren 返回当前页面的行（当前集合节点的直接子项）。
+// CurrentChildren 返回当前页面的行（当前集合节点的直接子项）。界面语言变化
+// 后先按新的显示名重排，保证行序与展示文案一致。
 func (ed *ConfigEditor) CurrentChildren() []*ConfigNode {
+	ed.ensureOrder()
 	return ed.Current().Children
 }
 
@@ -982,6 +1030,7 @@ func (ed *ConfigEditor) ConfirmRenameKey() (json.RawMessage, bool, string) {
 	deleteValue[key] = value
 	n.Key = key
 	n.Path[len(n.Path)-1] = key
+	ed.applyOrder()
 	ed.CancelRenameKey()
 	return nodePatch(n.Parent.Path, deleteValue), true, ""
 }
@@ -1070,6 +1119,7 @@ func (ed *ConfigEditor) ConfirmCopyKey() (json.RawMessage, bool, string) {
 	}
 	value := n.AsValue()
 	n.Parent.Children = append(n.Parent.Children, buildConfigNode(key, append(n.Parent.Path, key), n.Parent, value))
+	ed.applyOrder()
 	ed.CancelCopyKey()
 	return nodePatch(n.Parent.Path, map[string]any{key: value}), true, ""
 }
@@ -1386,6 +1436,7 @@ func (ed *ConfigEditor) AddModelsItem() (json.RawMessage, bool) {
 	}
 	child := buildConfigNode(key, append(n.Path, key), n, val)
 	n.Children = append(n.Children, child)
+	ed.applyOrder()
 	// 自动进入新模型子页面并选中首行，便于立即编辑。
 	ed.EntryIdx = append(ed.EntryIdx, ed.Selected)
 	ed.Stack = append(ed.Stack, child)
@@ -1411,6 +1462,7 @@ func (ed *ConfigEditor) AddPhrasesItem() (json.RawMessage, bool) {
 	}
 	child := buildConfigNode(key, append(n.Path, key), n, val)
 	n.Children = append(n.Children, child)
+	ed.applyOrder()
 	// 自动进入新元素子页面并选中首行，便于立即编辑。
 	ed.EntryIdx = append(ed.EntryIdx, ed.Selected)
 	ed.Stack = append(ed.Stack, child)
@@ -1508,6 +1560,7 @@ func (ed *ConfigEditor) AddPluginsItem() bool {
 	child := buildConfigNode(key, append(n.Path, key), n, val)
 	child.Pending = true
 	n.Children = append(n.Children, child)
+	ed.applyOrder()
 	// 自动进入新条目子页面并选中首行，便于立即编辑。
 	ed.EntryIdx = append(ed.EntryIdx, ed.Selected)
 	ed.Stack = append(ed.Stack, child)
@@ -1535,9 +1588,7 @@ func (ed *ConfigEditor) AddPluginsArray() bool {
 	}
 	child := buildConfigNode("plugins", []string{"plugins"}, ed.Root, []any{})
 	ed.Root.Children = append(ed.Root.Children, child)
-	sort.Slice(ed.Root.Children, func(i, j int) bool {
-		return configKeyLess(ed.Root.Children[i].Key, ed.Root.Children[j].Key)
-	})
+	ed.applyOrder()
 	// 进入 plugins 页并追加首条目（AddPluginsItem 会继续进入该条目子页）。
 	ed.Focus([]string{"plugins"})
 	return ed.AddPluginsItem()
@@ -1618,6 +1669,7 @@ func (ed *ConfigEditor) ConfirmAddKey() (json.RawMessage, bool, string) {
 	}
 	child := buildConfigNode(key, append(n.Path, key), n, val)
 	n.Children = append(n.Children, child)
+	ed.applyOrder()
 	ed.AddingKey = false
 	// 自动进入新代理子页面并选中首行，便于立即编辑。
 	ed.EntryIdx = append(ed.EntryIdx, ed.Selected)
@@ -1692,6 +1744,7 @@ func setPath(n *ConfigNode, path []string) {
 // 触发整配置重载，并把视图重定向到新项页面。path 中任一段在当前树中缺失时
 // 停在最近可达的页面；path 为空或 nil 时回到根页。
 func (ed *ConfigEditor) Focus(path []string) {
+	ed.ensureOrder()
 	ed.Stack = []*ConfigNode{ed.Root}
 	ed.EntryIdx = []int{}
 	ed.Selected = 0

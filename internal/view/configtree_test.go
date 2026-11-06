@@ -45,12 +45,12 @@ func TestConfigTreeDraw(t *testing.T) {
 	if !strings.Contains(rows[0], "Config") {
 		t.Errorf("breadcrumb = %q, want Config", rows[0])
 	}
-	// 根页行（字典序 Flags / Server / Version）：row1=Flags, row2=Server, row3=Version。
-	if !strings.Contains(rows[1], "标志") || !strings.Contains(rows[1], "▸") {
-		t.Errorf("Flags row = %q, want 标志 ▸", rows[1])
+	// 根页行（对象在前、标量在后，组内按显示名）：row1=Server, row2=Flags, row3=Version。
+	if !strings.Contains(rows[1], "服务端") || !strings.Contains(rows[1], "▸") {
+		t.Errorf("Server row = %q, want 服务端 ▸", rows[1])
 	}
-	if !strings.Contains(rows[2], "服务端") {
-		t.Errorf("Server row = %q, want 服务端", rows[2])
+	if !strings.Contains(rows[2], "标志") {
+		t.Errorf("Flags row = %q, want 标志", rows[2])
 	}
 	// 标量行：键名（翻译）+ 当前值，不显示类型。
 	if !strings.Contains(rows[3], "配置版本 = 1") {
@@ -70,8 +70,8 @@ func TestConfigTreeDraw(t *testing.T) {
 
 func TestConfigTreeDrawEnteredPage(t *testing.T) {
 	ed := model.NewConfigEditor(configTreeSample())
-	// 进入 Server（根页 index 1）。
-	ed.Move(1)
+	// 进入 Server（根页 index 0）。
+	ed.Move(0)
 	if !ed.Enter() {
 		t.Fatal("Enter should enter Server")
 	}
@@ -94,7 +94,7 @@ func TestConfigTreeDrawEnteredPage(t *testing.T) {
 
 func TestConfigTreeDrawEditing(t *testing.T) {
 	ed := model.NewConfigEditor(configTreeSample())
-	ed.Move(1) // Server
+	ed.Move(0) // Server（对象页首位）
 	ed.Enter()
 	// host 是子页 index 0，进入编辑模式。
 	ed.BeginEdit()
@@ -181,7 +181,8 @@ func TestConfigTreeDrawModelPick(t *testing.T) {
 		}}
 	}`
 	ed := model.NewConfigEditor(json.RawMessage(cfg))
-	ed.Focus([]string{"Model"}) // 选中 DefaultModelID（当前值 2）
+	ed.Focus([]string{"Model"}) // Model 页：Models（对象）在前，DefaultModelID 在后
+	ed.Move(1)                  // 选中 DefaultModelID（当前值 2）
 	if !ed.BeginModelPick() {
 		t.Fatal("BeginModelPick should open with models in config")
 	}
@@ -312,7 +313,7 @@ func TestConfigTreeDrawAddingKey(t *testing.T) {
 // 光标位置记录到 canvas：帧尾硬件光标据此落到编辑处，IME 候选框跟随输入。
 func TestConfigTreeEditorRecordsInputCursor(t *testing.T) {
 	ed := model.NewConfigEditor(configTreeSample())
-	ed.Move(1) // Server
+	ed.Move(0) // Server（对象页首位）
 	ed.Enter()
 	ed.BeginEdit() // host，预填 127.0.0.1，光标在末尾
 	if !ed.Editing || ed.EditNode == nil {

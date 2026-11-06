@@ -54,8 +54,8 @@ func kindOf(n *ConfigNode) int {
 
 func TestConfigEditorBuild(t *testing.T) {
 	ed := NewConfigEditor(sampleConfig())
-	// 根页面：直接子对象与标量按自然顺序（数字优先，其余字典序）。
-	want := []string{"Flags", "Model", "Server", "Version"}
+	// 根页面：有子页的对象在前，标量在后；组内按翻译后的显示名字典序。
+	want := []string{"Server", "Flags", "Model", "Version"}
 	got := rowKeys(ed)
 	if len(got) != len(want) {
 		t.Fatalf("root rows = %v, want %v", got, want)
@@ -68,8 +68,8 @@ func TestConfigEditorBuild(t *testing.T) {
 	if ed.Selected != 0 {
 		t.Fatalf("initial selected = %d, want 0", ed.Selected)
 	}
-	if ed.SelectedNode().Key != "Flags" {
-		t.Fatalf("initial selected node = %v, want Flags", ed.SelectedNode())
+	if ed.SelectedNode().Key != "Server" {
+		t.Fatalf("initial selected node = %v, want Server", ed.SelectedNode())
 	}
 	// 嵌套对象不展开为行，仅在进入后可见。
 	models := ed.Root.findChild("Model").findChild("Models")
@@ -346,8 +346,8 @@ func TestConfigEditorNavigate(t *testing.T) {
 	if got := ed.Crumb(); len(got) != 1 || got[0] != "Config" {
 		t.Fatalf("root crumb = %v, want [Config]", got)
 	}
-	// 选中 Model（根页 index 1）并进入。
-	ed.Move(1)
+	// 选中 Model（根页 index 2：Server / Flags / Model / Version）并进入。
+	ed.Move(2)
 	if n := ed.SelectedNode(); n.Key != "Model" {
 		t.Fatalf("selected = %v, want Model", n)
 	}
@@ -357,27 +357,31 @@ func TestConfigEditorNavigate(t *testing.T) {
 	if got := ed.Crumb(); len(got) != 2 || got[0] != "Config" || got[1] != "模型" {
 		t.Fatalf("crumb = %v, want [Config 模型]", got)
 	}
-	want := []string{"DefaultModelID", "Models", "ProviderKey"}
+	want := []string{"Models", "ProviderKey", "DefaultModelID"}
 	got := rowKeys(ed)
 	if len(got) != len(want) {
 		t.Fatalf("model rows = %v, want %v", got, want)
 	}
-	if ed.Selected != 0 || ed.SelectedNode().Key != "DefaultModelID" {
-		t.Fatalf("entered selected = %d (%v), want 0 DefaultModelID", ed.Selected, ed.SelectedNode())
+	if ed.Selected != 0 || ed.SelectedNode().Key != "Models" {
+		t.Fatalf("entered selected = %d (%v), want 0 Models", ed.Selected, ed.SelectedNode())
 	}
-	// 进入标量行不动作。
+	// 进入标量行不动作（DefaultModelID 在末位）。
+	ed.Move(2)
+	if n := ed.SelectedNode(); n == nil || n.Key != "DefaultModelID" {
+		t.Fatalf("selected = %v, want DefaultModelID", n)
+	}
 	if ed.Enter() {
 		t.Fatal("Enter on scalar should not navigate")
 	}
-	// Back 恢复根页与进入前的选中行（Model, index 1）。
+	// Back 恢复根页与进入前的选中行（Model, index 2）。
 	if !ed.Back() {
 		t.Fatal("Back should succeed")
 	}
 	if got := ed.Crumb(); len(got) != 1 || got[0] != "Config" {
 		t.Fatalf("crumb after back = %v, want [Config]", got)
 	}
-	if ed.Selected != 1 || ed.SelectedNode().Key != "Model" {
-		t.Fatalf("selected after back = %d (%v), want 1 Model", ed.Selected, ed.SelectedNode())
+	if ed.Selected != 2 || ed.SelectedNode().Key != "Model" {
+		t.Fatalf("selected after back = %d (%v), want 2 Model", ed.Selected, ed.SelectedNode())
 	}
 	if ed.Back() {
 		t.Fatal("Back at root should fail")
@@ -387,10 +391,9 @@ func TestConfigEditorNavigate(t *testing.T) {
 func TestConfigEditorCrumbNested(t *testing.T) {
 	ed := NewConfigEditor(sampleConfig())
 	// Model → Models → 数字键对象。
-	ed.Move(1) // Model
+	ed.Move(2) // Model
 	ed.Enter()
-	ed.Move(1) // Models
-	ed.Enter()
+	ed.Enter() // Models（对象页首位）
 	want := []string{"Config", "模型", "模型集合"}
 	if got := ed.Crumb(); !equalStrings(got, want) {
 		t.Fatalf("crumb = %v, want %v", got, want)
@@ -501,9 +504,10 @@ func TestConfigEditorMoveWrap(t *testing.T) {
 
 func TestConfigEditorCommitNumber(t *testing.T) {
 	ed := NewConfigEditor(sampleConfig())
-	ed.Move(1) // Model
+	ed.Move(2) // Model
 	ed.Enter()
-	// 子页 DefaultModelID 是 index 0。
+	// Model 子页：Models（对象）在前，其余按显示名排序。
+	ed.Move(2) // DefaultModelID
 	ed.BeginEdit()
 	if !ed.Editing {
 		t.Fatal("BeginEdit should enter editing")
@@ -523,7 +527,7 @@ func TestConfigEditorCommitNumber(t *testing.T) {
 
 func TestConfigEditorCommitString(t *testing.T) {
 	ed := NewConfigEditor(sampleConfig())
-	ed.Move(2) // Server
+	ed.Move(0) // Server（对象页首位）
 	ed.Enter()
 	// 子页 host 是 index 0。
 	ed.BeginEdit()
@@ -542,8 +546,9 @@ func TestConfigEditorCommitString(t *testing.T) {
 
 func TestConfigEditorCommitInvalidNumber(t *testing.T) {
 	ed := NewConfigEditor(sampleConfig())
-	ed.Move(1) // Model
+	ed.Move(2) // Model
 	ed.Enter()
+	ed.Move(2) // DefaultModelID
 	ed.BeginEdit()
 	ed.EditInput = inputFromString("abc")
 	if _, ok, _ := ed.CommitEdit(); ok {
@@ -556,7 +561,8 @@ func TestConfigEditorCommitInvalidNumber(t *testing.T) {
 
 func TestConfigEditorToggleBool(t *testing.T) {
 	ed := NewConfigEditor(sampleConfig())
-	// Flags 是根页 index 0，子页 Enable 是 index 0。
+	// Flags 是根页 index 1，子页 Enable 是 index 0。
+	ed.Move(1)
 	ed.Enter()
 	if !ed.SelectedNode().Bool {
 		t.Fatal("precondition: Enable should start true")
@@ -576,10 +582,9 @@ func TestConfigEditorCanAdd(t *testing.T) {
 		t.Error("root should not allow add")
 	}
 	// Model.Models 允许新增。
-	ed.Move(1) // Model
+	ed.Move(2) // Model
 	ed.Enter()
-	ed.Move(1) // Models
-	ed.Enter() // 进入 Models 集合页
+	ed.Enter() // Models（对象页首位）
 	if !ed.CanAdd() || !ed.IsModels() {
 		t.Error("Models should allow add and be models collection")
 	}
@@ -587,7 +592,7 @@ func TestConfigEditorCanAdd(t *testing.T) {
 	ed.Back()  // Models
 	ed.Back()  // Model
 	ed.Back()  // root
-	ed.Move(2) // Server
+	ed.Move(0) // Server（对象页首位）
 	ed.Enter()
 	if ed.CanAdd() {
 		t.Error("Server should not allow add")
@@ -603,10 +608,9 @@ func TestConfigEditorCanAdd(t *testing.T) {
 
 func TestConfigEditorAddModelsItem(t *testing.T) {
 	ed := NewConfigEditor(sampleConfig())
-	ed.Move(1) // Model
+	ed.Move(2) // Model
 	ed.Enter()
-	ed.Move(1) // Models
-	ed.Enter() // 进入 Models 集合页：页面 [1, 2, (新增)]
+	ed.Enter() // Models（对象页首位）：页面 [1, 2, (新增)]
 	ed.Move(2) // 移到末尾「(新增)」行
 	if !ed.OnAddRow() {
 		t.Fatalf("selected = %d, want on add row", ed.Selected)
@@ -850,10 +854,9 @@ func TestConfigEditorFocus(t *testing.T) {
 func TestConfigEditorDeleteModelItem(t *testing.T) {
 	ed := NewConfigEditor(sampleConfig())
 	models := ed.Root.findChild("Model").findChild("Models")
-	ed.Move(1) // Model
+	ed.Move(2) // Model
 	ed.Enter()
-	ed.Move(1) // Models
-	ed.Enter()
+	ed.Enter() // Models（对象页首位）
 	// Models 集合页本身不提供删除行（只有项子页可删）。
 	if ed.CanDelete() || ed.DelRowIndex() != -1 {
 		t.Fatalf("Models collection should not expose delete row: del=%d", ed.DelRowIndex())
@@ -1155,14 +1158,13 @@ func TestConfigEditorCanDelete(t *testing.T) {
 	}
 	// Model 子页（标量字段页）。
 	ed := NewConfigEditor(sampleConfig())
-	ed.Move(1) // Model
+	ed.Move(2) // Model
 	ed.Enter()
 	if ed.CanDelete() {
 		t.Fatal("Model page should not allow delete")
 	}
 	// Models 集合页（可新增，不可删）。
-	ed.Move(1)
-	ed.Enter()
+	ed.Enter() // Models（对象页首位）
 	if ed.CanDelete() {
 		t.Fatal("Models collection should not allow delete")
 	}
@@ -1173,7 +1175,7 @@ func TestConfigEditorCanDelete(t *testing.T) {
 	}
 	// Server 对象页（普通对象，不可删）。
 	ed2 := NewConfigEditor(sampleConfig())
-	ed2.Move(2) // Server
+	ed2.Move(0) // Server（对象页首位）
 	ed2.Enter()
 	if ed2.CanDelete() {
 		t.Fatal("Server page should not allow delete")
@@ -1187,10 +1189,9 @@ func TestConfigEditorCanDelete(t *testing.T) {
 	// 模型项的标量字段页（如 ModelName 所在页就是模型项页，可删）；
 	// 但模型项内部的对象子字段（如 ProviderSpecificConfig）页不可删。
 	ed4 := NewConfigEditor(json.RawMessage(`{"Model":{"Models":{"1":{"ProviderSpecificConfig":{}}}}}`))
-	ed4.Move(1) // Model
+	ed4.Move(2) // Model
 	ed4.Enter()
-	ed4.Move(1) // Models
-	ed4.Enter()
+	ed4.Enter() // Models（对象页首位）
 	ed4.Enter() // 模型 1 子页：[ProviderSpecificConfig, (删除该项)]
 	if !ed4.CanDelete() {
 		t.Fatal("model item page should allow delete")
@@ -1207,11 +1208,10 @@ func TestConfigEditorCanDelete(t *testing.T) {
 // TestConfigEditorDeleteRowWrap 验证「(删除该项)」行是普通可选行，参与环绕。
 func TestConfigEditorDeleteRowWrap(t *testing.T) {
 	ed := NewConfigEditor(sampleConfig())
-	ed.Move(1) // Model
+	ed.Move(2) // Model
 	ed.Enter()
-	ed.Move(1) // Models
-	ed.Enter()
-	ed.Enter() // 模型 1 子页：[ModelName, TokenLimit, (复制), (重命名键), (删除该项)]
+	ed.Enter() // Models（对象页首位）
+	ed.Enter() // 模型 1 子页：[TokenLimit, ModelName, (复制), (重命名键), (删除该项)]
 	if ed.RowCount() != len(ed.CurrentChildren())+3 {
 		t.Fatalf("model item row count = %d, want %d", ed.RowCount(), len(ed.CurrentChildren())+3)
 	}
@@ -1250,9 +1250,9 @@ func TestConfigEditorNullEdit(t *testing.T) {
 
 func TestConfigEditorSensitiveEditStartsEmpty(t *testing.T) {
 	ed := NewConfigEditor(sampleConfig())
-	ed.Move(2) // Server
+	ed.Move(0) // Server（对象页首位）
 	ed.Enter()
-	ed.Move(1) // key
+	ed.Move(2) // key（主机 / 端口 / 访问密钥 / 路径）
 	if !ed.SelectedNode().Sensitive {
 		t.Fatal("selected should be Server.key (sensitive)")
 	}
@@ -1288,8 +1288,9 @@ func TestNodePatch(t *testing.T) {
 func TestConfigEditorSerialization(t *testing.T) {
 	// 编辑若干节点后 AsValue 应保持合法 JSON，且 patch 可被服务端 unmarshal 合并。
 	ed := NewConfigEditor(sampleConfig())
-	ed.Move(1) // Model
+	ed.Move(2) // Model
 	ed.Enter()
+	ed.Move(2)     // DefaultModelID
 	ed.BeginEdit() // DefaultModelID
 	ed.EditInput = inputFromString("5")
 	patch, ok, _ := ed.CommitEdit()

@@ -298,12 +298,12 @@ func TestAddPluginsArrayFromRoot(t *testing.T) {
 	if cur == nil || cur.Key != "0" || cur.Kind != ConfigObject || !cur.Pending {
 		t.Fatalf("after add current = %+v, want pending plugin item 0", cur)
 	}
-	// 排序保持：colorMode < plugins < version。
+	// 展示顺序：有子页的 plugins 在前，标量按显示名排序（配置版本 < 颜色模式）。
 	var order []string
 	for _, c := range ed.Root.Children {
 		order = append(order, c.Key)
 	}
-	if order[0] != "colorMode" || order[1] != "plugins" || order[2] != "version" {
+	if order[0] != "plugins" || order[1] != "version" || order[2] != "colorMode" {
 		t.Fatalf("root child order = %v", order)
 	}
 	// 编辑该条目 command：整体写回含该条目。

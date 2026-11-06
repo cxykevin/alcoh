@@ -18,7 +18,8 @@ func ruleEditorSample(t *testing.T) *model.ConfigEditor {
 		"Name":"x"
 	}}`))
 	ed.Focus([]string{"Agent"})
-	// 排序后 AutoApprove 是第 0 行。
+	// 字段按显示名排序："Name" 在前，AutoApprove / AutoReject 随后。
+	ed.Move(1)
 	if n := ed.SelectedNode(); n == nil || n.Key != "AutoApprove" {
 		t.Fatalf("selected = %v, want AutoApprove", n)
 	}

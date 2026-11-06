@@ -30,10 +30,11 @@ func TestServerConfigEditorAddThenEditInt(t *testing.T) {
 	waitAtomic(t, &b.gets, 1, "config/get calls")
 	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.ServerCfg })
 
-	// 导航到 Models 集合页 (新增) 行并新增模型。
-	ft.sendKey(input.SimpleKey(input.KeyEnter)) // Model
-	ft.sendKey(input.SimpleKey(input.KeyDown))  // Models
-	ft.sendKey(input.SimpleKey(input.KeyEnter)) // 集合页
+	// 导航到 Models 集合页 (新增) 行并新增模型。根页 [Server, Model, Version]，
+	// Model 子页 [Models, ProviderKey, DefaultModelID]。
+	ft.sendKey(input.SimpleKey(input.KeyDown))  // Model
+	ft.sendKey(input.SimpleKey(input.KeyEnter)) // 进入 Model 子页
+	ft.sendKey(input.SimpleKey(input.KeyEnter)) // 进入 Models 集合页
 	ft.sendKey(input.SimpleKey(input.KeyDown))  // 键 2
 	ft.sendKey(input.SimpleKey(input.KeyDown))  // (新增)
 	ft.sendKey(input.SimpleKey(input.KeyEnter)) // 新增（Current=新模型子页）
@@ -46,7 +47,11 @@ func TestServerConfigEditorAddThenEditInt(t *testing.T) {
 		t.Fatalf("current after add = %q, want model 3", got)
 	}
 
-	// 编辑新模型第一行 CompressSize（int 字段）。
+	// 新模型子页：ProviderSpecificConfig（对象）在前，标量按显示名排序；
+	// CompressSize（压缩阈值）排在 TokenLimit / Top-K / Top-P 之后（第 5 行）。
+	for range 4 {
+		ft.sendKey(input.SimpleKey(input.KeyDown))
+	}
 	ft.sendKey(input.SimpleKey(input.KeyEnter)) // 编辑 CompressSize
 	time.Sleep(30 * time.Millisecond)
 	ft.sendKey(input.RuneKey('u', input.ModCtrl)) // 清空预填 128000
@@ -103,8 +108,12 @@ func TestServerConfigEditorModelPick(t *testing.T) {
 	waitAtomic(t, &b.gets, 1, "config/get calls")
 	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.ServerCfg })
 
-	// Model(行0) → DefaultModelID(行0)：当前值 1，配置里有模型 1/2 → 打开选择框。
+	// 根页 [Server, Model, Version]；Model 子页 [Models, ProviderKey,
+	// DefaultModelID]，DefaultModelID 在行 2。当前值 1，配置里有模型 1/2。
+	ft.sendKey(input.SimpleKey(input.KeyDown))  // Model
 	ft.sendKey(input.SimpleKey(input.KeyEnter)) // 进入 Model 子页
+	ft.sendKey(input.SimpleKey(input.KeyDown))  // ProviderKey
+	ft.sendKey(input.SimpleKey(input.KeyDown))  // DefaultModelID
 	ft.sendKey(input.SimpleKey(input.KeyEnter)) // DefaultModelID → 选择框
 	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.ServerPicking })
 	if got := a.snapshot(); got.ServerPickSel != 0 {
@@ -237,11 +246,10 @@ func TestServerConfigEditorAddHooksItem(t *testing.T) {
 	waitAtomic(t, &b.gets, 1, "config/get calls")
 	waitSnapshot(t, a, func(s modelSnapshot) bool { return s.ServerCfg })
 
-	// 根页 [Hooks, Version] → Hooks 对象页 [OnCronjobWakeup, OnTaskFinish,
-	// OnUserMessage] → OnTaskFinish 数组页 [0, (新增)]。
+	// 根页 [Hooks, Version] → Hooks 对象页 [OnTaskFinish, OnCronjobWakeup,
+	// OnUserMessage]（事件数组按显示名排序）→ OnTaskFinish 数组页 [0, (新增)]。
 	ft.sendKey(input.SimpleKey(input.KeyEnter)) // Hooks
-	ft.sendKey(input.SimpleKey(input.KeyDown))  // OnTaskFinish
-	ft.sendKey(input.SimpleKey(input.KeyEnter)) // 数组页
+	ft.sendKey(input.SimpleKey(input.KeyEnter)) // OnTaskFinish（行 0）
 	ft.sendKey(input.SimpleKey(input.KeyDown))  // (新增)
 	ft.sendKey(input.SimpleKey(input.KeyEnter)) // 新增一条命令
 

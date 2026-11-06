@@ -344,9 +344,11 @@ func TestPluginsCommandIntegration(t *testing.T) {
 		ed := a.model.PluginsCfg
 		return ed != nil && ed.Current() != nil && ed.Current().Key == "plugins"
 	})
-	// 进入第一个插件条目；下移到 disabled 行（command/disabled/name 排序第 2）并回车切换。
+	// 进入第一个插件条目；下移到 disabled 行（显示名排序：名称 / 命令 / 禁用，
+	// 禁用是第 3 行）并回车切换。
 	ft.sendKey(input.SimpleKey(input.KeyEnter))
 	time.Sleep(50 * time.Millisecond)
+	ft.sendKey(input.SimpleKey(input.KeyDown))
 	ft.sendKey(input.SimpleKey(input.KeyDown))
 	ft.sendKey(input.SimpleKey(input.KeyEnter))
 	// 编辑即保存：config.json 中 disabled 应为 true。
@@ -436,7 +438,10 @@ func TestPluginsNoPhantomConfig(t *testing.T) {
 		t.Fatalf("config after add = %q, want unchanged %q", string(data), initial)
 	}
 
-	// 编辑 command 字段（新条目子页首行即 Command）：此刻才把 plugins 段写入。
+	// 编辑 command 字段：新条目字段按显示名排序（Disabled / Name / Command），
+	// Command 在末行；此刻才把 plugins 段写入。
+	ft.sendKey(input.SimpleKey(input.KeyDown))  // Name
+	ft.sendKey(input.SimpleKey(input.KeyDown))  // Command
 	ft.sendKey(input.SimpleKey(input.KeyEnter)) // 进入 Command 值编辑
 	for _, r := range "/bin/new" {
 		ft.sendKey(input.RuneKey(r, input.ModNone))
