@@ -1896,14 +1896,16 @@ func (m *AppModel) ScrollBottom() {
 }
 
 // AtScrollTop 报告消息区是否可以继续加载更早的一页（alkaid0 v0.6 历史回放分页）：
-// 正文确实超出一屏（MaxScroll > 0）、视口停在顶部、且没有正在进行的加载。
-// 是否还有更早的消息由调用方通过 backend 的分页游标判断（见 app.loadEarlierHistory）。
+// 视口停在已加载内容的顶部，且没有正在进行的加载。
+// 不以"正文超出一屏"为前提：折叠思考/工具后正文可能不再需要滚动（MaxScroll
+// 归零），但更早的历史仍然存在，此时同样要能自动续取。是否还有更早的消息由
+// 调用方通过 backend 的分页游标判断（见 app.loadEarlierHistory）。
 func (m *AppModel) AtScrollTop() bool {
 	if !m.HasActive() {
 		return false
 	}
 	s := m.Active
-	return s.Scroll == 0 && s.MaxScroll > 0 && !s.HistoryLoading
+	return s.Scroll == 0 && !s.HistoryLoading
 }
 
 // SetHistoryLoading 标记/解除"正在加载更早的历史"：开始时正文顶部显示提示、

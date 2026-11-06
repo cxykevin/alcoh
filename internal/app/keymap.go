@@ -1728,6 +1728,9 @@ func (a *App) clickBodyToggle(x, y int, rect renderer.Rect) bool {
 		return false
 	}
 	a.render()
+	// 折叠单项同样会减少正文行数：视口可能因此落到已加载内容的最顶部，
+	// 这里与 Ctrl+T/Ctrl+O 一样主动检查是否需要续取更早的历史。
+	a.maybeLoadEarlierHistory()
 	return true
 }
 
@@ -2200,6 +2203,10 @@ func (a *App) cycleBodyDetail() {
 		m.ShowInfo(i18n.T("已折叠全部思考与工具调用"))
 	}
 	a.render()
+	// 折叠会减少正文行数，视口往往因此落到已加载内容的最顶部（极端情况下
+	// 整段正文不再需要滚动）。此时用户没有新的滚动事件可用，必须在这里主动
+	// 检查一次，否则更早的历史不会自动续取。
+	a.maybeLoadEarlierHistory()
 }
 
 // handleCtrlC 处理 Ctrl+C：

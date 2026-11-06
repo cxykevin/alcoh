@@ -224,7 +224,7 @@ type SessionState struct {
 	// Scroll 由渲染层同步为当前最大滚动偏移。用户一旦手动滚动即解除。
 	FollowBottom bool
 	// MaxScroll 是最近一次渲染的最大滚动偏移（渲染层写入）；为 0 表示正文
-	// 不满一屏。滚动到顶时据此判断确实还有内容可看，避免误触发加载更早历史。
+	// 不满一屏。拖拽自动滚动据此判断是否还能向两端滚动。
 	MaxScroll int
 	// HistoryLoading 为 true 时正在加载更早的一页（alkaid0 v0.6 历史回放分页）：
 	// 正文顶部显示提示，同时阻止重复发起请求。

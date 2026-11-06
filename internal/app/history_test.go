@@ -15,6 +15,7 @@ import (
 	"github.com/cxykevin/alcoh/internal/demo"
 	"github.com/cxykevin/alcoh/internal/input"
 	"github.com/cxykevin/alcoh/internal/model"
+	"github.com/cxykevin/alcoh/internal/renderer"
 )
 
 // earlierBackend 包装 demo backend，统计"取更早一页"的请求次数。
@@ -245,21 +246,25 @@ func TestWheelAtTopLoadsEarlierHistory(t *testing.T) {
 	}
 }
 
-// TestScrollTopWithoutOverflowKeepsIdle 验证正文不满一屏（MaxScroll == 0）时
-// PgUp 与滚轮都不会发起翻页请求：没有更上面的内容可翻。
-func TestScrollTopWithoutOverflowKeepsIdle(t *testing.T) {
+// TestScrollTopWithoutOverflowLoadsEarlierHistory 验证正文不满一屏
+// （MaxScroll == 0）时，视口停在顶部继续上滚同样会续取更早一页：屏幕装得下
+// 已加载的内容不代表没有更早的历史（折叠思考/工具后就常处于这种状态）。
+// 第一次触发后加载中标记阻止重复请求。
+func TestScrollTopWithoutOverflowLoadsEarlierHistory(t *testing.T) {
 	b := &earlierBackend{Backend: demo.New(true)}
 	defer b.Close()
 	a := preparePagedSession(t, b)
 	a.model.Active.MaxScroll = 0
 
 	a.sessionKey(input.SimpleKey(input.KeyPageUp))
-	a.dispatchMouse(input.MouseEvent{Button: input.MouseWheelUp, Action: input.MousePress, X: 50, Y: 10})
-	if got := b.loadCount(); got != 0 {
-		t.Fatalf("earlier history requests = %d, want 0 without overflow", got)
+	if !a.model.Active.HistoryLoading {
+		t.Fatal("PgUp at the top should start loading earlier history")
 	}
-	if a.model.Active.HistoryLoading {
-		t.Error("no request should leave the loading flag set")
+	// 加载中再滚一次不会重复发起请求（后台 goroutine 只真正发出一次）。
+	a.dispatchMouse(input.MouseEvent{Button: input.MouseWheelUp, Action: input.MousePress, X: 50, Y: 10})
+	waitLoadCount(t, b, 1)
+	if got := b.loadCount(); got != 1 {
+		t.Fatalf("earlier history requests = %d, want 1 at the top without overflow", got)
 	}
 }
 
@@ -298,5 +303,37 @@ func TestEarlierHistoryPageRenderedBeforeResponseKeepsAnchor(t *testing.T) {
 	active.AdjustScrollForHistoryAnchor(active.Rows)
 	if got := active.Scroll; got != 20 {
 		t.Errorf("scroll = %d, want 20 after the response", got)
+	}
+}
+
+// TestCollapsedBodyAtTopLoadsEarlierHistory 验证折叠后视口落到已加载内容顶部时
+// 会自动续取更早一页：折叠减少了正文行数（可能整段正文都不再需要滚动），用户
+// 没有新的滚动事件可用，加载不能只依赖手动上滚。这里模拟「全部展开」档位在
+// 顶部折叠回正常档位（cycleBodyDetail 会先渲染再检查）。
+func TestCollapsedBodyAtTopLoadsEarlierHistory(t *testing.T) {
+	b := &earlierBackend{Backend: demo.New(true)}
+	defer b.Close()
+	a := preparePagedSession(t, b)
+	// cycleBodyDetail 会直接渲染，这里补上前后渲染缓冲（不经过 Run 的主循环）。
+	a.front = renderer.NewBuffer(100, 30)
+	a.back = renderer.NewBuffer(100, 30)
+	a.model.Active.Detail = model.DetailExpanded
+	a.model.Active.MaxScroll = 0 // 折叠后正文不再需要滚动
+
+	a.cycleBodyDetail()
+
+	if !a.model.Active.HistoryLoading {
+		t.Fatal("collapsing at the top should start loading earlier history")
+	}
+	waitLoadCount(t, b, 1)
+
+	res := waitHistoryCommand(t, a)
+	a.drain(b.Events())
+	a.applyCommandResult(res)
+	if a.model.Active.HistoryLoading {
+		t.Error("loading flag should be cleared when the page arrives")
+	}
+	if got := a.model.Active.Messages; len(got) == 0 || got[0].MessageID != "msg_91" {
+		t.Fatalf("first message = %v, want msg_91 (earlier page prepended)", got)
 	}
 }

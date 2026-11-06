@@ -42,7 +42,8 @@ func TestHistoryAnchorCompensatesInsertedLines(t *testing.T) {
 }
 
 // TestAtScrollTopGatesEarlierHistoryLoading 验证"继续取更早一页"的判定：
-// 需要活跃会话、正文确实超出一屏（MaxScroll > 0）、视口停在顶部、且不在加载中；
+// 需要活跃会话、视口停在已加载内容的顶部、且不在加载中。正文是否超出一屏
+// 不作为前提——折叠后正文可能不再需要滚动，但更早的历史仍然存在。
 // 加载开始置位并阻止重复触发，加载结束清位并记录锚点。
 func TestAtScrollTopGatesEarlierHistoryLoading(t *testing.T) {
 	m := New()
@@ -52,10 +53,9 @@ func TestAtScrollTopGatesEarlierHistoryLoading(t *testing.T) {
 	m.View = ViewSession
 	m.Active = NewSession("s1", "test")
 	s := m.Active
-	if m.AtScrollTop() {
-		t.Fatal("short body (MaxScroll = 0) must not trigger")
+	if !m.AtScrollTop() {
+		t.Fatal("viewport at the top should allow loading, even when the body fits the screen")
 	}
-	s.MaxScroll = 10
 	s.Scroll = 3
 	if m.AtScrollTop() {
 		t.Fatal("viewport scrolled into the body must not trigger")
@@ -90,7 +90,6 @@ func TestAtScrollTopGatesEarlierHistoryLoading(t *testing.T) {
 		t.Fatal("compensated viewport is no longer at the top")
 	}
 	s.Scroll = 0
-	s.MaxScroll = 40
 	if !m.AtScrollTop() {
 		t.Fatal("scrolling back to the top should allow the next page")
 	}
