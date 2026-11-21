@@ -71,6 +71,9 @@ func (a *App) dispatchKey(ke input.KeyEvent) {
 	case model.ModalTasks:
 		a.tasksKey(ke)
 		return
+	case model.ModalDirPicker:
+		a.dirPickerKey(ke)
+		return
 	case model.ModalServer:
 		a.serverConfigKey(ke)
 		return
@@ -134,6 +137,7 @@ func (a *App) swapInputStash() {
 	}
 	a.model.Input.SwapStash()
 	a.model.UpdateSlashState()
+	a.refreshAtCompletion()
 }
 
 func (a *App) homeKey(ke input.KeyEvent) {
@@ -200,6 +204,36 @@ func (a *App) homeKey(ke input.KeyEvent) {
 		}
 	}
 
+	// @ 文件引用补全（首页输入框同样可用）：↑↓ 移动、Tab/Enter 补全、Esc 关闭。
+	// 选中项变化时同步换预览文件（refreshAtPreview 内部按路径去重）。
+	if m.AtOpen {
+		switch ke.Type {
+		case input.KeyUp:
+			m.AtMove(-1)
+			a.refreshAtPreview()
+			return
+		case input.KeyDown:
+			m.AtMove(1)
+			a.refreshAtPreview()
+			return
+		case input.KeyTab:
+			if m.CompleteAt() {
+				a.refreshAtCompletion()
+			}
+			return
+		case input.KeyEnter:
+			if _, ok := m.AtSelectedEntry(); ok {
+				m.CompleteAt()
+				a.refreshAtCompletion()
+				return
+			}
+			m.CloseAt()
+		case input.KeyEsc:
+			m.CloseAt()
+			return
+		}
+	}
+
 	// 输入框内按左键（光标在行首时）：显示并全屏聚焦会话列表。
 	if !m.HomeListFocused && !m.SlashOpen && ke.Type == input.KeyLeft && !ke.IsAlt() && !ke.IsCtrl() && m.Input.CX == 0 && m.Input.CY == 0 {
 		m.HomeListFocused = true
@@ -228,6 +262,7 @@ func (a *App) homeKey(ke input.KeyEvent) {
 	ib := &widget.InputBox{Buf: m.Input, Style: a.view.Theme.Style(a.view.Theme.Text)}
 	if ib.OnKey(ke) {
 		m.UpdateSlashState()
+		a.refreshAtCompletion()
 		return
 	}
 	switch {
@@ -448,6 +483,36 @@ func (a *App) sessionKey(ke input.KeyEvent) {
 			return
 		}
 	}
+	// @ 文件引用补全：↑↓ 移动、Tab/Enter 补全、Esc 关闭。Enter 只在有选中项
+	// 时拦截（补全而不是提交），无匹配时放行给普通提交，避免无法发送。
+	// 选中项变化时同步换预览文件（refreshAtPreview 内部按路径去重）。
+	if m.AtOpen {
+		switch ke.Type {
+		case input.KeyUp:
+			m.AtMove(-1)
+			a.refreshAtPreview()
+			return
+		case input.KeyDown:
+			m.AtMove(1)
+			a.refreshAtPreview()
+			return
+		case input.KeyTab:
+			if m.CompleteAt() {
+				a.refreshAtCompletion()
+			}
+			return
+		case input.KeyEnter:
+			if _, ok := m.AtSelectedEntry(); ok {
+				m.CompleteAt()
+				a.refreshAtCompletion()
+				return
+			}
+			m.CloseAt()
+		case input.KeyEsc:
+			m.CloseAt()
+			return
+		}
+	}
 	// Shell panel owns Esc: fullscreen -> split panel -> session.
 	if m.ShellPanel {
 		switch ke.Type {
@@ -546,6 +611,7 @@ func (a *App) sessionKey(ke input.KeyEvent) {
 			ib := &widget.InputBox{Buf: m.Input, Style: a.view.Theme.Style(a.view.Theme.Text)}
 			if ib.OnKey(ke) {
 				m.UpdateSlashState()
+				a.refreshAtCompletion()
 			}
 			return
 		case input.KeyDown:
@@ -643,6 +709,7 @@ func (a *App) sessionKey(ke input.KeyEvent) {
 	ib := &widget.InputBox{Buf: m.Input, Style: a.view.Theme.Style(a.view.Theme.Text)}
 	if ib.OnKey(ke) {
 		m.UpdateSlashState()
+		a.refreshAtCompletion()
 		return
 	}
 	switch {
@@ -681,6 +748,94 @@ func (a *App) completeSlash() {
 	a.model.UpdateSlashState()
 }
 
+// refreshAtCompletion 在输入框内容/光标变化后刷新 @ 文件引用选择框，并在
+// 当前目录尚未加载时异步请求 fs/read。同一目录的请求在飞行期间不重复发送
+// （atInflight 去重），结果由 applyCommandResult 的 commandAtList 分支应用。
+// 选中项变化时同时刷新文件预览（见 refreshAtPreview）。
+func (a *App) refreshAtCompletion() {
+	m := a.model
+	m.UpdateAtState()
+	if !m.AtOpen {
+		m.ClearAtPreview()
+		return
+	}
+	a.refreshAtPreview()
+	if !m.AtLoading {
+		return
+	}
+	dir := m.AtDir
+	sessionID := ""
+	if a.sess != nil {
+		sessionID = a.sess.ID()
+	}
+	if a.atInflight[sessionID+"\x00"+dir] {
+		return
+	}
+	a.loadAtEntries(dir)
+}
+
+// refreshAtPreview 加载 @ 选择框当前选中文件的预览（fs/read 前
+// model.PreviewMaxBytes 字节）。目录或不支持文件系统的服务端不请求；同一文件
+// 已加载/加载中时不重复发送（atInflight 去重，结果由 commandAtPreview 分支应用）。
+func (a *App) refreshAtPreview() {
+	m := a.model
+	path, ok := m.AtSelectedPath()
+	if !ok {
+		m.ClearAtPreview()
+		return
+	}
+	if path == m.AtPreviewPath {
+		return
+	}
+	if a.sess == nil {
+		return
+	}
+	control, ok := a.sess.(acp.FSControl)
+	if !ok {
+		return
+	}
+	sessionID := a.sess.ID()
+	key := sessionID + "\x00preview\x00" + path
+	if a.atInflight[key] {
+		return
+	}
+	if a.atInflight == nil {
+		a.atInflight = make(map[string]bool)
+	}
+	a.atInflight[key] = true
+	m.BeginAtPreview(path)
+	a.startCommandResult(commandResult{kind: commandAtPreview, sessionID: sessionID, atPreviewPath: path}, func(ctx context.Context, result *commandResult) error {
+		content, err := control.ReadFile(ctx, path, model.PreviewMaxBytes)
+		result.atPreview = content
+		return err
+	})
+}
+
+// loadAtEntries 发起一次目录列举请求。服务端不实现 FSControl（如 demo
+// backend）时直接把错误交给模型，选择框显示提示而不是反复重试。
+func (a *App) loadAtEntries(dir string) {
+	if a.sess == nil {
+		return
+	}
+	control, ok := a.sess.(acp.FSControl)
+	if !ok {
+		a.model.ApplyAtEntries(dir, nil, fmt.Errorf("%s", i18n.T("当前服务端不支持浏览文件")))
+		return
+	}
+	if a.atInflight == nil {
+		a.atInflight = make(map[string]bool)
+	}
+	sessionID := a.sess.ID()
+	// 去重键与 applyCommandResult 的清除键一致（"会话 + 目录"），否则同一目录
+	// 的请求在飞行期间不会被拦截，每个按键都会重复发送 fs/read。
+	a.atInflight[sessionID+"\x00"+dir] = true
+	a.startCommandResult(commandResult{kind: commandAtList, sessionID: sessionID, atDir: dir}, func(ctx context.Context, result *commandResult) error {
+		entries, err := control.ListDir(ctx, dir)
+		result.atEntries = entries
+		return err
+	})
+}
+
 // tryLocalSlashCommand 若首个 token 恰好匹配本地命令则执行，返回是否已处理。
 // 命令提交（回车）后把暂存区内容回填到输入框，与普通 prompt 提交一致。
 func (a *App) tryLocalSlashCommand() bool {
@@ -704,6 +859,10 @@ func (a *App) runLocalSlashCommand() bool {
 		m.Input.Clear()
 		m.CloseSlash()
 		m.SetModal(model.ModalHelp)
+	case "/cd":
+		m.Input.Clear()
+		m.CloseSlash()
+		a.dirCommand(rest)
 	case "/effort":
 		m.Input.Clear()
 		m.CloseSlash()
@@ -1573,6 +1732,14 @@ func (a *App) dispatchMouse(me input.MouseEvent) {
 			m.TasksScrollBy(1)
 		}
 		return
+	case model.ModalDirPicker:
+		// 滚轮移动目录选择器当前聚焦栏的选中项。
+		if me.Button == input.MouseWheelUp {
+			m.DirPickerMove(-1)
+		} else if me.Button == input.MouseWheelDown {
+			m.DirPickerMove(1)
+		}
+		return
 	case model.ModalServer:
 		ed := m.ServerCfg
 		if ed == nil || ed.Editing || ed.AddingKey {
@@ -2234,6 +2401,7 @@ func (a *App) handleCtrlC() {
 	if m.Input != nil && m.Input.Text() != "" {
 		m.Input.Clear()
 		m.UpdateSlashState()
+		a.refreshAtCompletion()
 		a.lastCtrlCAt = time.Time{}
 		m.ClearError()
 		return

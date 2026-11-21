@@ -189,6 +189,7 @@ agent 经 `run` 工具启动的终端会实时推送到 shells 面板（仅当�
 - `/alcoh_help`：显示命令帮助（输入框为空时按 `?` 亦可）
 - `/connect`：**连接模型服务商向导**——内置服务商模板（DeepSeek / OpenAI / OpenCode Go / Moonshot / GLM / Qwen / S3AI / 自定义）自动预填 base_url，填 API key 后自动调用服务商 `/models` 接口拉取模型列表，选择模型即写入服务端配置（自动分配模型键并设为默认）。仅当服务端声明 alkaid0 扩展能力时可用
 - `/clear [on]`：返回主页会话列表并重新拉取列表（无需再按 `r` 手动刷新）；默认先取消正在运行的会话，`on` 不取消直接返回
+- `/cd [路径]`：**切换工作区目录**（只影响之后新建的会话，仅主页可用）。无参数打开双栏目录选择器：起点是逻辑根「最近使用」，其右栏依次是本机用户主目录（`/home/<user>`，仅当服务端与本机同机时显示）、系统根 `/`，随后是最近使用目录——系统根是逻辑根的下级目录，左栏留空；进入系统根后左栏变成逻辑根列表，其他目录的左栏是上一级目录的子目录。`↑↓` 选择、`Tab` 切换栏、`Enter` 进入、`←` 上级（系统根回逻辑根）、`s`/空格选中当前目录、`n` 新建文件夹、`/` 跳转路径、`Esc` 关闭。带参数时先经 `fs/read` 确认目标可列举，再直接切换。目录浏览与新建均走服务端 alkaid0 扩展（`fs/read`、`fs/mkdir`，新建时临时开一个以目标目录为 cwd 的会话并在完成后关闭）；最近使用目录直接读写 alcoh 本机的 `dir.history` 文件（按连接 URL 分桶、去重），每次启动都会把当前工作区写入其中；列表同时显示目录与文件（目录黄色、文件普通文字色，只有目录能被回车进入），默认隐藏 `.` 开头的隐藏项，按 `h` 切换显示（`.alkaid0`、`.git` 始终排除）
 - `/effort [unset|low|medium|high|xhigh|max]`：设置推理强度。带参数直接经 `session/set_config_option` 写 `thought_level`；无参数弹出水平滑条（←→ 移动、Enter 确认、Esc 取消）。仅当 agent 公布 `thought_level` config 时可用
 - `/model [value]`：切换模型。带参数直接经 `session/set_config_option`（`type=id`）写模型；无参数弹出垂直模型菜单（↑↓/滚轮 选择、Enter 确认、Esc 取消）。仅当 agent 公布 `category="model"`（或 `configId="model"`）config 时可用；候选值与当前值均取自服务端公布的 `options`/`currentValue`
 - `/settings`：本地设置（`Ctrl+,` 亦可），切换 `colorMode` 等选项并即时保存

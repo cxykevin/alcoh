@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -76,12 +77,7 @@ func (t *reconnectTransport) fail(err error) {
 func (t *reconnectTransport) sent(method string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	for _, m := range t.requests {
-		if m == method {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(t.requests, method)
 }
 
 // scriptedInitialize 让 transport 把 initialize 握手回成成功。

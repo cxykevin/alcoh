@@ -71,6 +71,9 @@ const (
 	// ModalTasks /tasks AI 任务列表面板：滚动查看 alkaid0 task 工具维护的完整
 	// 任务列表（服务端经 plan_update 全量推送，见 model/tasks.go）。
 	ModalTasks
+	// ModalDirPicker /cd 目录选择器：左栏是当前目录的上一级（根目录时是
+	// 常用目录），右栏是当前目录；全程经 ACP fs/read 浏览服务端文件系统。
+	ModalDirPicker
 )
 
 // Focus 表示会话视图的焦点区域。
@@ -127,6 +130,27 @@ type AppModel struct {
 	SlashSelected int
 	LocalCommands []string
 
+	// AtOpen 表示输入框的 @ 文件引用选择框是否展开；AtSelected 是过滤后列表的
+	// 选中索引；AtDir/AtPrefix 是 "@dir/prefix" 输入里的目标目录与过滤前缀。
+	// AtEntries 是 AtLoadedDir 目录的条目（由 app 经 fs/read 异步加载），
+	// AtError 非空时选择框展示错误而不是列表。
+	AtOpen      bool
+	AtSelected  int
+	AtDir       string
+	AtPrefix    string
+	AtEntries   []AtEntry
+	AtLoadedDir string
+	AtLoaded    bool
+	AtLoading   bool
+	AtError     string
+
+	// AtPreview* 是选中文件的预览（只读前 1024 字节，客户端按文件名高亮）。
+	// AtPreviewPath 是已加载预览的文件相对路径；选中目录或列表关闭时清空。
+	AtPreviewPath    string
+	AtPreview        string
+	AtPreviewErr     string
+	AtPreviewLoading bool
+
 	// PluginCommands 是插件注册的斜杠命令（"/" 规范化后，如 "/hello"），
 	// 由 app 在插件握手成功后写入（见 app.pluginHost）。
 	PluginCommands []string
@@ -163,6 +187,11 @@ type AppModel struct {
 	// 任务行数（视图绘制时写入，用于 PgUp/PgDn 翻页）。
 	TasksScroll int
 	TasksRows   int
+	// DirPicker 是 /cd 目录选择器状态；nil 表示未打开。
+	DirPicker *DirPickerState
+	// ignoredSessions 记录为临时操作（如 /cd 新建文件夹时的临时会话）建立的
+	// 会话 ID：这些会话的事件直接丢弃，不进入 pendingSessionEvents。
+	ignoredSessions map[string]bool
 	// QueueFocused 表示输入框上方的排队框是否获得焦点：存在排队项时按 ↑ 进入，
 	// 此时 ↑↓ 在队列内移动、Tab/空格/i 编辑、Backspace/Delete 删除。
 	QueueFocused bool
@@ -234,9 +263,10 @@ func New() *AppModel {
 		HomeSelected:         -1,
 		HomeListFocused:      false,
 		Input:                widget.NewInputBuffer(),
-		LocalCommands:        []string{"/alcoh_help", "/clear", "/settings", "/plugins"},
+		LocalCommands:        []string{"/alcoh_help", "/cd", "/clear", "/settings", "/plugins"},
 		Settings:             config.Defaults(),
 		pendingSessionEvents: map[string][]acp.Event{},
+		ignoredSessions:      map[string]bool{},
 	}
 }
 
@@ -290,6 +320,7 @@ type SlashCommandInfo struct {
 
 var localSlashCommandInfo = map[string]SlashCommandInfo{
 	"/alcoh_help": {Name: "/alcoh_help", Description: "打开帮助"},
+	"/cd":         {Name: "/cd", Description: "切换工作区目录（空参打开目录选择器）", ArgsHint: "[路径]"},
 	"/connect":    {Name: "/connect", Description: "连接模型服务商（模板自动填 base_url，填 key 拉取模型列表）"},
 	"/effort":     {Name: "/effort", Description: "设置推理强度", ArgsHint: "[unset|low|medium|high|xhigh|max]"},
 	"/model":      {Name: "/model", Description: "切换模型"},
@@ -398,7 +429,7 @@ func (m *AppModel) SlashCompletion() (ghost, description string) {
 // 未列入硬编码列表的 agent 命令优先级为 0。
 func slashCommandPriority(command string) int {
 	switch command {
-	case "/alcoh_help", "/connect", "/effort", "/clear", "/settings", "/server", "/plugins", "/rewind", "/queue", "/cron", "/goal", "/tasks", "/background":
+	case "/alcoh_help", "/cd", "/connect", "/effort", "/clear", "/settings", "/server", "/plugins", "/rewind", "/queue", "/cron", "/goal", "/tasks", "/background":
 		return 1
 	default:
 		return 0
@@ -865,13 +896,7 @@ func (m *AppModel) ScrollShellPreview(delta int) {
 		return
 	}
 	maxScroll := max(s.ScreenRows-m.ShellPreviewHeight(), 0)
-	next := s.Scroll + delta
-	if next < 0 {
-		next = 0
-	}
-	if next > maxScroll {
-		next = maxScroll
-	}
+	next := min(max(s.Scroll+delta, 0), maxScroll)
 	s.Scroll = next
 	s.FollowBottom = next == 0
 }
@@ -1138,6 +1163,10 @@ func (m *AppModel) TakeRewindOutcome() *RewindOutcome {
 
 // ApplyEvent 应用一个后端事件。
 func (m *AppModel) ApplyEvent(ev acp.Event) {
+	// 临时会话（/cd 新建文件夹时建立）的事件直接丢弃，不进入激活队列。
+	if id := eventSessionID(ev); id != "" && m.ignoredSessions[id] {
+		return
+	}
 	// 带 sessionId 的事件若不属于当前活动会话（尚未激活，或属于后台会话），
 	// 先缓存待会话激活后重放，避免 agent 在 session/new 响应前广播的
 	// available_commands / config_option 等初始元数据被丢弃。
@@ -1462,6 +1491,20 @@ func (m *AppModel) ClearPreSession() {
 
 // DropPendingEvents 丢弃指定会话未激活时缓存的事件（会话已被删除，不再激活）。
 func (m *AppModel) DropPendingEvents(id string) {
+	delete(m.pendingSessionEvents, id)
+}
+
+// IgnoreSession 丢弃指定会话之后到达的所有事件，并清掉已经缓存的待激活事件。
+// 用于 /cd 新建文件夹时建立的临时会话：它只为发一次 fs/mkdir，不应进入正文
+// 或 pendingSessionEvents。会话 ID 唯一，登记后无需移除。
+func (m *AppModel) IgnoreSession(id string) {
+	if id == "" {
+		return
+	}
+	if m.ignoredSessions == nil {
+		m.ignoredSessions = make(map[string]bool)
+	}
+	m.ignoredSessions[id] = true
 	delete(m.pendingSessionEvents, id)
 }
 

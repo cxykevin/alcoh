@@ -57,10 +57,7 @@ func (re *RuleEditor) Draw(c *renderer.Canvas, r renderer.Rect) {
 
 	bodyY := r.Y + 2
 	footerY := r.Y + r.H - 1
-	bodyH := footerY - bodyY
-	if bodyH < 0 {
-		bodyH = 0
-	}
+	bodyH := max(footerY-bodyY, 0)
 
 	// 右侧文档栏：窄屏隐藏（ruleDocMinWidth 以下），并保证代码区至少
 	// 还有 48 列可用。
@@ -83,10 +80,7 @@ func (re *RuleEditor) Draw(c *renderer.Canvas, r renderer.Rect) {
 	digits := max(len(strconv.Itoa(len(lines))), 2)
 	gutterW := 1 + digits + 3 // "  1 │ "
 	codeX := r.X + gutterW
-	codeW := editorW - gutterW
-	if codeW < 1 {
-		codeW = 1
-	}
+	codeW := max(editorW-gutterW, 1)
 
 	cursorCol := renderer.StringWidth(ruleExpandPrefix(lines[buf.CY], buf.CX))
 	hoff := 0
@@ -124,10 +118,7 @@ func (re *RuleEditor) Draw(c *renderer.Canvas, r renderer.Rect) {
 	}
 
 	if bodyH > 0 && buf.CY >= start && buf.CY < start+bodyH {
-		cx := codeX + cursorCol - hoff
-		if cx < codeX {
-			cx = codeX
-		}
+		cx := max(codeX+cursorCol-hoff, codeX)
 		if maxX := codeX + codeW - 1; cx > maxX {
 			cx = maxX
 		}
@@ -314,10 +305,7 @@ func drawRuleSpans(c *renderer.Canvas, x, y, width, skip int, spans []Span, bg r
 			}
 			if col < skip {
 				// 跳过位置落在宽字符中间：用空格补齐剩余列。
-				pad := col + rw - skip
-				if pad > left {
-					pad = left
-				}
+				pad := min(col+rw-skip, left)
 				if pad > 0 {
 					c.PutText(x, y, strings.Repeat(" ", pad), st)
 					x += pad
@@ -443,10 +431,7 @@ func exprSpans(text string, t renderer.Theme) []Span {
 			for j+1 < len(rs) && !(rs[j] == '*' && rs[j+1] == '/') {
 				j++
 			}
-			end := j + 2
-			if end > len(rs) {
-				end = len(rs)
-			}
+			end := min(j+2, len(rs))
 			add(string(rs[i:end]), t.Style(t.TextMuted).WithItalic(true))
 			i = end
 		case r == '"' || r == '\'' || r == '`':

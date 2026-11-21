@@ -1,6 +1,7 @@
 package widget
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/cxykevin/alcoh/internal/acp"
@@ -248,10 +249,8 @@ func (b *InputBuffer) allocImageToken() (rune, bool) {
 
 func (b *InputBuffer) containsRune(target rune) bool {
 	for _, line := range b.Lines {
-		for _, r := range line {
-			if r == target {
-				return true
-			}
+		if slices.Contains(line, target) {
+			return true
 		}
 	}
 	return false
@@ -684,6 +683,39 @@ func (b *InputBuffer) VisualHeight(width, promptW int) int {
 		return 1
 	}
 	return height
+}
+
+// ReplaceRangeOnLine 替换 row 行 [start,end) 区间的文本，光标移到替换文本末尾。
+// 越界参数会被夹到合法范围；整个替换作为单次 undo 记录。供 @ 文件引用补全
+// 精确替换光标处的 token（token 不一定在行首，也不一定在首行）。
+func (b *InputBuffer) ReplaceRangeOnLine(row, start, end int, text string) {
+	if row < 0 || row >= len(b.Lines) {
+		return
+	}
+	line := b.Lines[row]
+	if start < 0 {
+		start = 0
+	}
+	if start > len(line) {
+		start = len(line)
+	}
+	if end < start {
+		end = start
+	}
+	if end > len(line) {
+		end = len(line)
+	}
+	repl := []rune(text)
+	b.edit(func(x *InputBuffer) {
+		current := x.Lines[row]
+		next := make([]rune, 0, len(current)-(end-start)+len(repl))
+		next = append(next, current[:start]...)
+		next = append(next, repl...)
+		next = append(next, current[end:]...)
+		x.Lines[row] = next
+		x.CY = row
+		x.CX = start + len(repl)
+	})
 }
 
 // ReplaceFirstToken 用 replacement 替换首行首个空白之前的 token。

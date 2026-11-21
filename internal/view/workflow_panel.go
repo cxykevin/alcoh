@@ -87,13 +87,7 @@ func workflowPaneHeight(height int) int {
 	if height < 6 {
 		return 0
 	}
-	paneHeight := height / 3
-	if paneHeight < 4 {
-		paneHeight = 4
-	}
-	if paneHeight > height-3 {
-		paneHeight = height - 3
-	}
+	paneHeight := min(max(height/3, 4), height-3)
 	return paneHeight
 }
 
@@ -515,7 +509,7 @@ func (p *ShellPanel) workflowScrollbar(c *renderer.Canvas, inner renderer.Rect, 
 // 前缀），随后是节点线程的输出行。resultLines 是结果行数，用于区分文字样式。
 func workflowNodeOutput(node *model.WorkflowNode) (lines []string, resultLines int) {
 	if node.Result != "" {
-		for _, line := range strings.Split(strings.TrimRight(node.Result, "\n"), "\n") {
+		for line := range strings.SplitSeq(strings.TrimRight(node.Result, "\n"), "\n") {
 			lines = append(lines, "→ "+line)
 		}
 		resultLines = len(lines)

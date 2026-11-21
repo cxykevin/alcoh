@@ -46,8 +46,15 @@ type App struct {
 	// discardPre 为 true 表示 discardPreSession 已在后台发起删除预创建会话。其
 	// 删除响应不应触发重建（用户正在进入真实会话）；只有用户主动按 d 删除会话
 	// 后仍停留在主页时才重建。
-	discardPre    bool
-	workdir       string // 新建会话的工作目录（绝对路径；空表示未指定）
+	discardPre bool
+	workdir    string // 新建会话的工作目录（绝对路径；空表示未指定）
+	// dirHistoryKey 是 /cd 常用目录的存储分桶（按连接 URL；默认 localhost）。
+	dirHistoryKey string
+	// localHome 是本机用户主目录：仅当连接指向本机时非空，/cd 逻辑根把它
+	// 固定在第一项；远程连接为空（对端机器上没有这个目录）。
+	localHome string
+	// dirPicker 是当前打开的目录选择器控制器；nil 表示未打开。
+	dirPicker     *dirPickerController
 	initialRender bool
 	commands      chan commandResult
 	runCtx        context.Context
@@ -132,6 +139,11 @@ type App struct {
 	// queueEdit 表示正在编辑一条排队项：输入框回车提交时走 msgqueue/update，
 	// 而不是发送新 prompt（见 startQueueEdit / submitQueueEdit）。
 	queueEdit *msgQueueEdit
+
+	// atInflight 记录正在请求中的 @ 文件引用目录（目录 → true）。输入框每个
+	// 按键都会刷新补全状态并可能要求加载当前目录，没有这个去重会重复发送
+	// fs/read 请求。
+	atInflight map[string]bool
 }
 
 // msgQueueEdit 是 /queue 面板里正在编辑的排队项。
@@ -166,6 +178,17 @@ const (
 	commandCronDelete
 	commandGoalSet
 	commandBackgroundGet
+	// commandAtList 是输入框 @ 文件引用补全的目录列举请求
+	// （alk.cxykevin.top/fs/read）。
+	commandAtList
+	// commandAtPreview 是 @ 选择框选中文件的预览读取请求（只读前 1024 字节）。
+	commandAtPreview
+	// commandDirList 是目录选择器的一次目录列举（fs/read 绝对路径）。
+	commandDirList
+	// commandDirJump 是目录选择器的路径跳转校验（先列举目标确认是目录）。
+	commandDirJump
+	// commandDirMkdir 是通过临时会话执行 fs/mkdir 的新建文件夹请求。
+	commandDirMkdir
 )
 
 type commandResult struct {
@@ -183,7 +206,23 @@ type commandResult struct {
 	cronID     uint32
 	// background 是 get_background 的查询结果（commandBackgroundGet）。
 	background bool
-	err        error
+	// atDir/atEntries 是 @ 文件引用补全的目录列举结果（commandAtList）。
+	atDir     string
+	atEntries []acp.FSDirEntry
+	// atPreviewPath/atPreview 是选中文件的预览读取结果（commandAtPreview）。
+	atPreviewPath string
+	atPreview     string
+	// dir* 是目录选择器请求/结果（commandDirList / commandDirJump /
+	// commandDirMkdir）：dirSeq 用于丢弃切换目录后晚回的旧结果，
+	// dirSide 区分左右栏，dirDirect 表示 /cd <path> 的直达校验。
+	dirSeq        uint64
+	dirSide       int
+	dirPath       string
+	dirPrefer     string
+	dirDirect     bool
+	dirEntries    []model.DirEntry
+	tempSessionID string
+	err           error
 }
 
 type sessionPageResult struct {
@@ -217,6 +256,20 @@ func NewWithConfig(t term.Terminal, b acp.Backend, values config.Values) *App {
 // 未设置时回退到 "."，保持历史行为。
 func (a *App) SetWorkdir(dir string) {
 	a.workdir = dir
+}
+
+// SetDirHistoryKey 设置 /cd 常用目录的存储分桶（按连接 URL；空时用 localhost）。
+func (a *App) SetDirHistoryKey(key string) {
+	if key == "" {
+		key = "localhost"
+	}
+	a.dirHistoryKey = key
+}
+
+// SetLocalHome 设置本机用户主目录：仅当连接指向本机时传入，/cd 逻辑根把它
+// 固定为第一项；远程连接调用方传空串（对端机器上没有这个目录）。
+func (a *App) SetLocalHome(dir string) {
+	a.localHome = dir
 }
 
 // SetOnboardingEnabled 启停新手引导触发判断。main 在未指定 backend 参数
@@ -470,6 +523,38 @@ type modelSnapshot struct {
 	TaskEntries int
 	TasksScroll int
 	TasksRows   int
+
+	// 输入框 @ 文件引用补全（见 model/at_complete.go）与当前输入文本，
+	// 供测试轮询加载与补全结果。
+	InputText string
+	AtOpen    bool
+	AtDir     string
+	AtPrefix  string
+	AtLoading bool
+	AtEntries []model.AtEntry
+	// 选中文件的预览状态（commandAtPreview）。
+	AtPreviewPath    string
+	AtPreview        string
+	AtPreviewErr     string
+	AtPreviewLoading bool
+
+	// 目录选择器（/cd）与工作区快照，供测试轮询列表、焦点与输入态。
+	Workdir           string
+	DirPickerOpen     bool
+	DirPickerDir      string
+	DirPickerRoot     string
+	DirPickerFocus    model.DirPickerFocus
+	DirPickerLeft     []model.DirEntry
+	DirPickerRight    []model.DirEntry
+	DirPickerSel      int
+	DirPickerLeftSel  int
+	DirPickerRightSel int
+	DirPickerEdit     model.DirPickerEdit
+	DirPickerErr      string
+	DirPickerLoading  bool
+
+	// Error 是底部提示（错误/信息）文本，供 /cd 失败提示断言。
+	Error string
 }
 
 // snapshot 返回当前模型状态快照，供测试在应用运行期间安全轮询。
@@ -537,6 +622,34 @@ func (a *App) snapshot() modelSnapshot {
 		s.TaskEntries = len(a.model.TaskEntries())
 		s.TasksScroll = a.model.TasksScroll
 		s.TasksRows = a.model.TasksRows
+	}
+	if a.model.Input != nil {
+		s.InputText = a.model.Input.Text()
+	}
+	s.AtOpen = a.model.AtOpen
+	s.AtDir = a.model.AtDir
+	s.AtPrefix = a.model.AtPrefix
+	s.AtLoading = a.model.AtLoading
+	s.AtEntries = append([]model.AtEntry(nil), a.model.AtEntries...)
+	s.AtPreviewPath = a.model.AtPreviewPath
+	s.AtPreview = a.model.AtPreview
+	s.AtPreviewErr = a.model.AtPreviewErr
+	s.AtPreviewLoading = a.model.AtPreviewLoading
+	s.Error = a.model.Error
+	s.Workdir = a.workdir
+	if p := a.model.DirPicker; p != nil {
+		s.DirPickerOpen = true
+		s.DirPickerDir = p.Dir
+		s.DirPickerRoot = p.Root
+		s.DirPickerFocus = p.Focus
+		s.DirPickerLeft = append([]model.DirEntry(nil), p.Left...)
+		s.DirPickerRight = append([]model.DirEntry(nil), p.Right...)
+		s.DirPickerSel = *p.FocusedSelected()
+		s.DirPickerLeftSel = p.LeftSel
+		s.DirPickerRightSel = p.RightSel
+		s.DirPickerEdit = p.Editing
+		s.DirPickerErr = p.Err
+		s.DirPickerLoading = p.Loading
 	}
 	return s
 }
@@ -979,6 +1092,61 @@ func (a *App) applyCommandResult(result commandResult) {
 		// 终端不是 workflow（run 已过期或类型不符）时失败无需打扰用户。
 		return
 	}
+	if result.kind == commandAtList {
+		// @ 文件引用补全：目录条目只对当前会话的当前目录有意义。飞行标记按
+		// “会话 + 目录”区分，先清掉再判断会话，避免旧会话的同名目录请求残留
+		// 阻塞新会话的加载；旧目录（打字过快、导航到别的目录）的结果由模型
+		// 按 dir 忽略。
+		delete(a.atInflight, result.sessionID+"\x00"+result.atDir)
+		if result.sessionID != "" && (a.sess == nil || a.sess.ID() != result.sessionID) {
+			return
+		}
+		entries := make([]model.AtEntry, 0, len(result.atEntries))
+		for _, entry := range result.atEntries {
+			entries = append(entries, model.AtEntry{Name: entry.Name, IsDir: entry.Type == "directory"})
+		}
+		a.model.ApplyAtEntries(result.atDir, entries, result.err)
+		// 目录结果刷新后选中项可能变成文件：补一次预览加载（目录第一条会
+		// 被自动选中，等用户按 ↓ 才看到预览的话右侧分栏会一直空着）。
+		a.refreshAtPreview()
+		return
+	}
+	if result.kind == commandAtPreview {
+		// 预览只对当前选中的文件有意义：飞行标记按“会话 + 预览 + 路径”清掉，
+		// 旧会话或旧文件的结果由模型按当前选中项忽略（见 ApplyAtPreview）。
+		delete(a.atInflight, result.sessionID+"\x00preview\x00"+result.atPreviewPath)
+		if result.sessionID != "" && (a.sess == nil || a.sess.ID() != result.sessionID) {
+			return
+		}
+		a.model.ApplyAtPreview(result.atPreviewPath, result.atPreview, result.err)
+		return
+	}
+	if result.kind == commandDirList {
+		a.applyDirListResult(result)
+		return
+	}
+	if result.kind == commandDirJump {
+		if result.dirDirect {
+			// /cd <path>：经 fs/read 确认是目录后直接切换工作区。
+			if result.err != nil {
+				a.model.ShowError(i18n.T("无法切换到该目录: %s", result.err.Error()))
+				return
+			}
+			if a.model.View != model.ViewHome {
+				a.model.ShowError(i18n.T("会话中不能切换工作目录，请先返回主页"))
+				return
+			}
+			config.RecordDirHistory(a.dirHistoryKey, result.dirPath)
+			a.applyWorkspace(result.dirPath)
+			return
+		}
+		a.applyDirJumpResult(result)
+		return
+	}
+	if result.kind == commandDirMkdir {
+		a.applyDirMkdirResult(result)
+		return
+	}
 	if result.kind == commandMsgQueueList {
 		// 全量快照只在仍是同一会话时应用；revision 由模型判新旧，丢弃乱序晚回
 		// 的旧快照。会话已切换时旧队列内容不应污染当前面板。
@@ -1069,16 +1237,22 @@ func (a *App) applyCommandResult(result commandResult) {
 			a.discardPre = false
 			return
 		}
+		cleanup := a.discardPre
+		a.discardPre = false
 		a.model.DropPendingEvents(result.sessionID)
 		a.model.RemoveSession(result.sessionID)
+		// discardPreSession 的删除是进入真实会话/切换工作区时的内部清理，
+		// 不是用户主动删除：不提示"会话已删除"（否则会盖掉"已切换工作目录"
+		// 等真正给用户看的提示），也不重建预创建会话。
+		if cleanup {
+			return
+		}
 		a.model.ShowInfo(i18n.T("会话已删除"))
 		// 删除的是当前活动会话时 RemoveSession 已回主页；回到主页需重建预创建
-		// 会话，使 /effort 与 /model 在命令面板继续可用。但 discardPreSession 清理
-		// 的删除（用户正在进入真实会话）不重建，等 goHome 时再创建。
-		if !a.discardPre && a.model.View == model.ViewHome {
+		// 会话，使 /effort 与 /model 在命令面板继续可用。
+		if a.model.View == model.ViewHome {
 			a.ensurePreSessionLocked()
 		}
-		a.discardPre = false
 		return
 	}
 	if result.kind == commandSession && result.opID != a.sessionOpID {
@@ -1134,6 +1308,22 @@ func (a *App) startCommand(result commandResult, fn func(context.Context) (acp.S
 		session, err := fn(ctx)
 		result.session = session
 		result.err = err
+		select {
+		case a.commands <- result:
+		case <-ctx.Done():
+		}
+	})
+}
+
+// startCommandResult 与 startCommand 相同，但允许后台函数直接填充结果字段
+// （如目录条目列表），适用于一次请求返回多个数据字段的场景。
+func (a *App) startCommandResult(result commandResult, fn func(context.Context, *commandResult) error) {
+	if a.runCtx == nil {
+		return
+	}
+	ctx := a.runCtx
+	a.commandWG.Go(func() {
+		result.err = fn(ctx, &result)
 		select {
 		case a.commands <- result:
 		case <-ctx.Done():

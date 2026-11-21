@@ -33,10 +33,7 @@ func (p *SlashPanel) Draw(c *renderer.Canvas, r renderer.Rect, m *model.AppModel
 			break
 		}
 	}
-	visible := min(slashVisibleCommands, len(commands))
-	if visible > r.H {
-		visible = r.H
-	}
+	visible := min(min(slashVisibleCommands, len(commands)), r.H)
 	if visible < 1 {
 		return
 	}

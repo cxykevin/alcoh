@@ -46,10 +46,7 @@ func (p *ShellPanel) Draw(c *renderer.Canvas, r renderer.Rect, m *model.AppModel
 	}
 	// 列表顺序由模型保证：前 activeCount 个是活跃 shell，其余是历史 shell；
 	// 两段内部都是"新的在上"。
-	activeCount := len(m.ActiveShells())
-	if activeCount > len(xs) {
-		activeCount = len(xs)
-	}
+	activeCount := min(len(m.ActiveShells()), len(xs))
 	if m.ShellFullscreen {
 		box := r
 		if box.H > 0 {

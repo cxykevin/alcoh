@@ -45,10 +45,7 @@ func (m *Modal) DrawBottom(c *renderer.Canvas, r renderer.Rect, bottomMargin int
 	if bottom <= r.Y {
 		return
 	}
-	h := max(m.Height, 1)
-	if h > bottom-r.Y {
-		h = bottom - r.Y
-	}
+	h := min(max(m.Height, 1), bottom-r.Y)
 	if h < 1 {
 		return
 	}
@@ -63,10 +60,7 @@ func (m *Modal) DrawSheet(c *renderer.Canvas, r renderer.Rect) {
 	if r.W <= 0 || r.H <= 0 {
 		return
 	}
-	h := max(m.Height, 1)
-	if h > r.H {
-		h = r.H
-	}
+	h := min(max(m.Height, 1), r.H)
 	box := renderer.NewRect(r.X, r.Y+r.H-h, r.W, h)
 	c.Fill(box, renderer.CellRune(' ', renderer.DefaultStyle()))
 

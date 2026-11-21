@@ -16,7 +16,7 @@ func newScrollSession(t *testing.T, lines int) (*AppModel, *TerminalState) {
 		"{\"alk.cxykevin.top/alkaid0/v0.5\":{}}")})
 	m.ActivateSession("s", "session")
 	var sb strings.Builder
-	for i := 0; i < lines; i++ {
+	for range lines {
 		sb.WriteString("line-")
 		sb.WriteString(strings.Repeat("x", 10))
 		sb.WriteString("\n")

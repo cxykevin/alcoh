@@ -135,7 +135,7 @@ func (s *VTScreen) put(r rune) {
 		// 走到下一个 8 列制表位：按显示列推进（宽字符同样算 2 列）。
 		// 迭代上限 8：极窄屏幕（Width=1）上换行会把 col 归零，无上限的写法
 		// 会在这里空转不前进。
-		for i := 0; i < 8; i++ {
+		for range 8 {
 			s.put(' ')
 			if s.col%8 == 0 {
 				break

@@ -105,8 +105,8 @@ func TestRuleEditorCompletePopup(t *testing.T) {
 		t.Errorf("footer = %q, want completion hint", rows[h-1])
 	}
 	hasPopupBg, hasSelBg := false, false
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			switch bg := b.Get(x, y).Style.Bg; bg {
 			case theme.PopupBg:
 				hasPopupBg = true

@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -62,6 +64,34 @@ func newWSBackend(urlStr, cwd string) acp.Backend {
 	})
 }
 
+// hostIsLoopback 报告 host 是否指向本机（localhost / 回环 IP / 空默认值）。
+func hostIsLoopback(host string) bool {
+	host = strings.TrimSpace(strings.Trim(host, "[]"))
+	if host == "" || strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// urlIsLoopback 报告 WebSocket URL 是否指向本机。
+func urlIsLoopback(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	return hostIsLoopback(u.Hostname())
+}
+
+// localUserHome 返回本机的用户主目录；失败时返回空串。
+func localUserHome() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return home
+}
+
 func main() {
 	settings, settingsErr := config.Load()
 	// 先确定界面语言：配置 → ALCOH_LANG → 系统 locale，之后所有输出按此语言。
@@ -111,6 +141,7 @@ func main() {
 		t := term.Dump(os.Stdout, *width, *height)
 		a := app.NewWithConfig(t, backend, settings)
 		a.SetWorkdir(*cwd)
+		a.SetDirHistoryKey("demo")
 		if err := a.RunDump("帮我实现一个 TCP 服务器", *dump); err != nil {
 			fmt.Fprintln(os.Stderr, i18n.T("dump error: %s", err))
 			os.Exit(1)
@@ -122,15 +153,26 @@ func main() {
 	// useDefaultWS 为 true 表示未指定任何 backend 参数，走默认 alkaid0 WebSocket
 	// 连接。此时若服务端配置里没有任何模型，启动即进入新手引导（见 app.go）。
 	useDefaultWS := false
+	// dirHistoryKey 是 /cd 常用目录的分桶标识：按连接 URL 隔离；无参且无
+	// 环境变量启动时统一为 localhost（忽略端口）。认证 key 不进入该标识。
+	dirHistoryKey := "localhost"
+	// localHome 是 /cd 逻辑根固定第一项的本机主目录：只在服务端与本机同机
+	// （stdio agent / 回环 WebSocket）时传入，远程连接保持为空。
+	localHome := ""
 	switch {
 	case *demoFlag:
 		backend = demo.New(*fast)
+		dirHistoryKey = "demo"
 	case *wsURL != "":
 		if *agent != "" {
 			fmt.Fprintln(os.Stderr, i18n.T("--agent 与 --ws-url 互斥，请只选其一"))
 			os.Exit(2)
 		}
 		backend = newWSBackend(*wsURL, *cwd)
+		dirHistoryKey = wscfg.NormalizeURL(*wsURL)
+		if urlIsLoopback(*wsURL) {
+			localHome = localUserHome()
+		}
 	case *agent != "":
 		client, err := acp.NewDesktopClientBackend(context.Background(), acp.ClientConfig{
 			CommandConfig: acp.CommandConfig{
@@ -155,6 +197,8 @@ func main() {
 			os.Exit(1)
 		}
 		backend = client
+		// stdio agent 是本机子进程，文件系统就是 alcoh 所在的机器。
+		localHome = localUserHome()
 	default:
 		// 未指定 agent / ws-url / demo 时，按 alkaid0/helper 规则连接本地 WebSocket 服务。
 		useDefaultWS = true
@@ -170,6 +214,15 @@ func main() {
 		}
 		fmt.Fprintf(os.Stderr, i18n.T("连接 WebSocket agent: %s")+"\n", wscfg.DisplayURL(cfg))
 		backend = newWSBackend(urlStr, *cwd)
+		// 无参且无环境变量启动统一记为 localhost（忽略端口）；显式配置了
+		// 连接参数时按规范化 URL 分桶。
+		if ws.Explicit() || wscfg.EnvConfigured() {
+			dirHistoryKey = wscfg.URLKey(cfg)
+		}
+		// 默认 alkaid0 连接：只有主机确实是本机时才展示本机主目录。
+		if hostIsLoopback(cfg.Host) {
+			localHome = localUserHome()
+		}
 	}
 
 	t, err := term.Open()
@@ -179,6 +232,11 @@ func main() {
 	}
 	a := app.NewWithConfig(t, backend, settings)
 	a.SetWorkdir(*cwd)
+	a.SetDirHistoryKey(dirHistoryKey)
+	a.SetLocalHome(localHome)
+	// /cd 常用目录直接读写 alcoh 本机文件：每次启动都把当前工作区写入历史
+	// （按连接 URL 分桶、去重），逻辑根因此总是包含启动时的工作目录。
+	config.RecordDirHistory(dirHistoryKey, *cwd)
 	// One Shot 模式下用户直接发消息，不再需要新手引导。
 	a.SetOnboardingEnabled(useDefaultWS && *message == "")
 	a.SetInitialPrompt(*message)

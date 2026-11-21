@@ -2,6 +2,7 @@ package view
 
 import (
 	"encoding/binary"
+	"slices"
 	"strings"
 
 	"github.com/cxykevin/alcoh/internal/acp"
@@ -649,8 +650,8 @@ func messageHasBody(m *model.Message) bool {
 func lastRenderedTimelineIndex(s *model.SessionState) int {
 	timeline := s.Timeline
 	hidden := s.Detail == model.DetailHidden
-	for i := len(timeline) - 1; i >= 0; i-- {
-		item := timeline[i]
+	for i, item := range slices.Backward(timeline) {
+
 		switch item.Kind {
 		case model.TimelineUserMessage, model.TimelineAssistantMessage:
 			if messageHasBody(item.Message) {

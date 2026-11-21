@@ -531,7 +531,7 @@ func TestWorkflowNodeLogLimit(t *testing.T) {
 		Kind: acp.WorkflowKindSnapshot, RunID: "@temp/run/8", TerminalID: "@temp/run/8", Graph: workflowGraph(),
 	})
 	total := workflowNodeLogLines + 50
-	for i := 0; i < total; i++ {
+	for i := range total {
 		applyWorkflow(m, &acp.WorkflowEvent{
 			Kind: acp.WorkflowKindNodeLog, RunID: "@temp/run/8", NodeID: "collect",
 			Message: "line-" + strconv.Itoa(i),

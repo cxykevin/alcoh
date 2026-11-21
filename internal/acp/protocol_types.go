@@ -72,6 +72,20 @@ const (
 	MethodGoalGet = "alk.cxykevin.top/session/goal/get"
 	MethodGoalSet = "alk.cxykevin.top/session/goal/set"
 
+	// MethodFSRead 是 alkaid0 文件系统扩展（alk.cxykevin.top/fs/read）：
+	// path 指向目录时返回条目列表，指向文件时返回内容（见 fs.md）。
+	// 用于输入框 @ 文件引用的目录补全。
+	MethodFSRead = "alk.cxykevin.top/fs/read"
+
+	// MethodFSMkdir 是 alkaid0 文件系统扩展（alk.cxykevin.top/fs/mkdir）：
+	// 递归创建会话工作目录下的相对路径（等价 mkdir -p）。目录选择器用临时
+	// 会话执行它来新建文件夹。
+	MethodFSMkdir = "alk.cxykevin.top/fs/mkdir"
+
+	// MethodSessionClose 关闭会话（ACP v2 session/close）：释放服务端会话资源，
+	// 不删除聊天记录。目录选择器用它清理为 fs/mkdir 临时建立的会话。
+	MethodSessionClose = "session/close"
+
 	// MethodSessionGetBackground 查询会话的后台运行模式
 	// （alk.cxykevin.top/session/get_background，见 extension.md §3.7）：
 	// 纯请求-响应，无推送；/background on|off 由服务端命令修改，客户端按需查询。
@@ -539,4 +553,43 @@ type SessionGetBackgroundParams struct {
 // 所有客户端断开后仍保持运行（/background on|off）。
 type SessionGetBackgroundResult struct {
 	Background bool `json:"background"`
+}
+
+// FSReadParams 是 alk.cxykevin.top/fs/read 请求参数（见 ../alkaid0/docs/acp/fs.md）。
+// 带 SessionID 时 Path 是会话工作目录内的相对路径，空串表示工作目录本身。
+type FSReadParams struct {
+	SessionID string `json:"sessionId,omitempty"`
+	Path      string `json:"path"`
+	// Offset/Length 是可选的分段读取范围（字节）。Length 为 0 表示不指定，
+	// 由服务端读到文件末尾；@ 引用预览只传前 1024 字节。
+	Offset int `json:"offset,omitempty"`
+	Length int `json:"length,omitempty"`
+}
+
+// FSMkdirParams 是 alk.cxykevin.top/fs/mkdir 请求参数。Path 必须是相对
+// 会话工作目录的路径；服务端等价 mkdir -p（递归、幂等）。
+type FSMkdirParams struct {
+	SessionID string `json:"sessionId"`
+	Path      string `json:"path"`
+}
+
+// SessionCloseParams 是 session/close 请求参数。
+type SessionCloseParams struct {
+	SessionID string `json:"sessionId"`
+}
+
+// FSDirEntry 是 fs/read 列出目录时的条目。
+type FSDirEntry struct {
+	Name string `json:"name"`
+	// Type 为 "file" 或 "directory"。
+	Type string `json:"type"`
+	// Size 仅文件有值。
+	Size *int64 `json:"size,omitempty"`
+}
+
+// FSReadResult 是 fs/read 响应。Content 在目录请求时是 FSDirEntry 数组，
+// 在文件请求时是内容字符串（binary=true 时 Base64），因此按原始 JSON 保留，
+// 由调用方按需解码。
+type FSReadResult struct {
+	Content json.RawMessage `json:"content"`
 }

@@ -89,11 +89,11 @@ func alkaid0NameFromTitle(title string) string {
 		return ""
 	}
 	rest := title[len(prefix):]
-	end := strings.IndexByte(rest, ']')
-	if end < 0 {
+	before, _, ok := strings.Cut(rest, "]")
+	if !ok {
 		return ""
 	}
-	return rest[:end]
+	return before
 }
 
 // alkaid0CallSignature 按工具名与参数拼出标题，并返回标题消费掉的参数键。

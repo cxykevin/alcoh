@@ -18,7 +18,7 @@ func TestHistoryLoadingNoticeAndAnchoredRows(t *testing.T) {
 	const w, h = 60, 10
 	s := model.NewSession("s1", "test")
 	// 造一屏装不下的正文。
-	for i := 0; i < 30; i++ {
+	for i := range 30 {
 		s.AppendChunk(&acp.MessageChunkEvent{
 			SessionID: "s1", MessageID: "msg_" + strconv.Itoa(i+1), Text: "第 " + strconv.Itoa(i+1) + " 行",
 		})

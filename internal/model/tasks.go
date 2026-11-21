@@ -68,10 +68,7 @@ func (m *AppModel) clampTasksScroll(scroll int) int {
 	if scroll < 0 {
 		return 0
 	}
-	maxScroll := len(m.TaskEntries()) - m.TasksPageRows()
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
+	maxScroll := max(len(m.TaskEntries())-m.TasksPageRows(), 0)
 	if scroll > maxScroll {
 		return maxScroll
 	}

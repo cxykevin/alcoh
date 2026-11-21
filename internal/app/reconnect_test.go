@@ -28,8 +28,7 @@ func TestReconnectSuccessReattachesActiveSession(t *testing.T) {
 	ft := newFakeTerm()
 	b := demo.New(true)
 	a := New(ft, b)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	a.runCtx = ctx
 
 	base, err := b.NewSession(ctx, ".")

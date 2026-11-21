@@ -38,7 +38,7 @@ func TestShellPreviewScrollableRange(t *testing.T) {
 	m.ActivateSession("s1", "s")
 	m.ShellPanel = true
 	var sb strings.Builder
-	for i := 0; i < 200; i++ {
+	for i := range 200 {
 		sb.WriteString(fmt.Sprintf("row-%03d-", i))
 		sb.WriteString(strings.Repeat("z", 20))
 		sb.WriteString("\n")
@@ -67,7 +67,7 @@ func TestShellPreviewScrollableRange(t *testing.T) {
 		t.Fatal("scroll offset must be non-zero after PgUp")
 	}
 	// 继续翻到底也不能出现空白（窗口不会越过屏幕保留范围）。
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		m.ScrollShellPreview(m.ShellPreviewHeight())
 		render()
 	}

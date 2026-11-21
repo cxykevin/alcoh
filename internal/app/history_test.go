@@ -110,8 +110,7 @@ func TestScrollToTopLoadsEarlierHistory(t *testing.T) {
 	b := &earlierBackend{Backend: demo.New(true)}
 	defer b.Close()
 	a := New(ft, b)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	a.runCtx = ctx
 
 	s, err := b.ResumeSession(ctx, "demo-0")
@@ -135,7 +134,7 @@ func TestScrollToTopLoadsEarlierHistory(t *testing.T) {
 	}
 	waitLoadCount(t, b, 1)
 	// 加载中再按几次不会重复发起请求。
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		a.messageKey(input.SimpleKey(input.KeyUp))
 	}
 	if got := b.loadCount(); got != 1 {

@@ -13,13 +13,26 @@ import (
 // highlightCode 把 fenced code block 转换为带行号和语法样式的行。
 // chroma 内置主流语言 lexer；无法识别时安全回退为纯文本代码样式。
 func highlightCode(lang string, lines []string, t renderer.Theme) []StyledLine {
-	if len(lines) == 0 {
-		return nil
-	}
-
 	lexer := lexers.Get(strings.TrimSpace(lang))
 	if lexer == nil {
 		lexer = lexers.Fallback
+	}
+	return highlightLines(lexer, lines, t)
+}
+
+// highlightFile 按文件名选择 lexer（如 main.go → Go）并高亮代码行；
+// 无法识别时回退为纯文本。@ 文件引用预览用它。
+func highlightFile(path string, lines []string, t renderer.Theme) []StyledLine {
+	lexer := lexers.Match(path)
+	if lexer == nil {
+		lexer = lexers.Fallback
+	}
+	return highlightLines(lexer, lines, t)
+}
+
+func highlightLines(lexer chroma.Lexer, lines []string, t renderer.Theme) []StyledLine {
+	if len(lines) == 0 {
+		return nil
 	}
 	iter, err := chroma.Coalesce(lexer).Tokenise(nil, strings.Join(lines, "\n"))
 	if err != nil {

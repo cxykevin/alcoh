@@ -349,6 +349,39 @@ type BackgroundControl interface {
 	GetBackground(ctx context.Context) (bool, error)
 }
 
+// FSControl 暴露 alkaid0 文件系统扩展的目录列举方法
+// （alk.cxykevin.top/fs/read，见 ../alkaid0/docs/acp/fs.md）。
+// 与 TerminalControl 一样是可选能力，调用方用类型断言按需取用：
+// 输入框 @ 文件引用靠它列出会话工作目录下的条目。
+type FSControl interface {
+	// ListDir 列出会话工作目录内 path 指向的目录；path 为空表示工作目录本身。
+	// 返回条目按“目录优先、名称升序”排序，方便直接把列表展示给用户。
+	ListDir(ctx context.Context, path string) ([]FSDirEntry, error)
+	// ReadFile 读取工作目录内 path 指向文件的前 length 字节；length <= 0
+	// 表示不限制。返回内容按 UTF-8 字符串处理，二进制文件由调用方自行识别。
+	ReadFile(ctx context.Context, path string, length int) (string, error)
+}
+
+// FSAbsControl 暴露无会话的只读文件系统访问：fs/read 不带 sessionId，
+// path 必须是绝对路径（见 ../alkaid0/docs/acp/fs.md）。目录选择器靠它在
+// 任意目录浏览，无需先建立会话；本地与远程连接行为一致。
+type FSAbsControl interface {
+	// ListDirAbs 用绝对路径列出目录条目；path 不是目录时返回错误。
+	ListDirAbs(ctx context.Context, dir string) ([]FSDirEntry, error)
+}
+
+// FSWriter 暴露会话工作区内的写操作（fs/mkdir）：path 必须是相对会话
+// 工作目录的路径，等价 mkdir -p（递归、幂等）。
+type FSWriter interface {
+	Mkdir(ctx context.Context, path string) error
+}
+
+// CWDSetter 由支持运行期切换默认工作目录的 backend 实现（/cd）。
+// 切换后 session/list 与 session/resume 使用新的 cwd。
+type CWDSetter interface {
+	SetCWD(cwd string)
+}
+
 // HistoryPager 暴露 alkaid0 v0.6 的历史回放分页（见 extension.md §3.3）。
 // session/resume 每次最多回放 200 条消息，从活跃分支末端往更早的方向翻页：
 // 首屏拿到的是最近一页，响应携带游标时表示还有更早的消息。

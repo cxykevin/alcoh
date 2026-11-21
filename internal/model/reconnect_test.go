@@ -64,10 +64,10 @@ func TestHistoryReloadResetsConversation(t *testing.T) {
 		Message: acp.Message{
 			MessageID:  "msg_1",
 			ContentSet: true,
-			Content:    []acp.ContentBlock{{Type: "text", Text: strPtr("hi")}},
+			Content:    []acp.ContentBlock{{Type: "text", Text: new("hi")}},
 		},
 	})
-	s.ApplyToolCall(&acp.ToolCallUpdateEvent{SessionID: "sess-1", ToolCallID: "call_1_1_x", Title: strPtr("tool")})
+	s.ApplyToolCall(&acp.ToolCallUpdateEvent{SessionID: "sess-1", ToolCallID: "call_1_1_x", Title: new("tool")})
 	s.ApplyPlan(&acp.PlanUpdateEvent{SessionID: "sess-1", Plan: acp.Plan{PlanID: "p1", Type: "items"}})
 	s.ApplyTerminalInfo(acp.TerminalInfo{TerminalID: "run1", Status: "running"})
 	s.ApplyTerminalInfo(acp.TerminalInfo{TerminalID: "run2", Status: "finished"})

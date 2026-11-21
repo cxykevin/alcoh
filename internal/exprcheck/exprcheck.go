@@ -38,8 +38,7 @@ func Compile(src string) *Diagnostic {
 // diagnostic 把 expr 的编译错误转成面向界面的诊断。expr 的错误通常带
 // 源码位置（*file.Error），退化为无位置错误时从第一行第一列提示。
 func diagnostic(err error) *Diagnostic {
-	var fe *file.Error
-	if errors.As(err, &fe) {
+	if fe, ok := errors.AsType[*file.Error](err); ok {
 		return &Diagnostic{
 			Line: max(fe.Line, 1),
 			// expr 的 Column 从 0 开始计数，展示时加一（与其错误文案一致）。

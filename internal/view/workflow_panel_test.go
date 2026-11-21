@@ -459,7 +459,7 @@ func workflowWideGraph(t *testing.T) *model.AppModel {
 // 空格，这样拼起来的字符串与终端上"一格一列"的观感一致，可以直接比列。
 func paneColumns(b *renderer.Buffer, x, y, w int) []string {
 	cols := make([]string, w)
-	for i := 0; i < w; i++ {
+	for i := range w {
 		cell := b.Get(x+i, y)
 		if cell.Width == 0 || cell.R == 0 {
 			cols[i] = " "
@@ -504,7 +504,7 @@ func TestWorkflowGraphPanClipsColumns(t *testing.T) {
 	refRows := make([][]renderer.Cell, inner.H)
 	for row := 0; row < inner.H; row++ {
 		refRows[row] = make([]renderer.Cell, full)
-		for i := 0; i < full; i++ {
+		for i := range full {
 			refRows[row][i] = ref.Get(1+i, 1+row)
 		}
 	}

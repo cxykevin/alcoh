@@ -294,9 +294,9 @@ func TestDiffEmojiRandomFrames(t *testing.T) {
 		back.Cells[i] = sentinel
 	}
 	emu := newTermEmu(W, H)
-	for iter := 0; iter < 300; iter++ {
+	for iter := range 300 {
 		front := NewBuffer(W, H)
-		for y := 0; y < H; y++ {
+		for y := range H {
 			if r.Intn(4) == 0 {
 				continue
 			}

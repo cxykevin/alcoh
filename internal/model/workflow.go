@@ -229,10 +229,7 @@ func (w *WorkflowState) MoveSelection(delta int) {
 	if w == nil || len(w.order) == 0 || delta == 0 {
 		return
 	}
-	index := w.NodeIndex(w.Selected)
-	if index < 0 {
-		index = 0
-	}
+	index := max(w.NodeIndex(w.Selected), 0)
 	next := (index + delta) % len(w.order)
 	if next < 0 {
 		next += len(w.order)
@@ -589,12 +586,9 @@ func (w *WorkflowState) applyEvent(ev *acp.WorkflowEvent) {
 		}
 	case acp.WorkflowKindAgentsStart:
 		if n := w.node(ev.NodeID); n != nil {
-			count := ev.Count
-			if count < 0 {
-				count = 0
-			}
+			count := max(ev.Count, 0)
 			agents := make([]WorkflowAgent, 0, count)
-			for i := 0; i < count; i++ {
+			for i := range count {
 				prompt := ""
 				if i < len(ev.Prompts) {
 					prompt = ev.Prompts[i]
@@ -717,10 +711,7 @@ func (m *AppModel) ScrollWorkflowPanePage(dir int) bool {
 	if dir == 0 {
 		return false
 	}
-	step := m.ShellWorkflowLogRows - 1
-	if step < 1 {
-		step = 1
-	}
+	step := max(m.ShellWorkflowLogRows-1, 1)
 	return m.ScrollWorkflowPane(dir * step)
 }
 

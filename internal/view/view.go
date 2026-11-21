@@ -141,6 +141,9 @@ func (v *AppView) modalHeight(m *model.AppModel) int {
 		h = goalModalHeight()
 	case model.ModalTasks:
 		h = tasksModalHeight(m)
+	case model.ModalDirPicker:
+		// 目录选择器占满整屏（drawModalAtInput 会按 r.H 绘制），底层内容无需保留。
+		h = 8
 	case model.ModalExitConfirm:
 		h = 5
 	case model.ModalServer, model.ModalPlugins:
@@ -162,13 +165,7 @@ func rewindModalHeight(m *model.AppModel) int {
 // （最多 10 行，更多时窗口滚动）+ 底部操作提示。队列为空时保留一行空状态。
 // 内容区需要 提示 + 空行 + n + 操作提示 = n+3 行，加上下边框共 n+5。
 func queueModalHeight(m *model.AppModel) int {
-	n := len(m.QueueItems())
-	if n < 1 {
-		n = 1
-	}
-	if n > 10 {
-		n = 10
-	}
+	n := min(max(len(m.QueueItems()), 1), 10)
 	return 5 + n
 }
 
@@ -275,6 +272,14 @@ func (v *AppView) drawModalAtInput(c *renderer.Canvas, r renderer.Rect, m *model
 		h = tasksModalHeight(m)
 		title = i18n.T("任务列表 (tasks)")
 		content = tasksContent(v.Theme, m)
+	case model.ModalDirPicker:
+		// 目录选择器占满整屏（DrawSheet 全宽面板）。
+		h = r.H
+		title = i18n.T("切换工作目录 (/cd)")
+		if m.DirPicker != nil && m.DirPicker.Title != "" {
+			title = m.DirPicker.Title
+		}
+		content = dirPickerContent(v.Theme, m)
 	case model.ModalServer:
 		// 配置编辑器占满整屏（DrawSheet 全宽面板）。
 		h = r.H
@@ -448,6 +453,7 @@ func helpContent(t renderer.Theme) *TextLines {
 		i18n.T("Enter          提交输入        Shift+Enter / 行尾 \\ + Enter 换行"),
 		i18n.T("/              命令面板        Ctrl+,         打开设置"),
 		i18n.T("/connect       连接模型服务商（模板/填 key/拉取模型）"),
+		i18n.T("/cd            切换工作区目录（空参打开目录选择器）"),
 		i18n.T("/effort        推理强度滑条    /clear         清除会话(on 不取消)"),
 		i18n.T("↑↓             移动 / 历史     ←→            移动光标"),
 		i18n.T("Ctrl+A/E       行首 / 行尾     Ctrl+K/U      删至行尾/行首"),
@@ -518,8 +524,18 @@ func (v *AppView) drawSession(c *renderer.Canvas, r renderer.Rect, m *model.AppM
 		slashH = min(8, r.H/3)
 	}
 	queueH := queueListHeight(m)
+	// @ 文件引用选择框紧贴输入框上方，固定占满 AtPanelRows 行：右侧预览分栏
+	// 跟着面板高度走，按条目数收缩时预览只剩一两行。极矮终端只保证正文至少
+	// 1 行，其余高度从这里扣。
+	atH := 0
+	if m.AtOpen && !m.SlashOpen {
+		atH = atPanelHeight(m)
+		if limit := r.H - planH - queueH - spacerH - statusH - sepH - sep2H - inputH - 1; atH > limit {
+			atH = max(limit, 0)
+		}
+	}
 
-	msgH := max(r.H-spacerH-statusH-sepH-sep2H-inputH-planH-slashH-queueH, 1)
+	msgH := max(r.H-spacerH-statusH-sepH-sep2H-inputH-planH-slashH-atH-queueH, 1)
 
 	y := r.Y
 	msgRect := renderer.NewRect(r.X, y, r.W, msgH)
@@ -546,6 +562,10 @@ func (v *AppView) drawSession(c *renderer.Canvas, r renderer.Rect, m *model.AppM
 	if queueH > 0 {
 		v.drawQueueList(c, renderer.NewRect(r.X, y, r.W, queueH), m)
 		y += queueH
+	}
+	if atH > 0 {
+		(&AtPanel{Theme: v.Theme}).Draw(c, renderer.NewRect(r.X, y, r.W, atH), m)
+		y += atH
 	}
 
 	sepStyle := v.Theme.Style(v.Theme.BorderSubtle)
@@ -667,27 +687,46 @@ func (v *AppView) drawHome(c *renderer.Canvas, r renderer.Rect, m *model.AppMode
 	if m.SlashOpen {
 		slashH = min(8, right.H/3)
 	}
-	y := max(right.Y+right.H-inputH-2-slashH, right.Y+6)
+	// @ 文件引用选择框与 slash 面板一样紧贴输入框上方，固定占满 AtPanelRows
+	// 行：右侧预览分栏跟着面板高度走，只有一两个条目时也要看得见预览。
+	// 终端太矮时按可用高度收缩（顶部留 6 行 logo、底部让出输入框与提示行）。
+	atH := 0
+	if m.AtOpen && !m.SlashOpen {
+		atH = atPanelHeight(m)
+		if maxH := right.H - 6 - inputH - 2; atH > maxH {
+			atH = max(maxH, 0)
+		}
+	}
+	// 底部预留：输入框、输入框上方横线（紧贴面板下方，不占面板行）、
+	// 底部提示行与空行各 1 行；面板从横线之上开始。
+	y := max(right.Y+right.H-inputH-3-slashH-atH, right.Y+6)
+	// 横线紧贴面板下方、占独立一行，不能压在面板最后一行上（否则固定的
+	// 第 8 行内容看不见）；输入框在横线下一行。
+	inputY := y + slashH + atH + 1
 	// 极矮终端：输入框不能越过终端底部，且需让出底部错误提示行（contentRect.H-2），
-	// 避免输入框/提示行与底部提示重叠。
-	if y+inputH > right.Y+right.H-2 {
-		y = right.Y + right.H - 2 - inputH
+	// 避免输入框/提示行与底部提示重叠；此时横线跟着输入框走（可能压到面板，
+	// 面板本身也已按可用高度收缩）。
+	if inputY+inputH > right.Y+right.H-2 {
+		inputY = right.Y + right.H - 2 - inputH
 	}
 	if slashH > 0 {
 		(&SlashPanel{Theme: v.Theme}).Draw(c, renderer.NewRect(right.X, y, right.W, slashH), m)
 	}
-	sepY := y + slashH
+	if atH > 0 {
+		(&AtPanel{Theme: v.Theme}).Draw(c, renderer.NewRect(right.X, y+slashH, right.W, atH), m)
+	}
+	sepY := inputY
 	sepStyle := v.Theme.Style(v.Theme.BorderSubtle)
 	for x := right.X; x < right.X+right.W; x++ {
 		c.Put(x, sepY-1, renderer.CellRune('─', sepStyle))
 	}
-	// 输入框上方提示：slash 面板打开时隐藏（该行被命令列表占用）。
-	if !m.SlashOpen && sepY-2 >= right.Y {
+	// 输入框上方提示：slash/@ 面板打开时隐藏（该行被列表占用）。
+	if !m.SlashOpen && atH == 0 && sepY-2 >= right.Y {
 		c.PutText(right.X, sepY-2, renderer.Truncate(i18n.T("← 恢复会话"), right.W), v.Theme.Style(v.Theme.TextMuted))
 	}
 	ghost, _ := m.SlashCompletion()
 	ib := &widget.InputBox{Buf: m.Input, Prompt: "> ", Style: v.Theme.Style(v.Theme.Text), Cursor: v.Theme.StyleOn(v.Theme.Background, v.Theme.Primary), Focused: m.Modal == model.NoModal, GhostText: ghost, GhostStyle: v.Theme.Style(v.Theme.TextMuted)}
-	ib.Draw(c, renderer.NewRect(right.X, y+slashH, right.W, inputH))
+	ib.Draw(c, renderer.NewRect(right.X, sepY, right.W, inputH))
 }
 
 // drawLogoCentered 在区域 r 内水平+垂直居中绘制 ascii logo。
@@ -774,10 +813,7 @@ func (sl *SessionList) Draw(c *renderer.Canvas, r renderer.Rect, m *model.AppMod
 	const itemRows = 3
 	headerRows := 2 // "sessions" 标题 + 间隔行
 	hintRows := 1   // 底部 i18n.T("r 刷新  d 删除会话") 提示行
-	visible := max((inner.H-headerRows-hintRows-1)/itemRows, 1)
-	if visible > len(m.Sessions) {
-		visible = len(m.Sessions)
-	}
+	visible := min(max((inner.H-headerRows-hintRows-1)/itemRows, 1), len(m.Sessions))
 	selIdx := 0
 	if m.HomeListFocused && m.HomeSelected >= 0 {
 		selIdx = m.HomeSelected

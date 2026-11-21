@@ -267,6 +267,64 @@ func URL(cfg Config) (string, error) {
 	return u.String(), nil
 }
 
+// Explicit 报告是否通过命令行 flag 显式指定了连接参数。
+func (o *Options) Explicit() bool {
+	if o == nil {
+		return false
+	}
+	return o.configSet || o.hostSet || o.portSet || o.pathSet || o.keySet
+}
+
+// EnvConfigured 报告是否有任何 WebSocket 连接相关的 ALKAID0_* 环境变量被设置。
+// 未显式传参且没有这些环境变量时，启动被视为"本地默认连接"，dir.history
+// 使用统一的 "localhost" 桶（忽略端口）。
+func EnvConfigured() bool {
+	for _, name := range []string{envConfigPath, envHost, envPort, envPath, envKey} {
+		if os.Getenv(name) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// URLKey 返回 dir.history 分桶使用的连接标识：规范化后的 ws URL，
+// 不含认证 key、query、userinfo 与 fragment。
+func URLKey(cfg Config) string {
+	path := cfg.Path
+	if path == "" {
+		path = "/"
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	u := url.URL{
+		Scheme: "ws",
+		Host:   net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port))),
+		Path:   path,
+	}
+	return NormalizeURL(u.String())
+}
+
+// NormalizeURL 把 ws/wss 链接规范化为分桶 key：去掉认证信息、query 与
+// fragment，scheme/host 小写。解析失败时退化为去掉 ?/# 后的原文，避免
+// 把 key/token 写进 dir.history。
+func NormalizeURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		if i := strings.IndexAny(raw, "?#"); i >= 0 {
+			raw = raw[:i]
+		}
+		return raw
+	}
+	u.User = nil
+	u.RawQuery = ""
+	u.Fragment = ""
+	u.Scheme = strings.ToLower(u.Scheme)
+	u.Host = strings.ToLower(u.Host)
+	return u.String()
+}
+
 // DisplayURL 返回用于日志展示的连接地址，认证 key 以 *** 掩盖，避免泄露到终端。
 func DisplayURL(cfg Config) string {
 	path := cfg.Path

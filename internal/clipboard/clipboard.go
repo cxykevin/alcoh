@@ -148,7 +148,7 @@ func readXclip(ctx context.Context) (Content, error) {
 // pickImageMIME 从 TARGETS/--list-types 输出中挑选最合适的图片 MIME。
 func pickImageMIME(list string) string {
 	have := make(map[string]bool)
-	for _, line := range strings.Split(list, "\n") {
+	for line := range strings.SplitSeq(list, "\n") {
 		t := strings.ToLower(strings.TrimSpace(line))
 		if strings.HasPrefix(t, "image/") {
 			have[t] = true

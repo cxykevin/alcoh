@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sort"
 	"strings"
 	"sync"
 
@@ -45,6 +46,9 @@ const (
 // ClientBackend 是基于 JSON-RPC transport（stdio 或 WebSocket）的 ACP v2 Backend 实现。
 type ClientBackend struct {
 	config ClientConfig
+	// cwdMu 保护 config.CWD：/cd 在主循环里切换工作目录，session/list 等
+	// 请求在后台 goroutine 里读取，必须串行化。
+	cwdMu sync.RWMutex
 
 	mu             sync.Mutex
 	state          backendState
@@ -229,6 +233,21 @@ func (b *ClientBackend) ListSessions(ctx context.Context) ([]*SessionInfo, error
 	return page.Sessions, err
 }
 
+// CWD 返回当前默认工作目录（/cd 切换后为新目录）。
+func (b *ClientBackend) CWD() string {
+	b.cwdMu.RLock()
+	defer b.cwdMu.RUnlock()
+	return b.config.CWD
+}
+
+// SetCWD 切换 session/list 与 session/resume 使用的默认工作目录。
+// 实现 acp.CWDSetter，供 /cd 在运行期切换工作区。
+func (b *ClientBackend) SetCWD(cwd string) {
+	b.cwdMu.Lock()
+	b.config.CWD = cwd
+	b.cwdMu.Unlock()
+}
+
 // ListSessionsPage 调用 session/list 获取指定 cursor 的一页。
 func (b *ClientBackend) ListSessionsPage(ctx context.Context, cursor string) (SessionPage, error) {
 	t, err := b.readyTransport()
@@ -236,7 +255,7 @@ func (b *ClientBackend) ListSessionsPage(ctx context.Context, cursor string) (Se
 		return SessionPage{}, err
 	}
 	var result SessionListResult
-	if err := t.Request(ctx, MethodSessionList, SessionListParams{CWD: b.config.CWD, Cursor: cursor}, &result); err != nil {
+	if err := t.Request(ctx, MethodSessionList, SessionListParams{CWD: b.CWD(), Cursor: cursor}, &result); err != nil {
 		if isCWDNotInitError(err) {
 			return SessionPage{}, nil
 		}
@@ -293,7 +312,7 @@ func (b *ClientBackend) ResumeSession(ctx context.Context, id string) (Session, 
 	var result SessionResult
 	if err := t.Request(ctx, MethodSessionResume, SessionResumeParams{
 		SessionID:  id,
-		CWD:        b.config.CWD,
+		CWD:        b.CWD(),
 		ReplayFrom: &ReplayFrom{Type: "start"},
 	}, &result); err != nil {
 		return nil, err
@@ -326,7 +345,7 @@ func (s *clientSession) Reattach(ctx context.Context) error {
 	var result SessionResult
 	if err := t.Request(ctx, MethodSessionResume, SessionResumeParams{
 		SessionID:  s.id,
-		CWD:        s.backend.config.CWD,
+		CWD:        s.backend.CWD(),
 		ReplayFrom: &ReplayFrom{Type: "start"},
 	}, &result); err != nil {
 		return err
@@ -614,8 +633,15 @@ func (s *clientSession) Cancel(ctx context.Context) error {
 	return t.Notify(MethodSessionCancel, SessionCancelParams{SessionID: s.id})
 }
 
-// Close 只丢弃 UI 侧句柄。ACP v2 目前没有对应的 session-close RPC，因此不发任何请求。
-func (s *clientSession) Close(context.Context) error { return nil }
+// Close 关闭会话（session/close）：释放服务端会话资源但不删除聊天记录。
+// 目录选择器用它清理为 fs/mkdir 临时建立的会话；调用方按 best-effort 处理错误。
+func (s *clientSession) Close(ctx context.Context) error {
+	t, err := s.backend.readyTransport()
+	if err != nil {
+		return err
+	}
+	return t.Request(ctx, MethodSessionClose, SessionCloseParams{SessionID: s.id}, nil)
+}
 
 func (s *clientSession) ListTerminals(ctx context.Context) ([]TerminalInfo, error) {
 	if !s.backend.AgentCapabilities().Has(Alkaid0CapabilityV05) {
@@ -717,7 +743,7 @@ func (s *clientSession) LoadEarlierHistory(ctx context.Context) (bool, error) {
 	var result SessionResult
 	if err := t.Request(ctx, MethodSessionResume, SessionResumeParams{
 		SessionID:  s.id,
-		CWD:        s.backend.config.CWD,
+		CWD:        s.backend.CWD(),
 		ReplayFrom: &ReplayFrom{Type: "start"},
 		Cursor:     cursor,
 	}, &result); err != nil {
@@ -914,6 +940,114 @@ func (s *clientSession) GetBackground(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	return result.Background, nil
+}
+
+// ListDir 列出会话工作目录内 path 指向的目录（alk.cxykevin.top/fs/read，
+// 见 ../alkaid0/docs/acp/fs.md）。path 为空表示会话工作目录本身；path 不是
+// 目录时返回错误。条目按“目录优先、名称升序”排序，供输入框 @ 补全直接展示。
+func (s *clientSession) ListDir(ctx context.Context, path string) ([]FSDirEntry, error) {
+	if !s.backend.AgentCapabilities().Has(Alkaid0CapabilityV04) {
+		return nil, errors.New("alkaid0 filesystem protocol is not supported")
+	}
+	t, err := s.backend.readyTransport()
+	if err != nil {
+		return nil, err
+	}
+	var result FSReadResult
+	if err := t.Request(ctx, MethodFSRead, FSReadParams{SessionID: s.id, Path: path}, &result); err != nil {
+		return nil, err
+	}
+	return decodeFSDirEntries(result.Content)
+}
+
+// ListDirAbs 用绝对路径列出服务端目录（fs/read 不带 sessionId，见
+// ../alkaid0/docs/acp/fs.md）。目录选择器靠它在任意目录浏览，无需先建立
+// 会话；path 不是目录时返回错误。
+func (b *ClientBackend) ListDirAbs(ctx context.Context, dir string) ([]FSDirEntry, error) {
+	if !b.AgentCapabilities().Has(Alkaid0CapabilityV04) {
+		return nil, errors.New("alkaid0 filesystem protocol is not supported")
+	}
+	t, err := b.readyTransport()
+	if err != nil {
+		return nil, err
+	}
+	var result FSReadResult
+	if err := t.Request(ctx, MethodFSRead, FSReadParams{Path: dir}, &result); err != nil {
+		return nil, err
+	}
+	return decodeFSDirEntries(result.Content)
+}
+
+// decodeFSDirEntries 把 fs/read 的 content 解码为目录条目并按目录优先、
+// 名称升序排序；content 是文件内容字符串时说明 path 不是目录。
+func decodeFSDirEntries(content json.RawMessage) ([]FSDirEntry, error) {
+	trimmed := strings.TrimSpace(string(content))
+	if trimmed == "" || trimmed == "null" {
+		return nil, nil
+	}
+	if trimmed[0] != '[' {
+		return nil, errors.New("filesystem path is not a directory")
+	}
+	var entries []FSDirEntry
+	if err := json.Unmarshal(content, &entries); err != nil {
+		return nil, err
+	}
+	sort.SliceStable(entries, func(i, j int) bool {
+		di := entries[i].Type == "directory"
+		dj := entries[j].Type == "directory"
+		if di != dj {
+			return di
+		}
+		return strings.ToLower(entries[i].Name) < strings.ToLower(entries[j].Name)
+	})
+	return entries, nil
+}
+
+// Mkdir 在会话工作目录下递归创建 path（fs/mkdir，等价 mkdir -p）。
+// path 必须是相对路径；服务端拒绝绝对路径与 . / .. 分量。
+func (s *clientSession) Mkdir(ctx context.Context, path string) error {
+	if !s.backend.AgentCapabilities().Has(Alkaid0CapabilityV04) {
+		return errors.New("alkaid0 filesystem protocol is not supported")
+	}
+	t, err := s.backend.readyTransport()
+	if err != nil {
+		return err
+	}
+	return t.Request(ctx, MethodFSMkdir, FSMkdirParams{SessionID: s.id, Path: path}, nil)
+}
+
+// ReadFile 读取会话工作目录内 path 指向文件的前 length 字节
+// （alk.cxykevin.top/fs/read，见 ../alkaid0/docs/acp/fs.md）。length <= 0
+// 表示不限制；@ 文件引用预览只取前 1024 字节。path 是目录时返回错误。
+func (s *clientSession) ReadFile(ctx context.Context, path string, length int) (string, error) {
+	if !s.backend.AgentCapabilities().Has(Alkaid0CapabilityV04) {
+		return "", errors.New("alkaid0 filesystem protocol is not supported")
+	}
+	t, err := s.backend.readyTransport()
+	if err != nil {
+		return "", err
+	}
+	params := FSReadParams{SessionID: s.id, Path: path}
+	if length > 0 {
+		params.Length = length
+	}
+	var result FSReadResult
+	if err := t.Request(ctx, MethodFSRead, params, &result); err != nil {
+		return "", err
+	}
+	trimmed := strings.TrimSpace(string(result.Content))
+	if trimmed == "" || trimmed == "null" {
+		return "", nil
+	}
+	if trimmed[0] != '"' {
+		// fs/read 对目录返回条目数组：调用方传了目录而不是文件。
+		return "", errors.New("filesystem path is not a file")
+	}
+	var content string
+	if err := json.Unmarshal(result.Content, &content); err != nil {
+		return "", err
+	}
+	return content, nil
 }
 
 // WorkflowStatus 查询 workflow 的完整快照（v0.5）。runID 是 workflow 的 run id

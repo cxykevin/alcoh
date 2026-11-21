@@ -349,12 +349,11 @@ func (mc *ModelContent) Draw(c *renderer.Canvas, r renderer.Rect) {
 	y++
 
 	// 可用列表高度：当前行之后为选项区域，底部至少保留一行操作提示。
-	available := max(
+	available := min(
 		// 保留底部提示行
-		r.H-(y-r.Y)-1, 1)
-	if available > len(mc.Options) {
-		available = len(mc.Options)
-	}
+		max(
+
+			r.H-(y-r.Y)-1, 1), len(mc.Options))
 	// 选中项保持可见：先尝试居中，越界时收拢到边界。
 	start := max(mc.Selected-available/2, 0)
 	if maxStart := len(mc.Options) - available; start > maxStart {
@@ -433,10 +432,7 @@ func (rc *RewindContent) Draw(c *renderer.Canvas, r renderer.Rect) {
 	y++
 
 	// 可用条目数：提示行之后为列表区域，底部至少保留一行操作提示。
-	available := max((r.H-(y-r.Y)-1)/rewindItemRows, 1)
-	if available > len(rc.Targets) {
-		available = len(rc.Targets)
-	}
+	available := min(max((r.H-(y-r.Y)-1)/rewindItemRows, 1), len(rc.Targets))
 	start := max(rc.Selected-available/2, 0)
 	if maxStart := len(rc.Targets) - available; start > maxStart {
 		start = maxStart
@@ -485,7 +481,7 @@ func drawRewindReply(c *renderer.Canvas, r renderer.Rect, y int, t renderer.Them
 // rewindLine 把消息原文压成一行（取第一个非空行，去制表符与首尾空白），
 // 供选择器列表展示。
 func rewindLine(text string) string {
-	for _, line := range strings.Split(text, "\n") {
+	for line := range strings.SplitSeq(text, "\n") {
 		line = strings.TrimSpace(strings.ReplaceAll(line, "\t", " "))
 		if line != "" {
 			return line
