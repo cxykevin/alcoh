@@ -42,19 +42,19 @@ jobs:
         run: |
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
             go build -trimpath -ldflags="-s -w" \
-            -o alcoh-linux-amd64 ./cmd/alcoh/main.go
+            -o alcoh-linux-amd64 ./cmd/alcoh
 
       - name: 构建 Windows amd64 (交叉编译)
         run: |
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
             go build -trimpath -ldflags="-s -w" \
-            -o alcoh-windows-amd64.exe ./cmd/alcoh/main.go
+            -o alcoh-windows-amd64.exe ./cmd/alcoh
 
       - name: 构建 Linux arm64 (交叉编译)
         run: |
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
             go build -trimpath -ldflags="-s -w" \
-            -o alcoh-linux-arm64 ./cmd/alcoh/main.go
+            -o alcoh-linux-arm64 ./cmd/alcoh
 
       - name: UPX 极限压缩
         run: |
@@ -92,13 +92,13 @@ jobs:
         run: |
           CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 \
             go build -trimpath -ldflags="-s -w" \
-            -o alcoh-darwin-amd64 ./cmd/alcoh/main.go
+            -o alcoh-darwin-amd64 ./cmd/alcoh
 
       - name: 构建 Darwin arm64
         run: |
           CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 \
             go build -trimpath -ldflags="-s -w" \
-            -o alcoh-darwin-arm64 ./cmd/alcoh/main.go
+            -o alcoh-darwin-arm64 ./cmd/alcoh
 
       - name: 上传 Darwin 产物
         uses: actions/upload-artifact@v7

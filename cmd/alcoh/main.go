@@ -168,7 +168,7 @@ func resolveRemoteKey(spec connspec.Spec, endpoint string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		status, probeErr := probeWSAuth(probeURL)
+		status, probeErr := acp.ProbeWSAuth(context.Background(), probeURL, wsProbeTimeout)
 		if probeErr == nil {
 			// 认证通过（或该服务端不需要密钥）：把可用的密钥记住。
 			if key != "" {
@@ -178,7 +178,7 @@ func resolveRemoteKey(spec connspec.Spec, endpoint string) (string, error) {
 			}
 			return key, nil
 		}
-		if !isWSAuthFailure(status) {
+		if !acp.IsWSAuthFailure(status) {
 			return "", errors.New(i18n.T("预检连接 %s 失败: %s", connspec.MaskURL(probeURL), probeErr))
 		}
 		// 认证失败：旧密钥（内联或本地记忆）作废，重新询问。
