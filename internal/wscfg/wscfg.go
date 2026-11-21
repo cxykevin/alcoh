@@ -267,6 +267,15 @@ func URL(cfg Config) (string, error) {
 	return u.String(), nil
 }
 
+// Path 返回显式设置的端点路径（--path）；未设置时 ok=false。
+// 供 alcoh 校验 --url 与 --path 是否冲突（见 cmd/alcoh）。
+func (o *Options) Path() (string, bool) {
+	if o == nil || !o.pathSet {
+		return "", false
+	}
+	return o.path, true
+}
+
 // Explicit 报告是否通过命令行 flag 显式指定了连接参数。
 func (o *Options) Explicit() bool {
 	if o == nil {

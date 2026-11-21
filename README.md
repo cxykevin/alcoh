@@ -65,10 +65,40 @@ alcoh \
   --ws-url 'ws://127.0.0.1:7433/acp?token={token}' \
   --cwd "$PWD"
 
+# 第一个位置参数：本地目录（仍连默认的本地 alkaid0，只改工作目录）
+alcoh /home/aaaaa
+alcoh ./abc
+
+# 第一个位置参数：远端 alkaid0（默认端口 7433，密钥按需询问并记住）
+alcoh 123.45.6.78
+alcoh 123.45.6.78:1234
+alcoh '{key}@example.com'          # 用户名位置是明文密钥；无路径 → 启动后选目录
+alcoh example.com:7433/home/bin    # host:port 之后的整段是对方文件系统路径
+
+# 指定 WebSocket 端点路径（默认 /acp；它不是对方文件系统路径）
+# 注意：命令行开关必须写在位置参数之前（Go flag 在第一个位置参数处停止解析）
+alcoh --url /acp example.com:7433/srv/app
+
 # One Shot 模式：启动后自动进入会话并发送消息
 alcoh --message '帮我实现一个 TCP 服务器'
 alcoh -m '你好'
 ```
+
+### 第一个位置参数（连接目标）
+
+| 写法 | 含义 |
+| --- | --- |
+| `/home/aaaaa`、`./abc`、`../x`、`~/x` | 本地目录：仍连默认后端，只把会话 cwd 切到该目录 |
+| `C:\Users\x`、`\\nas\share` | 本地目录（Windows 路径） |
+| `host`、`1.2.3.4` | 远端 alkaid0：默认端口 **7433**，需要访问密钥 |
+| `host:1234` | 远端 alkaid0：指定端口 |
+| `{key}@host[:port][/路径]` | 用户名位置是**明文访问密钥** |
+| `host:port/路径` | `host:port` 之后整段是**对方文件系统路径**（会话 cwd） |
+| `ws://host:port[/路径]`、`wss://...` | 显式 scheme（`wss` 走 TLS） |
+
+- 远端路径是**对方文件系统路径**，WebSocket 端点路径固定为 `/acp`，可用 `--url` 改成别的（反向代理等场景）；
+- 远端连接没给路径时，启动后先用目录选择器挑对方目录；
+- 访问密钥优先取连接串里的内联值，其次读本地 `~/.config/alcoh/conn.keys`（0600）；启动前会做一次 WebSocket 握手预检，**只有认证失败（401/403）才提示重新输入**，网络不通等错误直接报出，不反复索要密钥；验证通过的密钥会被记住。
 
 可用参数：
 
@@ -77,6 +107,7 @@ alcoh -m '你好'
 - `--ws-url <url>`：远程 ACP agent 的 WebSocket 地址（`ws://` 或 `wss://`），token 等认证参数并入 query string；与 `--agent` 互斥；
 - `--config <path>`：WebSocket 配置文件路径（默认 `~/.config/alkaid0/config.json`），读取其中的 `server` 段；
 - `--host <host>` / `--port <port>` / `--path <path>` / `--key <key>`：覆盖默认 WebSocket 连接的 host/端口/路径/认证 key；
+- `--url <path>`：指定连接使用的 WebSocket 端点路径（默认 `/acp`）；只作用于第一个位置参数/默认连接，位置参数里的路径仍是对方文件系统路径；与 `--ws-url` 或 `--agent` 互斥；
 - `--cwd <dir>`：新建 ACP 会话的工作目录，默认取 alcoh 进程当前目录（`--workdir` 为别名）；
 - `--env KEY=VALUE`：追加环境变量，可重复；
 - `--message <text>` / `-m <text>`：**One Shot 模式**——启动后自动进入会话视图并发送该消息，无需手动输入；复用主页预创建会话（无预创建会话时新建）；

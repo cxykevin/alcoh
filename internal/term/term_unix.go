@@ -4,6 +4,7 @@ package term
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -165,4 +166,35 @@ func (t *unixTerm) signalLoop() {
 func isTTY(fd int) bool {
 	_, err := unix.IoctlGetTermios(fd, ioctlReadTermios)
 	return err == nil
+}
+
+// PromptSecret 在终端上读取一行敏感输入（关闭回显，退格仍由行规程处理）。
+// 提示语写到 stderr，避免污染 stdout（dump / one-shot 场景）。
+// stdin 不是终端（管道/脚本）时按普通行读取，不做回显控制。
+func PromptSecret(prompt string) (string, error) {
+	if prompt != "" {
+		fmt.Fprint(os.Stderr, prompt)
+	}
+	fd := int(os.Stdin.Fd())
+	restore := func() {}
+	if isTTY(fd) {
+		ts, err := unix.IoctlGetTermios(fd, ioctlReadTermios)
+		if err != nil {
+			return "", err
+		}
+		saved := *ts
+		noEcho := *ts
+		noEcho.Lflag &^= unix.ECHO
+		if err := unix.IoctlSetTermios(fd, ioctlWriteTermios, &noEcho); err != nil {
+			return "", err
+		}
+		restore = func() { _ = unix.IoctlSetTermios(fd, ioctlWriteTermios, &saved) }
+	}
+	line, err := readSecretLine(os.Stdin)
+	restore()
+	if prompt != "" {
+		// 不回显时用户看不到自己按下的回车，补一个换行。
+		fmt.Fprintln(os.Stderr)
+	}
+	return line, err
 }

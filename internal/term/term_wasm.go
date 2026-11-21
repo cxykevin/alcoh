@@ -3,6 +3,7 @@
 package term
 
 import (
+	"errors"
 	"io"
 	"syscall/js"
 
@@ -149,4 +150,9 @@ func (t *wasmTerm) readLoop() {
 		}
 		t.evCh <- eventFromInput(ev)
 	}
+}
+
+// PromptSecret 在浏览器里不可用：启动参数由宿主页面决定，不做终端输入。
+func PromptSecret(string) (string, error) {
+	return "", errors.New("secret input is not supported in the browser build")
 }

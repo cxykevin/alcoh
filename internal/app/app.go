@@ -54,13 +54,16 @@ type App struct {
 	// 固定在第一项；远程连接为空（对端机器上没有这个目录）。
 	localHome string
 	// dirPicker 是当前打开的目录选择器控制器；nil 表示未打开。
-	dirPicker     *dirPickerController
-	initialRender bool
-	commands      chan commandResult
-	runCtx        context.Context
-	cancelRun     context.CancelFunc
-	commandWG     sync.WaitGroup
-	sessionOpID   uint64
+	dirPicker *dirPickerController
+	// startupDirPicker 表示启动后要先用目录选择器挑工作目录：远端位置参数
+	// 只给了主机、没给对方路径时置 true（见 openStartupDirPicker）。
+	startupDirPicker bool
+	initialRender    bool
+	commands         chan commandResult
+	runCtx           context.Context
+	cancelRun        context.CancelFunc
+	commandWG        sync.WaitGroup
+	sessionOpID      uint64
 	// Session list pagination state; accessed by the event loop and guarded by modelMu.
 	sessionNextCursor string
 	sessionLoading    bool
@@ -275,6 +278,10 @@ func (a *App) SetLocalHome(dir string) {
 // SetOnboardingEnabled 启停新手引导触发判断。main 在未指定 backend 参数
 // （走默认 alkaid0 连接）时置 true。
 func (a *App) SetOnboardingEnabled(v bool) { a.onboardingEnabled = v }
+
+// SetStartupDirPicker 设置启动后是否先用目录选择器挑工作目录：远端位置参数
+// 只给了主机、没给对方路径时由 main 置 true（见 openStartupDirPicker）。
+func (a *App) SetStartupDirPicker(v bool) { a.startupDirPicker = v }
 
 // SetInitialPrompt 设置 One Shot 模式的启动消息：启动完成后自动进入会话视图
 // 并发送该消息。空串表示普通交互启动。
@@ -760,6 +767,8 @@ func (a *App) Run() error {
 	// session.delete）。预创建会话承载 agent 广播的 config，使 /effort 与 /model
 	// 在主页命令面板可用；用户新建/恢复会话或程序退出时该空会话被删除。
 	a.maybeStartOnboarding()
+	// 远端位置参数只给了主机、没给对方路径：先让用户挑工作目录，再进入后续流程。
+	a.withModel(a.openStartupDirPicker)
 	// One Shot 模式：自动进入会话视图并发送启动消息。
 	a.sendInitialPrompt()
 

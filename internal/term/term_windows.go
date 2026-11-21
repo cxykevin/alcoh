@@ -4,6 +4,7 @@ package term
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"sync"
 	"time"
@@ -227,4 +228,29 @@ func (t *winTerm) checkResize() {
 	case t.evCh <- Event{Kind: EventResize, W: w, H: h}:
 	case <-t.stopCh:
 	}
+}
+
+// PromptSecret 在控制台读取一行敏感输入（关闭回显）。提示语写到 stderr，
+// 避免污染 stdout。stdin 不是控制台（管道/重定向）时按普通行读取。
+func PromptSecret(prompt string) (string, error) {
+	if prompt != "" {
+		fmt.Fprint(os.Stderr, prompt)
+	}
+	handle, err := windows.GetStdHandle(windows.STD_INPUT_HANDLE)
+	restore := func() {}
+	if err == nil {
+		var mode uint32
+		if err := windows.GetConsoleMode(handle, &mode); err == nil {
+			noEcho := mode &^ windows.ENABLE_ECHO_INPUT
+			if err := windows.SetConsoleMode(handle, noEcho); err == nil {
+				restore = func() { _ = windows.SetConsoleMode(handle, mode) }
+			}
+		}
+	}
+	line, err := readSecretLine(os.Stdin)
+	restore()
+	if prompt != "" {
+		fmt.Fprintln(os.Stderr)
+	}
+	return line, err
 }

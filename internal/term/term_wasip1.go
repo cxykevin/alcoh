@@ -94,3 +94,16 @@ func (t *wasip1Term) readLoop() {
 		}
 	}
 }
+
+// PromptSecret 读取一行敏感输入。WASI 没有 termios，无法关闭回显：仅在宿主
+// pty 已关闭回显时保证不回显（与 EnterRaw 的降级语义一致）。
+func PromptSecret(prompt string) (string, error) {
+	if prompt != "" {
+		_, _ = os.Stderr.WriteString(prompt)
+	}
+	line, err := readSecretLine(os.Stdin)
+	if prompt != "" {
+		_, _ = os.Stderr.WriteString("\n")
+	}
+	return line, err
+}

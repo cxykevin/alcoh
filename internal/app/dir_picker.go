@@ -242,6 +242,26 @@ func (a *App) openDirPicker(req dirPickerRequest) {
 	a.loadDirPicker("", "")
 }
 
+// openStartupDirPicker 在启动时按需打开目录选择器：远端位置参数只给了主机、
+// 没给对方路径时（main 经 SetStartupDirPicker 置位），先让用户挑工作目录。
+// 选中的目录经 applyWorkspace 生效（更新 workdir、backend CWD 与预创建会话）；
+// Esc 关闭则保留 main 给的默认路径。调用方必须已持有 modelMu。
+func (a *App) openStartupDirPicker() {
+	if !a.startupDirPicker {
+		return
+	}
+	a.startupDirPicker = false
+	paths := serverPathsFor(a.workdir)
+	a.openDirPicker(dirPickerRequest{
+		FS:         acpDirFS{backend: a.backend, paths: paths},
+		Paths:      paths,
+		HistoryKey: a.dirHistoryKey,
+		Home:       a.localHome,
+		Title:      i18n.T("选择工作目录（对方文件系统）"),
+		OnPick:     a.applyWorkspace,
+	})
+}
+
 // loadDirPicker 切换当前浏览目录并异步加载左右两栏：
 //   - dir 为空表示逻辑根（最近使用）：列表全部来自本地数据（主目录 + 系统根
 //   - 常用目录），不发 fs 请求，左栏留空。
